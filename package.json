@@ -1,0 +1,19 @@
+{
+  "name": "coastal-clash-bounty-bot",
+  "version": "0.1.0",
+  "description": "Bounty request bot for Coastal Clash",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "discord.js": "^14.23.0",
+    "dotenv": "^16.4.5",
+    "pg": "^8.22.0"
+  }
+}
