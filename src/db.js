@@ -22,6 +22,25 @@
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Settings cache
+  //
+  // The settings table is tiny and only ever written by the two /deploy*
+  // commands, but it's READ on nearly every interaction (staff role, ticket
+  // category, board channels, archive category…). Each of those reads was a
+  // separate network round-trip to Postgres. Since this is a single bot
+  // process, we keep an in-memory mirror instead: preloaded once at startup,
+  // kept in sync on every write, so reads are a Map lookup with no DB hit.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const settingsCache = new Map();
+
+  // Loads every existing setting into the cache. Called once from initDb().
+  async function loadSettings() {
+    const result = await pool.query('SELECT key, value FROM settings');
+    settingsCache.clear();
+    for (const row of result.rows) settingsCache.set(row.key, row.value);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // Table setup — runs once on startup. "IF NOT EXISTS" means it's safe to run
   // every boot; it only creates the tables the first time.
   // ─────────────────────────────────────────────────────────────────────────────
@@ -41,7 +60,7 @@
       id               SERIAL PRIMARY KEY,
       name             TEXT NOT NULL,
       description      TEXT NOT NULL,
-      reward           NUMERIC,
+      reward           TEXT,
       requester_id     TEXT NOT NULL,
       approver_id      TEXT,
       approved_at      TIMESTAMPTZ,
@@ -62,19 +81,34 @@
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS board_channel_id TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS board_message_id TEXT;`);
+
+    // reward used to be NUMERIC (dollars-only) — it's free text now, since
+    // rewards can be anything ("250 NP", "5 gems", not just cash). Safe to
+    // rerun every boot: casting TEXT to TEXT is a no-op once already migrated.
+    await pool.query(`ALTER TABLE bounties ALTER COLUMN reward TYPE TEXT USING reward::TEXT;`);
+
+    // Warm the settings cache so the first interaction after boot doesn't have
+    // to fall back to the DB for each setting it reads.
+    await loadSettings();
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Settings helpers (generic key/value)
   // ─────────────────────────────────────────────────────────────────────────────
 
-  // Returns the stored value for a key, or null if it was never set.
+  // Returns the stored value for a key, or null if it was never set. Served
+  // from the in-memory cache; only the first read of a key that wasn't loaded
+  // at startup touches the DB (and it's cached from then on).
   async function getSetting(key) {
+    if (settingsCache.has(key)) return settingsCache.get(key);
     const result = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
-    return result.rows[0]?.value ?? null;
+    const value = result.rows[0]?.value ?? null;
+    settingsCache.set(key, value);
+    return value;
   }
 
-  // Insert-or-update: sets the value, overwriting any existing one for that key.
+  // Insert-or-update: sets the value, overwriting any existing one for that
+  // key. Cache is updated only after the DB write succeeds.
   async function setSetting(key, value) {
     await pool.query(
       `INSERT INTO settings (key, value)
@@ -82,12 +116,14 @@
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [key, value],
     );
+    settingsCache.set(key, value);
   }
 
   // Removes a key entirely, so getSetting() goes back to returning null for it.
   // Used when /deploy is re-run without a value that was previously set.
   async function clearSetting(key) {
     await pool.query('DELETE FROM settings WHERE key = $1', [key]);
+    settingsCache.set(key, null);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -181,6 +217,34 @@
 
   function setClaimArchiveCategory(categoryId) {
     return setSetting('claim_archive_category', categoryId);
+  }
+
+  // A third, entirely separate pipeline: general "talk to staff" support
+  // tickets (opened from /help), configured via /deployticket. No board or
+  // archive category — these aren't bounties, just a private conversation
+  // that gets closed when it's resolved.
+  function getHelpTicketCategory() {
+    return getSetting('help_ticket_category');
+  }
+
+  function setHelpTicketCategory(categoryId) {
+    return setSetting('help_ticket_category', categoryId);
+  }
+
+  function getHelpStaffRole() {
+    return getSetting('help_staff_role');
+  }
+
+  function setHelpStaffRole(roleId) {
+    return setSetting('help_staff_role', roleId);
+  }
+
+  function getHelpStaffUser() {
+    return getSetting('help_staff_user');
+  }
+
+  function setHelpStaffUser(userId) {
+    return setSetting('help_staff_user', userId);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -303,6 +367,12 @@
     setClaimBoardChannel,
     getClaimArchiveCategory,
     setClaimArchiveCategory,
+    getHelpTicketCategory,
+    setHelpTicketCategory,
+    getHelpStaffRole,
+    setHelpStaffRole,
+    getHelpStaffUser,
+    setHelpStaffUser,
     createBounty,
     getBountyById,
     updateBounty,

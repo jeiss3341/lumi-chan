@@ -4,7 +4,10 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  EmbedBuilder,
 } = require('discord.js');
+const TEXT = require('./text');
+const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // Turn "jeiss" + "Catching 6789!" into a Discord-safe channel name like
 // "jeiss-catching-6789". Discord lowercases and hyphenates channel names anyway
@@ -32,14 +35,14 @@ function previewButtons() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('ticket_submit')
-      .setLabel('Submit')
+      .setLabel(TEXT.TICKET.submitButton)
       .setStyle(ButtonStyle.Success)
-      .setEmoji('✅'),
+      .setEmoji(TEXT.TICKET.submitEmoji),
     new ButtonBuilder()
       .setCustomId('ticket_cancel')
-      .setLabel('Close')
+      .setLabel(TEXT.TICKET.closeButton)
       .setStyle(ButtonStyle.Danger)
-      .setEmoji('🗑️'),
+      .setEmoji(TEXT.TICKET.closeEmoji),
   );
 }
 
@@ -50,14 +53,14 @@ function staffReviewButtons(bountyId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`approve_bounty:${bountyId}`)
-      .setLabel('Approve')
+      .setLabel(TEXT.TICKET.approveBountyButton)
       .setStyle(ButtonStyle.Success)
-      .setEmoji('✅'),
+      .setEmoji(TEXT.TICKET.approveBountyEmoji),
     new ButtonBuilder()
       .setCustomId(`deny_bounty:${bountyId}`)
-      .setLabel('Deny')
+      .setLabel(TEXT.TICKET.denyBountyButton)
       .setStyle(ButtonStyle.Danger)
-      .setEmoji('⛔'),
+      .setEmoji(TEXT.TICKET.denyBountyEmoji),
   );
 }
 
@@ -68,14 +71,27 @@ function claimReviewButtons(bountyId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`approve_claim:${bountyId}`)
-      .setLabel('Approve Claim')
+      .setLabel(TEXT.TICKET.approveClaimButton)
       .setStyle(ButtonStyle.Success)
-      .setEmoji('✅'),
+      .setEmoji(TEXT.TICKET.approveClaimEmoji),
     new ButtonBuilder()
       .setCustomId(`deny_claim:${bountyId}`)
-      .setLabel('Deny Claim')
+      .setLabel(TEXT.TICKET.denyClaimButton)
       .setStyle(ButtonStyle.Danger)
-      .setEmoji('⛔'),
+      .setEmoji(TEXT.TICKET.denyClaimEmoji),
+  );
+}
+
+// [Close Ticket] shown inside a general support ticket. No approve/deny here
+// — there's nothing to decide, just a conversation that gets closed once
+// it's resolved.
+function helpTicketButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('close_help_ticket')
+      .setLabel(TEXT.TICKET.closeHelpButton)
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji(TEXT.TICKET.closeHelpEmoji),
   );
 }
 
@@ -164,7 +180,7 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, s
   await channel.send({
     content: mentions.length
       ? `${mentions.join(' ')} — a new bounty from ${member} is ready for review.`
-      : "⚠️ No staff is configured — a staff member should run `/deploy` to set one.",
+      : TEXT.TICKET.noRequestStaffConfigured,
     embeds: [embed],
     components: [staffReviewButtons(bountyId)],
     allowedMentions: {
@@ -188,7 +204,7 @@ async function createClaimTicket({ guild, member, botId, embed, title, staffRole
   await channel.send({
     content: mentions.length
       ? `${mentions.join(' ')} — a bounty claim from ${member} needs review.`
-      : "⚠️ No staff is configured — a staff member should run `/deploy` to set one.",
+      : TEXT.TICKET.noClaimStaffConfigured,
     embeds: [embed],
     components: [claimReviewButtons(bountyId)],
     allowedMentions: {
@@ -204,9 +220,46 @@ async function createClaimTicket({ guild, member, botId, embed, title, staffRole
   return channel;
 }
 
+// A third, entirely separate kind of ticket: general "talk to staff" support,
+// opened from /help's "Talk to Staff" option. No bounty attached, no embed
+// card — just a private channel where they type their question and staff
+// close it with the one button once it's resolved.
+// Throws 'NO_CATEGORY' if that category was never set.
+async function createHelpTicket({ guild, member, botId, staffRoleId, staffUserId, categoryId, subject, body }) {
+  const channelName = toChannelName(member.displayName, 'support');
+  const channel = await createReviewChannel({ guild, member, botId, channelName, staffRoleId, staffUserId, categoryId });
+
+  // Subject/details are both optional — only attach a card if they gave us
+  // at least one of them, so a truly blank "just open a ticket" click stays
+  // exactly as plain as before.
+  const embeds = [];
+  if (subject || body) {
+    const embed = new EmbedBuilder().setColor(COLORS.brand).setImage(BANNER_URL);
+    if (subject) embed.setTitle(subject);
+    if (body) embed.setDescription(body);
+    embeds.push(embed);
+  }
+
+  const mentions = staffMentions(staffRoleId, staffUserId);
+  await channel.send({
+    content: mentions.length
+      ? `${mentions.join(' ')} — ${member} needs help.`
+      : TEXT.TICKET.noHelpStaffConfigured,
+    embeds,
+    components: [helpTicketButtons()],
+    allowedMentions: {
+      roles: staffRoleId ? [staffRoleId] : [],
+      users: staffUserId ? [staffUserId] : [],
+    },
+  });
+
+  return channel;
+}
+
 module.exports = {
   createTicket,
   createClaimTicket,
+  createHelpTicket,
   toChannelName,
   previewButtons,
   staffReviewButtons,

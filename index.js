@@ -10,11 +10,13 @@ const {
   ActionRowBuilder,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { buildPanel, buildClaimPanel } = require('./src/panel');
-const { buildBountyModal, buildApproveEditModal, buildClaimProofModal } = require('./src/modal');
+const { buildPanel, buildClaimPanel, buildTicketPanel, buildQandAPanel } = require('./src/panel');
+const { buildQandAMenu, buildQandAAnswer } = require('./src/qanda');
+const { buildBountyModal, buildApproveEditModal, buildClaimProofModal, buildTicketDetailsModal } = require('./src/modal');
 const { buildBountyEmbed, buildClaimEmbed, formatAmount } = require('./src/bountyCard');
-const { createTicket, createClaimTicket, previewButtons } = require('./src/ticket');
-const { COLORS, BANNER_URL } = require('./src/constants');
+const { createTicket, createClaimTicket, createHelpTicket, previewButtons } = require('./src/ticket');
+const TEXT = require('./src/text');
+const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // We only need the Guilds intent. No Message Content intent required, so you
 // don't have to flip any privileged-intent toggles in the Developer Portal.
@@ -41,6 +43,12 @@ const {
   getClaimBoardChannel,
   setClaimArchiveCategory,
   getClaimArchiveCategory,
+  setHelpTicketCategory,
+  getHelpTicketCategory,
+  setHelpStaffRole,
+  getHelpStaffRole,
+  setHelpStaffUser,
+  getHelpStaffUser,
   createBounty,
   getBountyById,
   updateBounty,
@@ -59,12 +67,6 @@ function extractMentionId(embed, fieldName) {
   const field = embed.fields.find((f) => f.name === fieldName);
   const match = field?.value.match(/<@!?(\d+)>/);
   return match ? match[1] : null;
-}
-
-// Pull the first number out of free-text like "$10" or "10 bucks" → 10.
-function parseReward(raw) {
-  const match = String(raw).replace(/,/g, '').match(/\d+(\.\d+)?/);
-  return match ? Number(match[0]) : null;
 }
 
 // Short-lived holding area for form data between the modal submit and the
@@ -95,13 +97,21 @@ function isStaff(member, staffRoleId, staffUserId) {
 }
 
 // Fetches a pipeline's configured staff (role and/or person) as one pair,
-// since every call site needs both together.
+// since every call site needs both together. The two reads are independent,
+// so fetch them concurrently rather than one-then-the-other.
 async function getRequestStaff() {
-  return { staffRoleId: await getStaffRole(), staffUserId: await getStaffUser() };
+  const [staffRoleId, staffUserId] = await Promise.all([getStaffRole(), getStaffUser()]);
+  return { staffRoleId, staffUserId };
 }
 
 async function getClaimStaff() {
-  return { staffRoleId: await getClaimStaffRole(), staffUserId: await getClaimStaffUser() };
+  const [staffRoleId, staffUserId] = await Promise.all([getClaimStaffRole(), getClaimStaffUser()]);
+  return { staffRoleId, staffUserId };
+}
+
+async function getHelpStaff() {
+  const [staffRoleId, staffUserId] = await Promise.all([getHelpStaffRole(), getHelpStaffUser()]);
+  return { staffRoleId, staffUserId };
 }
 
 // Replies with an ephemeral "only staff" message and returns false if the
@@ -117,6 +127,23 @@ async function requireStaff(interaction, getStaffIds, action) {
 // The bounty/claim id baked into a customId like "approve_bounty:42".
 function customIdArg(interaction) {
   return interaction.customId.split(':')[1];
+}
+
+// Sorts a list of bounty rows for /allbounties per the `order` option:
+// 'alphabetical' (by name), 'oldest'/'newest' (by approved_at, falling back
+// to created_at for ones never approved). Returns a new array.
+function sortBounties(rows, order) {
+  const sorted = [...rows];
+  if (order === 'alphabetical') {
+    sorted.sort((a, b) => a.name.localeCompare(b.name));
+    return sorted;
+  }
+  sorted.sort((a, b) => {
+    const aTime = new Date(a.approved_at ?? a.created_at).getTime();
+    const bTime = new Date(b.approved_at ?? b.created_at).getTime();
+    return order === 'oldest' ? aTime - bTime : bTime - aTime;
+  });
+  return sorted;
 }
 
 // Deny buttons just close the ticket a few seconds later, so staff's message
@@ -140,6 +167,32 @@ function ticketCreationError(err, deployCommand, kind) {
   return `❌ I couldn't create your ${kind} channel. This usually means I'm missing the **Manage Channels** permission. Please ping staff.`;
 }
 
+// Shared by the "Talk to Staff" details modal's submit handler — builds the
+// ticket and the reply payload; the caller applies it via reply()/update().
+// subject/body are both optional.
+async function createHelpTicketReply(interaction, { subject, body } = {}) {
+  try {
+    const { staffRoleId, staffUserId } = await getHelpStaff();
+    const categoryId = await getHelpTicketCategory();
+
+    const channel = await createHelpTicket({
+      guild: interaction.guild,
+      member: interaction.member,
+      botId: client.user.id,
+      staffRoleId,
+      staffUserId,
+      categoryId,
+      subject,
+      body,
+    });
+
+    const readyBanner = new EmbedBuilder().setImage(BANNER_URL);
+    return { content: `💬 Your ticket is open: ${channel}`, embeds: [readyBanner], components: [] };
+  } catch (err) {
+    return { content: ticketCreationError(err, 'deployticket', 'support'), embeds: [], components: [] };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ONE global interaction handler. Everything routes off a static customId.
 //
@@ -159,7 +212,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!staffRole && !staffUser) {
         await interaction.reply({
-          content: '⚠️ Set at least a staff role or a staff person to review bounties.',
+          content: TEXT.REPLIES.missingRequestStaff,
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -187,6 +240,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // no in-code check needed here.
     if (interaction.isChatInputCommand() && interaction.commandName === 'allbounties') {
       const status = interaction.options.getString('status') ?? 'approved';
+      const order = interaction.options.getString('order') ?? 'newest';
       const rows = await getBounties(status);
 
       const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
@@ -202,9 +256,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const dateTag = (d) =>
         d ? `<t:${Math.floor(new Date(d).getTime() / 1000)}:D>` : '';
 
-      const shown = rows.slice(0, 25); // keep the embed within limits
-      const lines = shown.map((b) => {
-        const reward = b.reward != null ? `$${b.reward}` : '—';
+      const lineFor = (b) => {
+        const reward = b.reward || '—';
 
         let meta = `by <@${b.requester_id}>`;
         if (b.status === 'claimed' && b.claimer_id) {
@@ -221,10 +274,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         return `**${b.name}** — ${reward}\n${meta}`;
-      });
+      };
 
-      let description = lines.join('\n\n');
-      if (rows.length > 25) description += `\n\n…and ${rows.length - 25} more.`;
+      // For a single status, just sort the flat list. For "all", group by
+      // status first (in TEXT.ALL_BOUNTIES' key order) with a header per
+      // group, then sort within each group — so results read as distinct
+      // categories, not one big list interleaved by date.
+      const sections = [];
+      if (status === 'all') {
+        for (const [groupStatus, header] of Object.entries(TEXT.ALL_BOUNTIES)) {
+          const group = sortBounties(rows.filter((b) => b.status === groupStatus), order);
+          if (group.length > 0) sections.push({ header, lines: group.map(lineFor) });
+        }
+      } else {
+        sections.push({ header: null, lines: sortBounties(rows, order).map(lineFor) });
+      }
+
+      // Flatten to a flat line list capped at 25 (Discord embed limits),
+      // keeping section headers attached to whichever lines survive the cap.
+      const blocks = [];
+      let shownCount = 0;
+      for (const section of sections) {
+        if (shownCount >= 25) break;
+        const lines = section.lines.slice(0, 25 - shownCount);
+        shownCount += lines.length;
+        blocks.push(section.header ? `**${section.header}**\n${lines.join('\n\n')}` : lines.join('\n\n'));
+      }
+
+      let description = blocks.join('\n\n');
+      if (rows.length > shownCount) description += `\n\n…and ${rows.length - shownCount} more.`;
 
       const embed = new EmbedBuilder()
         .setTitle(`📋 ${label} Bounties`)
@@ -246,7 +324,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!staffRole && !staffUser) {
         await interaction.reply({
-          content: '⚠️ Set at least a staff role or a staff person to review claims.',
+          content: TEXT.REPLIES.missingClaimStaff,
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -269,44 +347,123 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // /deployticket  →  save the general "talk to staff" pipeline's own
+    // category + staff — entirely separate from requests and claims. No
+    // board/archive here; these aren't bounties, just closed when resolved.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'deployticket') {
+      const category = interaction.options.getChannel('category');
+      const staffRole = interaction.options.getRole('staff_role');
+      const staffUser = interaction.options.getUser('staff_user');
+
+      if (!staffRole && !staffUser) {
+        await interaction.reply({
+          content: TEXT.REPLIES.missingTicketStaff,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      await setHelpTicketCategory(category.id);
+      if (staffRole) await setHelpStaffRole(staffRole.id); else await clearSetting('help_staff_role');
+      if (staffUser) await setHelpStaffUser(staffUser.id); else await clearSetting('help_staff_user');
+
+      await interaction.channel.send(buildTicketPanel());
+
+      const reviewers = describeReviewers(staffRole, staffUser);
+
+      await interaction.reply({
+        content: `💬 Support board deployed. Tickets open under **${category.name}**, handled by **${reviewers}**.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // /deployqanda  →  just posts the Q&A board. No settings to save — Q&A
+    // is pure static content, never touches staff or creates a ticket.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'deployqanda') {
+      await interaction.channel.send(buildQandAPanel());
+      await interaction.reply({
+        content: '❓ Q&A board deployed in this channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
 // /readme  →  how the system works (staff only)
     if (interaction.isChatInputCommand() && interaction.commandName === 'readme') {
       const embed = new EmbedBuilder()
         .setColor(COLORS.brand)
-        .setTitle('📖 How the Bounty System Works')
-        .setDescription(
-          [
-            '**For players:**',
-            '> 1. Press **Request Bounty** on the panel.',
-            '> 2. Fill out the form (name, description, solo/stackable, reward).',
-            '> 3. Review the preview → **Submit** to open a ticket, or **Close** to cancel.',
-            '> 4. A private channel opens where staff review it with you.',
-            '',
-            '',
-            '**Claiming a bounty:**',
-            '> 1. Press **Claim Bounty** on the claim board.',
-            '> 2. Pick which approved bounty you completed from the dropdown.',
-            '> 3. Fill out proof (notes + a screenshot or clip) and submit.',
-            '> 4. A private channel opens where staff verify your claim.',
-            '',
-            '**For staff:**',
-            '> • Submitted bounties open a private ticket and ping the staff role.',
-            '> • **Approve** → edit if needed, logs it, posts the card to the board channel.',
-            '> • **Deny** → closes the ticket.',
-            '> • **Approve Claim** → marks it claimed, updates the board card, archives the ticket.',
-            '> • **Deny Claim** → closes the ticket; bounty stays claimable.',
-            '> • `/allbounties status:` → list approved / pending / claimed / denied / all.',
-            '> • `/deployrequestbounty` → set the category, staff, and board channel for requests (setup).',
-            '> • `/deployclaimbounty` → set the category, staff, board, and archive category for claims (setup).',
-          ].join('\n'),
-        )
+        .setTitle(TEXT.README.title)
+        .setDescription(TEXT.README.description.join('\n'))
         .setImage(BANNER_URL)
-        .setFooter({ text: 'Coastal Clash • Bounty System' });
+        .setFooter({ text: TEXT.FOOTER });
 
       await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       return;
     }
 
+    // "Ask a Question" button on the Q&A board  →  replies with the topic
+    // dropdown. Entirely separate system from support tickets below — this
+    // never creates a ticket or pings staff.
+    if (interaction.isButton() && interaction.customId === 'open_qanda') {
+      await interaction.reply({ ...buildQandAMenu(), flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    // Topic picked from the dropdown (the one from the button above, or the
+    // one attached to a previous answer) — both live on a message only this
+    // person can see, so it's always safe to update it in place.
+    if (interaction.isStringSelectMenu() && interaction.customId === 'qanda_select') {
+      const answer = buildQandAAnswer(interaction.values[0]);
+      if (!answer) {
+        await interaction.update({ content: TEXT.REPLIES.genericError, embeds: [], components: [] });
+        return;
+      }
+      await interaction.update(answer);
+      return;
+    }
+
+    // "Talk to Staff" button on the support board  →  pop a modal for the
+    // optional Subject/Details (like an email's subject + body), then open
+    // the ticket on submit. Entirely separate from Q&A above — this is the
+    // only way to reach a support ticket right now.
+    // NOTE: this button lives on the PERMANENT public panel message, so its
+    // modal's submit handler below must reply(), never update() — updating
+    // would overwrite that public panel with a private ticket confirmation.
+    if (interaction.isButton() && interaction.customId === 'open_help_ticket') {
+      await interaction.showModal(buildTicketDetailsModal('panel'));
+      return;
+    }
+
+    // Subject/Details modal submitted  →  create the ticket. `source` (from
+    // the customId) is kept around for whichever entry point triggered this,
+    // even though only the panel button uses it today — reply() vs update()
+    // would differ if another entry point gets added later.
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('ticket_details_modal')) {
+      const source = customIdArg(interaction);
+      const subject = interaction.fields.getTextInputValue('ticket_subject');
+      const body = interaction.fields.getTextInputValue('ticket_body');
+
+      if (source === 'switch') {
+        await interaction.deferUpdate();
+      } else {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      }
+      await interaction.editReply(await createHelpTicketReply(interaction, { subject, body }));
+      return;
+    }
+
+    // "Close Ticket" inside a general support ticket  →  staff only. Just
+    // closes it, no DB state to touch (these aren't bounties).
+    if (interaction.isButton() && interaction.customId === 'close_help_ticket') {
+      if (!(await requireStaff(interaction, getHelpStaff, 'close tickets'))) return;
+
+      await interaction.reply({
+        content: `🔒 **Ticket closed** by ${interaction.user}. Closing this channel in a few seconds…`,
+      });
+      closeChannelSoon(interaction.channel);
+      return;
+    }
 
     // "Request Bounty" button  →  pop the modal form
     // NOTE: showModal must be the FIRST response to the interaction.
@@ -320,7 +477,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const data = pendingBounties.get(interaction.user.id);
       if (!data) {
         await interaction.update({
-          content: '⚠️ This request expired. Please start again from **Request Bounty**.',
+          content: TEXT.REPLIES.requestExpired,
           embeds: [],
           components: [],
         });
@@ -344,7 +501,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const bountyId = await createBounty({
           name: data.name,
           description: data.description,
-          reward: parseReward(data.amountRaw),
+          reward: data.amountRaw,
           requesterId: interaction.user.id,
         });
 
@@ -384,7 +541,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId === 'ticket_cancel') {
       pendingBounties.delete(interaction.user.id);
       await interaction.update({
-        content: '❌ Cancelled. No ticket was created.',
+        content: TEXT.REPLIES.requestCancelled,
         embeds: [],
         components: [],
       });
@@ -461,8 +618,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
 
       await interaction.reply({
-        content:
-          "Here's your bounty preview. Press **Submit** to open a private ticket and send it to staff — or **Close** to cancel. Nothing is created until you submit.",
+        content: TEXT.REPLIES.requestPreview,
         embeds: [embed],
         components: [previewButtons()],
         flags: MessageFlags.Ephemeral,
@@ -480,18 +636,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const name = interaction.fields.getTextInputValue('bounty_name');
       const description = interaction.fields.getTextInputValue('bounty_description');
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
-      const reward = parseReward(amountRaw);
 
       const bounty = await getBountyById(bountyId);
       if (!bounty) {
         await interaction.reply({
-          content: '⚠️ This bounty no longer exists in the database.',
+          content: TEXT.REPLIES.bountyMissing,
           flags: MessageFlags.Ephemeral,
         });
         return;
       }
 
-      await updateBounty(bountyId, { name, description, reward });
+      await updateBounty(bountyId, { name, description, reward: amountRaw });
       await approveBounty(bountyId, interaction.user.id);
 
       const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
@@ -534,7 +689,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (claimable.length === 0) {
         await interaction.reply({
-          content: '📭 No approved bounties are available to claim right now.',
+          content: TEXT.REPLIES.noClaimableBounties,
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -543,7 +698,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const row = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
           .setCustomId('claim_select')
-          .setPlaceholder('Choose a bounty to claim')
+          .setPlaceholder(TEXT.REPLIES.claimSelectPlaceholder)
           .addOptions(
             claimable.map((b) => ({
               label: b.name.slice(0, 100),
@@ -554,7 +709,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
 
       await interaction.reply({
-        content: 'Which bounty are you claiming?',
+        content: TEXT.REPLIES.claimPickPrompt,
         components: [row],
         flags: MessageFlags.Ephemeral,
       });
@@ -568,7 +723,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!bounty || bounty.status !== 'approved') {
         await interaction.update({
-          content: '⚠️ That bounty is no longer available to claim.',
+          content: TEXT.REPLIES.claimBountyUnavailable,
           components: [],
         });
         return;
@@ -588,7 +743,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const bounty = await getBountyById(bountyId);
       if (!bounty || bounty.status !== 'approved') {
         await interaction.editReply({
-          content: '⚠️ This bounty is no longer available to claim (it may have already been claimed).',
+          content: TEXT.REPLIES.claimNoLongerAvailable,
         });
         return;
       }
@@ -616,7 +771,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           categoryId,
         });
 
-        await interaction.editReply({ content: `🏁 Your claim is in: ${channel}` });
+        const readyBanner = new EmbedBuilder().setImage(BANNER_URL);
+        await interaction.editReply({ content: `🏁 Your claim is in: ${channel}`, embeds: [readyBanner] });
       } catch (err) {
         await interaction.editReply({ content: ticketCreationError(err, 'deployclaimbounty', 'claim') });
       }
@@ -637,28 +793,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!updated) {
         await interaction.reply({
-          content: '⚠️ Could not finalize this claim — the bounty may have already been claimed elsewhere, or its record is missing.',
+          content: TEXT.REPLIES.claimFinalizeFailed,
           flags: MessageFlags.Ephemeral,
         });
         return;
       }
 
-      const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0]).setColor(COLORS.approved);
+      const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+        .setColor(COLORS.approved)
+        .setTitle(`${TEXT.CARD.claimedTitlePrefix} ${updated.name}`);
       await interaction.update({ embeds: [approvedEmbed], components: [] });
 
       const notes = [];
 
+      // The request board only shows bounties still available to claim — once
+      // one's claimed, its post there is removed entirely (the claim board
+      // below is the log of what's been claimed, not this one).
       if (updated.board_channel_id && updated.board_message_id) {
         const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);
         const boardMsg = boardChannel
           ? await boardChannel.messages.fetch(updated.board_message_id).catch(() => null)
           : null;
-        if (boardMsg?.embeds[0]) {
-          const claimedEmbed = EmbedBuilder.from(boardMsg.embeds[0])
-            .setColor(COLORS.claimed)
-            .setTitle(`🏁 CLAIMED — ${updated.name}`);
-          await boardMsg.edit({ embeds: [claimedEmbed] }).catch(console.error);
-          notes.push('marked claimed on the board');
+        if (boardMsg) {
+          await boardMsg.delete().catch(console.error);
+          notes.push('removed from the board');
         }
       }
 
@@ -666,7 +824,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (claimBoardChannelId) {
         const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
         if (claimBoard) {
-          await claimBoard.send({ embeds: [approvedEmbed] }).catch(console.error);
+          // Same card, minus "Original Requester" — the archived ticket (staff
+          // only) keeps it for context, but the claim board is public.
+          const publicEmbed = EmbedBuilder.from(approvedEmbed).setFields(
+            approvedEmbed.data.fields.filter((f) => f.name !== TEXT.CARD.claim.fieldOriginalRequester),
+          );
+          await claimBoard.send({ embeds: [publicEmbed] }).catch(console.error);
           notes.push(`posted to ${claimBoard}`);
         }
       }
@@ -703,7 +866,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     console.error(err);
     if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
       await interaction
-        .reply({ content: 'Something went wrong. Please ping staff.', flags: MessageFlags.Ephemeral })
+        .reply({ content: TEXT.REPLIES.genericError, flags: MessageFlags.Ephemeral })
         .catch(() => {});
     }
   }

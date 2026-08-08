@@ -5,48 +5,49 @@ const {
   TextInputStyle,
   FileUploadBuilder,
 } = require('discord.js');
+const TEXT = require('./text');
 
 // The bounty request form. Modern modals wrap every input in a LabelBuilder,
 // which gives you the header + subtext you saw in the screenshot.
 //
 // Max 5 top-level components per modal. We use 4 (name, description, type, amount).
 function buildBountyModal() {
-  const modal = new ModalBuilder().setCustomId('bounty_modal').setTitle('Request a Bounty');
+  const modal = new ModalBuilder().setCustomId('bounty_modal').setTitle(TEXT.MODAL.bountyRequest.title);
 
   // 1) Name of Bounty — single line
   const nameInput = new TextInputBuilder()
     .setCustomId('bounty_name')
     .setStyle(TextInputStyle.Short)
-    .setPlaceholder('The Phantom Thief')
+    .setPlaceholder(TEXT.MODAL.bountyRequest.name.placeholder)
     .setMaxLength(100)
     .setRequired(true);
   const nameLabel = new LabelBuilder()
-    .setLabel('Name of Bounty')
-    .setDescription('A short, catchy title')
+    .setLabel(TEXT.MODAL.bountyRequest.name.label)
+    .setDescription(TEXT.MODAL.bountyRequest.name.description)
     .setTextInputComponent(nameInput);
 
   // 2) Description — paragraph, all the flavor they want
   const descInput = new TextInputBuilder()
     .setCustomId('bounty_description')
     .setStyle(TextInputStyle.Paragraph)
-    .setPlaceholder('Describe the challenge, any flavor, and how it can be verified.')
+    .setPlaceholder(TEXT.MODAL.bountyRequest.description.placeholder)
     .setMaxLength(1000)
     .setRequired(true);
   const descLabel = new LabelBuilder()
-    .setLabel('Description')
-    .setDescription('What has to happen? Add all the flavor you want.')
+    .setLabel(TEXT.MODAL.bountyRequest.description.label)
+    .setDescription(TEXT.MODAL.bountyRequest.description.description)
     .setTextInputComponent(descInput);
 
-  // 4) Amount Donated — single line (validated on submit since it's free text)
+  // 4) Reward — free text, since it isn't always cash (in-game currency, etc.)
   const amountInput = new TextInputBuilder()
     .setCustomId('bounty_amount')
     .setStyle(TextInputStyle.Short)
-    .setPlaceholder('10')
-    .setMaxLength(10)
+    .setPlaceholder(TEXT.MODAL.bountyRequest.reward.placeholder)
+    .setMaxLength(50)
     .setRequired(true);
   const amountLabel = new LabelBuilder()
-    .setLabel('Amount Donated ($)')
-    .setDescription('Numbers only, e.g. 10')
+    .setLabel(TEXT.MODAL.bountyRequest.reward.label)
+    .setDescription(TEXT.MODAL.bountyRequest.reward.description)
     .setTextInputComponent(amountInput);
 
   modal.addLabelComponents(nameLabel, descLabel, amountLabel);
@@ -59,7 +60,7 @@ function buildBountyModal() {
 function buildApproveEditModal(bounty) {
   const modal = new ModalBuilder()
     .setCustomId(`approve_edit_modal:${bounty.id}`)
-    .setTitle('Review & Approve Bounty');
+    .setTitle(TEXT.MODAL.approveEdit.title);
 
   const nameInput = new TextInputBuilder()
     .setCustomId('bounty_name')
@@ -68,8 +69,8 @@ function buildApproveEditModal(bounty) {
     .setMaxLength(100)
     .setRequired(true);
   const nameLabel = new LabelBuilder()
-    .setLabel('Name of Bounty')
-    .setDescription('Edit if needed — this is what ships to the board')
+    .setLabel(TEXT.MODAL.approveEdit.name.label)
+    .setDescription(TEXT.MODAL.approveEdit.name.description)
     .setTextInputComponent(nameInput);
 
   const descInput = new TextInputBuilder()
@@ -79,19 +80,19 @@ function buildApproveEditModal(bounty) {
     .setMaxLength(1000)
     .setRequired(true);
   const descLabel = new LabelBuilder()
-    .setLabel('Description')
-    .setDescription('Edit if needed — this is what ships to the board')
+    .setLabel(TEXT.MODAL.approveEdit.description.label)
+    .setDescription(TEXT.MODAL.approveEdit.description.description)
     .setTextInputComponent(descInput);
 
   const amountInput = new TextInputBuilder()
     .setCustomId('bounty_amount')
     .setStyle(TextInputStyle.Short)
-    .setValue(bounty.reward != null ? String(bounty.reward) : '')
-    .setMaxLength(10)
+    .setValue(bounty.reward ?? '')
+    .setMaxLength(50)
     .setRequired(true);
   const amountLabel = new LabelBuilder()
-    .setLabel('Amount Donated ($)')
-    .setDescription('Numbers only, e.g. 10')
+    .setLabel(TEXT.MODAL.approveEdit.reward.label)
+    .setDescription(TEXT.MODAL.approveEdit.reward.description)
     .setTextInputComponent(amountInput);
 
   modal.addLabelComponents(nameLabel, descLabel, amountLabel);
@@ -104,17 +105,17 @@ function buildApproveEditModal(bounty) {
 function buildClaimProofModal(bounty) {
   const modal = new ModalBuilder()
     .setCustomId(`claim_proof_modal:${bounty.id}`)
-    .setTitle(`Claim: ${bounty.name}`.slice(0, 45));
+    .setTitle(`${TEXT.MODAL.claimProof.titlePrefix} ${bounty.name}`.slice(0, 45));
 
   const notesInput = new TextInputBuilder()
     .setCustomId('claim_notes')
     .setStyle(TextInputStyle.Paragraph)
-    .setPlaceholder('Describe how you completed this and how it can be verified.')
+    .setPlaceholder(TEXT.MODAL.claimProof.notes.placeholder)
     .setMaxLength(1000)
     .setRequired(true);
   const notesLabel = new LabelBuilder()
-    .setLabel('Proof / Notes')
-    .setDescription('What did you do, and how can staff verify it?')
+    .setLabel(TEXT.MODAL.claimProof.notes.label)
+    .setDescription(TEXT.MODAL.claimProof.notes.description)
     .setTextInputComponent(notesInput);
 
   const fileInput = new FileUploadBuilder()
@@ -123,12 +124,48 @@ function buildClaimProofModal(bounty) {
     .setMaxValues(3)
     .setRequired(false);
   const fileLabel = new LabelBuilder()
-    .setLabel('Proof (Screenshot or Video)')
-    .setDescription('Optional — attach a screenshot or clip if you have one.')
+    .setLabel(TEXT.MODAL.claimProof.files.label)
+    .setDescription(TEXT.MODAL.claimProof.files.description)
     .setFileUploadComponent(fileInput);
 
   modal.addLabelComponents(notesLabel, fileLabel);
   return modal;
 }
 
-module.exports = { buildBountyModal, buildApproveEditModal, buildClaimProofModal };
+// Shown when the support board's "Talk to Staff" button is pressed. Optional
+// Subject/Details — like an email's subject + body, both skippable. `source`
+// gets baked into the customId so the submit handler knows how to respond
+// (see index.js — this only ever fires from the support panel today, but the
+// source tag keeps that explicit rather than assumed).
+function buildTicketDetailsModal(source) {
+  const modal = new ModalBuilder()
+    .setCustomId(`ticket_details_modal:${source}`)
+    .setTitle(TEXT.MODAL.ticketDetails.title);
+
+  const subjectInput = new TextInputBuilder()
+    .setCustomId('ticket_subject')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder(TEXT.MODAL.ticketDetails.subject.placeholder)
+    .setMaxLength(100)
+    .setRequired(false);
+  const subjectLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.ticketDetails.subject.label)
+    .setDescription(TEXT.MODAL.ticketDetails.subject.description)
+    .setTextInputComponent(subjectInput);
+
+  const bodyInput = new TextInputBuilder()
+    .setCustomId('ticket_body')
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder(TEXT.MODAL.ticketDetails.body.placeholder)
+    .setMaxLength(1000)
+    .setRequired(false);
+  const bodyLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.ticketDetails.body.label)
+    .setDescription(TEXT.MODAL.ticketDetails.body.description)
+    .setTextInputComponent(bodyInput);
+
+  modal.addLabelComponents(subjectLabel, bodyLabel);
+  return modal;
+}
+
+module.exports = { buildBountyModal, buildApproveEditModal, buildClaimProofModal, buildTicketDetailsModal };
