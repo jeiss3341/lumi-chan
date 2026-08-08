@@ -10,9 +10,9 @@ const {
 } = require('discord.js');
 const { buildPanel } = require('./src/panel');
 const { buildBountyModal } = require('./src/modal');
-const { buildBountyEmbed, bannerAttachment } = require('./src/bountyCard');
+const { buildBountyEmbed } = require('./src/bountyCard');
 const { createTicket, previewButtons } = require('./src/ticket');
-const { COLORS } = require('./src/constants');
+const { COLORS, BANNER_URL } = require('./src/constants');
 
 // We only need the Guilds intent. No Message Content intent required, so you
 // don't have to flip any privileged-intent toggles in the Developer Portal.
@@ -187,11 +187,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           bountyId,
         });
 
-        pendingBounties.delete(interaction.user.id);
+      pendingBounties.delete(interaction.user.id);
+
+        const readyBanner = new EmbedBuilder().setImage(BANNER_URL);
 
         await interaction.editReply({
           content: `✅ Your bounty ticket is ready: ${channel}`,
-          embeds: [],
+          embeds: [readyBanner],
           components: [],
         });
       } catch (err) {
@@ -254,7 +256,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (boardChannelId) {
         const board = await interaction.guild.channels.fetch(boardChannelId).catch(() => null);
         if (board) {
-          await board.send({ embeds: [approved], files: [bannerAttachment()] });
+          await board.send({ embeds: [approved] });
           boardNote = ` and posted to ${board}`;
         }
       }
@@ -313,7 +315,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         content:
           "Here's your bounty preview. Press **Submit** to open a private ticket and send it to staff — or **Close** to cancel. Nothing is created until you submit.",
         embeds: [embed],
-        files: [bannerAttachment()],
         components: [previewButtons()],
         flags: MessageFlags.Ephemeral,
       });

@@ -1,5 +1,5 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { COLORS } = require('./constants');
+const { COLORS, BANNER_URL } = require('./constants');
 
 // The panel that lives (permanently) in the read-only bounty channel.
 // Users can't type there — they interact through the button.
@@ -20,6 +20,7 @@ function buildPanel() {
         '> 📜 Within Eternal Return TOS',
       ].join('\n'),
     )
+    .setImage(BANNER_URL)
     .setFooter({ text: 'Coastal Clash • Bounty System' });
 
   const row = new ActionRowBuilder().addComponents(

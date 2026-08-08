@@ -1,5 +1,4 @@
-// Central place for colors so the panel and cards stay consistent.
-// Swap `brand` for your Coastal Clash accent whenever you like.
+// Central place for colors + assets so the panel and cards stay consistent.
 module.exports = {
   COLORS: {
     brand: 0xc5efff, // panel / brand accent (Coastal Clash icy blue)
@@ -7,4 +6,7 @@ module.exports = {
     approved: 0x57f287, // green
     denied: 0xed4245, // red
   },
+
+  // Banner shown inside bounty card embeds (renders once, no duplicate).
+  BANNER_URL: 'https://i.imgur.com/4k7eFBF.jpeg',
 };
