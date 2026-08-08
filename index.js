@@ -136,6 +136,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       return;
     }
+// /readme  →  how the system works (staff only)
+    if (interaction.isChatInputCommand() && interaction.commandName === 'readme') {
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.brand)
+        .setTitle('📖 How the Bounty System Works')
+        .setDescription(
+          [
+            '**For players:**',
+            '> 1. Press **Request Bounty** on the panel.',
+            '> 2. Fill out the form (name, description, solo/stackable, reward).',
+            '> 3. Review the preview → **Submit** to open a ticket, or **Close** to cancel.',
+            '> 4. A private channel opens where staff review it with you.',
+            '',
+            '**For staff:**',
+            '> • Submitted bounties open a private ticket and ping the staff role.',
+            '> • **Approve** → logs it, posts the card to the board channel.',
+            '> • **Deny** → closes the ticket.',
+            '> • `/allbounties status:` → list approved / pending / denied / all.',
+            '> • `/deploy` → set the category, staff role, and board channel (setup).',
+          ].join('\n'),
+        )
+        .setImage(BANNER_URL)
+        .setFooter({ text: 'Coastal Clash • Bounty System' });
+
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      return;
+    }
+
 
     // "Request Bounty" button  →  pop the modal form
     // NOTE: showModal must be the FIRST response to the interaction.

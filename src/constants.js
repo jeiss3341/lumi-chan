@@ -2,7 +2,7 @@
 module.exports = {
   COLORS: {
     brand: 0xc5efff, // panel / brand accent (Coastal Clash icy blue)
-    pending: 0x5865f2, // blurple while awaiting review
+    pending: 0xc5efff, // blurple while awaiting review
     approved: 0x57f287, // green
     denied: 0xed4245, // red
   },

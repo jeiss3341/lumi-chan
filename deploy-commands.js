@@ -53,6 +53,11 @@ const commands = [
         .setRequired(false),
     )
     .toJSON(),
+    new SlashCommandBuilder()
+    .setName('readme')
+    .setDescription('How the bounty system works (staff only).')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
 ];
 
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
