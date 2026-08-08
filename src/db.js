@@ -161,6 +161,28 @@
     return setSetting('claim_staff_user', userId);
   }
 
+  // And the public channel where finalized (approved) claims get posted —
+  // its own log, separate from the request board.
+  function getClaimBoardChannel() {
+    return getSetting('claim_board_channel');
+  }
+
+  function setClaimBoardChannel(channelId) {
+    return setSetting('claim_board_channel', channelId);
+  }
+
+  // And the category a claim ticket channel gets MOVED to once its claim is
+  // approved — meant to be a private/staff-only category, so the resolved
+  // ticket disappears from general view instead of sitting around or getting
+  // deleted outright.
+  function getClaimArchiveCategory() {
+    return getSetting('claim_archive_category');
+  }
+
+  function setClaimArchiveCategory(categoryId) {
+    return setSetting('claim_archive_category', categoryId);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Bounty records
   // ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +299,10 @@
     setClaimStaffRole,
     getClaimStaffUser,
     setClaimStaffUser,
+    getClaimBoardChannel,
+    setClaimBoardChannel,
+    getClaimArchiveCategory,
+    setClaimArchiveCategory,
     createBounty,
     getBountyById,
     updateBounty,

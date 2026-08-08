@@ -37,6 +37,10 @@ const {
   getClaimStaffRole,
   setClaimStaffUser,
   getClaimStaffUser,
+  setClaimBoardChannel,
+  getClaimBoardChannel,
+  setClaimArchiveCategory,
+  getClaimArchiveCategory,
   createBounty,
   getBountyById,
   updateBounty,
@@ -235,6 +239,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // (entirely separate from the request pipeline's), then post the claim panel.
     if (interaction.isChatInputCommand() && interaction.commandName === 'deployclaimbounty') {
       const category = interaction.options.getChannel('category');
+      const board = interaction.options.getChannel('board');
+      const archiveCategory = interaction.options.getChannel('archive_category');
       const staffRole = interaction.options.getRole('staff_role');
       const staffUser = interaction.options.getUser('staff_user');
 
@@ -247,6 +253,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await setClaimTicketCategory(category.id);
+      await setClaimBoardChannel(board.id);
+      await setClaimArchiveCategory(archiveCategory.id);
       if (staffRole) await setClaimStaffRole(staffRole.id); else await clearSetting('claim_staff_role');
       if (staffUser) await setClaimStaffUser(staffUser.id); else await clearSetting('claim_staff_user');
 
@@ -255,7 +263,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const reviewers = describeReviewers(staffRole, staffUser);
 
       await interaction.reply({
-        content: `✅ Claim board deployed. Claims open under **${category.name}**, reviewed by **${reviewers}**.`,
+        content: `🏁 Claim board deployed. Claims open under **${category.name}**, reviewed by **${reviewers}**, finalized claims post to ${board}, and approved tickets move to **${archiveCategory.name}**.`,
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -285,11 +293,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
             '> • Submitted bounties open a private ticket and ping the staff role.',
             '> • **Approve** → edit if needed, logs it, posts the card to the board channel.',
             '> • **Deny** → closes the ticket.',
-            '> • **Approve Claim** → marks it claimed, updates the board card.',
+            '> • **Approve Claim** → marks it claimed, updates the board card, archives the ticket.',
             '> • **Deny Claim** → closes the ticket; bounty stays claimable.',
             '> • `/allbounties status:` → list approved / pending / claimed / denied / all.',
             '> • `/deployrequestbounty` → set the category, staff, and board channel for requests (setup).',
-            '> • `/deployclaimbounty` → set the category and staff for claims, own channel (setup).',
+            '> • `/deployclaimbounty` → set the category, staff, board, and archive category for claims (setup).',
           ].join('\n'),
         )
         .setImage(BANNER_URL)
@@ -408,8 +416,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         await interaction.followUp({
-          content: `✅ **Approved** by ${interaction.user}${boardNote}.`,
+          content: `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
         });
+        closeChannelSoon(interaction.channel);
         return;
       }
 
@@ -462,8 +471,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // Approve/edit modal submitted  →  save whatever staff edited, THEN
-    // finalize approval and ship it to the board. This is what "Approve"
-    // actually commits — the button click above only opens this modal.
+    // finalize approval, ship it to the board, and close the ticket. This is
+    // what "Approve" actually commits — the button click above only opens
+    // this modal.
     if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_edit_modal')) {
       const bountyId = customIdArg(interaction);
 
@@ -511,8 +521,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.followUp({
-        content: `✅ **Approved** by ${interaction.user}${boardNote}.`,
+        content: `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
       });
+      closeChannelSoon(interaction.channel);
       return;
     }
 
@@ -605,7 +616,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           categoryId,
         });
 
-        await interaction.editReply({ content: `✅ Your claim is in: ${channel}` });
+        await interaction.editReply({ content: `🏁 Your claim is in: ${channel}` });
       } catch (err) {
         await interaction.editReply({ content: ticketCreationError(err, 'deployclaimbounty', 'claim') });
       }
@@ -613,8 +624,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // "Approve Claim" inside a claim ticket  →  staff only. Finalizes the
-    // claim (guarded against a bounty already claimed elsewhere) and updates
-    // the original board post to show it's no longer available.
+    // claim (guarded against a bounty already claimed elsewhere), marks the
+    // original request-board post claimed, and logs it to the claim board.
     if (interaction.isButton() && interaction.customId.startsWith('approve_claim')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'approve claims'))) return;
 
@@ -635,7 +646,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0]).setColor(COLORS.approved);
       await interaction.update({ embeds: [approvedEmbed], components: [] });
 
-      let boardNote = '';
+      const notes = [];
+
       if (updated.board_channel_id && updated.board_message_id) {
         const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);
         const boardMsg = boardChannel
@@ -644,14 +656,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (boardMsg?.embeds[0]) {
           const claimedEmbed = EmbedBuilder.from(boardMsg.embeds[0])
             .setColor(COLORS.claimed)
-            .setTitle(`🔒 CLAIMED — ${updated.name}`);
+            .setTitle(`🏁 CLAIMED — ${updated.name}`);
           await boardMsg.edit({ embeds: [claimedEmbed] }).catch(console.error);
-          boardNote = ' and marked claimed on the board';
+          notes.push('marked claimed on the board');
         }
       }
 
+      const claimBoardChannelId = await getClaimBoardChannel();
+      if (claimBoardChannelId) {
+        const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
+        if (claimBoard) {
+          await claimBoard.send({ embeds: [approvedEmbed] }).catch(console.error);
+          notes.push(`posted to ${claimBoard}`);
+        }
+      }
+
+      // Move the resolved ticket out of general view instead of deleting it —
+      // lockPermissions adopts the archive category's own overwrites, so it
+      // drops out of everyone's sight except whoever that category is scoped to.
+      const archiveCategoryId = await getClaimArchiveCategory();
+      if (archiveCategoryId) {
+        await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
+        notes.push('archived');
+      }
+
+      const boardNote = notes.length ? ` and ${notes.join(' and ')}` : '';
+
       await interaction.followUp({
-        content: `✅ **Claim approved** by ${interaction.user}${boardNote}.`,
+        content: `🏁 **Claim approved** by ${interaction.user}${boardNote}.`,
       });
       return;
     }

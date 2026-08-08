@@ -16,7 +16,7 @@
   function buildBountyEmbed({ name, description, amountRaw, user, status = 'pending' }) {
     return new EmbedBuilder()
       .setColor(COLORS[status] ?? COLORS.pending)
-      .setTitle(`📥 Bounty Request: ${name}`)
+      .setTitle(`🏖️ Bounty Request: ${name}`)
       .setDescription(description)
       .setThumbnail(user.displayAvatarURL())
       .addFields(

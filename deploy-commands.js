@@ -74,6 +74,20 @@ const commands = [
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true),
     )
+    .addChannelOption((option) =>
+      option
+        .setName('board')
+        .setDescription('The public channel where finalized (approved) claims are posted.')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true),
+    )
+    .addChannelOption((option) =>
+      option
+        .setName('archive_category')
+        .setDescription('Category approved claim tickets get MOVED to (make this private/staff-only).')
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true),
+    )
     // Optional: a specific person that can review/approve claims + gets pinged.
     .addUserOption((option) =>
       option

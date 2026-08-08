@@ -1,11 +1,11 @@
 // Central place for colors + assets so the panel and cards stay consistent.
 module.exports = {
   COLORS: {
-    brand: 0xc5efff, // panel / brand accent (Coastal Clash icy blue)
-    pending: 0xc5efff, // blurple while awaiting review
-    approved: 0x57f287, // green
-    denied: 0xed4245, // red
-    claimed: 0x99aab5, // muted grey, shown on the board once a bounty is claimed
+    brand: 0x39c5f2, // panel / brand accent — vivid ocean blue
+    pending: 0x39c5f2, // same ocean blue while awaiting review
+    approved: 0x1abc9c, // tropical turquoise, reads as "good to go"
+    denied: 0xff6b6b, // coral red, still unmistakably "no"
+    claimed: 0x576574, // charcoal, echoes the checkered flag once it's done
   },
 
   // Banner shown inside bounty card embeds (renders once, no duplicate).

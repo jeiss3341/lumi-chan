@@ -28,7 +28,7 @@ function buildPanel() {
       .setCustomId('request_bounty')
       .setLabel('Request Bounty')
       .setStyle(ButtonStyle.Success)
-      .setEmoji('📥'),
+      .setEmoji('🏖️'),
   );
 
   return { embeds: [embed], components: [row] };
