@@ -12,20 +12,29 @@
 // want to tweak one of those; everything fully static is here instead.
 //
 // ── QUICK MAP, BY WHAT YOU'RE TRYING TO CHANGE ──────────────────────────────
-// Colors / banner image ......... VISUALS
-// Request board + button ........ PANEL.request
-// Claim board + button .......... PANEL.claim
-// Request card (title/fields) ... CARD.request
-// Claim card (title/fields) ..... CARD.claim
-// "Request Bounty" form .......... MODAL.bountyRequest
-// Staff's approve/edit form ..... MODAL.approveEdit
-// Claim proof form .............. MODAL.claimProof
-// Ticket buttons + pings ........ TICKET
-// /readme content ................ README
-// Q&A board + topics (public) ... PANEL.qanda, QANDA
-// Support board (public) ........ PANEL.ticket
-// Bot's ephemeral replies ....... REPLIES
-// Slash command descriptions .... COMMANDS (needs `node deploy-commands.js` after editing)
+// (Listed in the same order the sections actually appear below.)
+//
+// Colors / banner image ................. VISUALS
+// Shared embed footer .................... FOOTER
+// The four permanent boards + buttons:
+//   Request board ......................... PANEL.request
+//   Claim board ........................... PANEL.claim
+//   Q&A board .............................. PANEL.qanda
+//   Support board .......................... PANEL.ticket
+// Bounty/claim card titles + field names . CARD.request, CARD.claim
+// Popup forms:
+//   "Request Bounty" form ................. MODAL.bountyRequest
+//   Staff's approve/edit form ............. MODAL.approveEdit
+//   Claim proof form ....................... MODAL.claimProof
+//   "Talk to Staff" details form .......... MODAL.ticketDetails
+// Ticket buttons + "no staff configured" .. TICKET
+// /readme content .......................... README
+// Q&A popup's topics (public) ............ QANDA
+// /allbounties status-group headers ...... ALL_BOUNTIES
+// Bot's ephemeral replies/errors .......... REPLIES
+// Slash command descriptions .............. COMMANDS
+//   (^ that last one needs `node deploy-commands.js` re-run after editing —
+//   everything else here just needs a bot restart)
 // ─────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -47,6 +56,9 @@ module.exports = {
   // /readme). One shared string so it only needs updating in one place.
   FOOTER: 'Coastal Clash • Bounty System',
 
+  // The four permanent boards, in the order players actually encounter
+  // them: put in a request, claim it once approved, or (if something's
+  // unclear) check the Q&A board / talk to a person.
   PANEL: {
     // src/panel.js → buildPanel(). The permanent request-board message.
     request: {
@@ -81,8 +93,21 @@ module.exports = {
       buttonLabel: 'Claim Bounty',
       buttonEmoji: '🏁',
     },
+    // src/panel.js → buildQandAPanel(). The permanent Q&A board message —
+    // entirely separate from the support board below. Its button replies
+    // with a topic dropdown; nothing gets sent to staff no matter what's picked.
+    qanda: {
+      title: '❓ Q&A',
+      description: [
+        'Got a question about requesting, claiming, or the event rules? Press **Ask a Question** below.',
+        '',
+        "You'll pick a topic from the dropdown and get an instant answer — nothing is submitted to staff.",
+      ],
+      buttonLabel: 'Ask a Question',
+      buttonEmoji: '❓',
+    },
     // src/panel.js → buildTicketPanel(). The permanent support-ticket board
-    // message — entirely separate from the Q&A board below. Its button skips
+    // message — entirely separate from the Q&A board above. Its button skips
     // straight to creating a ticket, no topic picker involved.
     ticket: {
       title: '💬 Talk to Staff',
@@ -97,19 +122,6 @@ module.exports = {
       ],
       buttonLabel: 'Talk to Staff',
       buttonEmoji: '💬',
-    },
-    // src/panel.js → buildQandAPanel(). The permanent Q&A board message —
-    // entirely separate from the support board above. Its button replies
-    // with a topic dropdown; nothing gets sent to staff no matter what's picked.
-    qanda: {
-      title: '❓ Q&A',
-      description: [
-        'Got a question about requesting, claiming, or the event rules? Press **Ask a Question** below.',
-        '',
-        "You'll pick a topic from the dropdown and get an instant answer — nothing is submitted to staff.",
-      ],
-      buttonLabel: 'Ask a Question',
-      buttonEmoji: '❓',
     },
   },
 
@@ -225,6 +237,10 @@ module.exports = {
     approveClaimEmoji: '✅',
     denyClaimButton: 'Deny Claim',
     denyClaimEmoji: '⛔',
+    // Grants the original bounty requester access to the claim ticket too,
+    // in case they want to weigh in before it's approved.
+    includeRequesterButton: 'Include Requester',
+    includeRequesterEmoji: '👥',
     // src/ticket.js → createHelpTicket(). The one button inside a general
     // support ticket — no approve/deny here, just closing it once resolved.
     closeHelpButton: 'Close Ticket',
@@ -263,6 +279,7 @@ module.exports = {
       '> • **Deny** → closes the ticket.',
       '> • **Approve Claim** → marks it claimed, updates the board card, archives the ticket.',
       '> • **Deny Claim** → closes the ticket; bounty stays claimable.',
+      '> • **Include Requester** → gives the original requester access to the claim ticket too.',
       '> • **Close Ticket** → closes a general support ticket opened via the support board.',
       '> • `/allbounties status: order:` → list approved / pending / claimed / denied / all, sorted newest / oldest / alphabetical.',
       '> • `/deployrequestbounty` → set the category, staff, and board channel for requests (setup).',
@@ -377,16 +394,23 @@ module.exports = {
   },
 
   // index.js → short ephemeral replies/errors sprinkled through the
-  // interaction handler, grouped roughly by which step triggers them.
+  // interaction handler. Grouped below by which step triggers them — the
+  // group comments are just for scanning, they don't affect anything.
   REPLIES: {
+    // /deployrequestbounty, /deployclaimbounty, /deployticket — shown if
+    // neither a staff role nor a staff person was picked.
     missingRequestStaff: '⚠️ Set at least a staff role or a staff person to review bounties.',
     missingClaimStaff: '⚠️ Set at least a staff role or a staff person to review claims.',
     missingTicketStaff: '⚠️ Set at least a staff role or a staff person to handle tickets.',
+
+    // Requesting a bounty (form → preview → submit).
     requestExpired: '⚠️ This request expired. Please start again from **Request Bounty**.',
     requestCancelled: '❌ Cancelled. No ticket was created.',
     requestPreview:
       "Here's your bounty preview. Press **Submit** to open a private ticket and send it to staff — or **Close** to cancel. Nothing is created until you submit.",
     bountyMissing: '⚠️ This bounty no longer exists in the database.',
+
+    // Claiming a bounty (pick from dropdown → proof → submit).
     noClaimableBounties: '📭 No approved bounties are available to claim right now.',
     claimPickPrompt: 'Which bounty are you claiming?',
     claimSelectPlaceholder: 'Choose a bounty to claim',
@@ -394,6 +418,9 @@ module.exports = {
     claimNoLongerAvailable: '⚠️ This bounty is no longer available to claim (it may have already been claimed).',
     claimFinalizeFailed:
       '⚠️ Could not finalize this claim — the bounty may have already been claimed elsewhere, or its record is missing.',
+    includeRequesterFailed: "⚠️ Couldn't find the original requester on this card.",
+
+    // Catch-all, used when nothing more specific applies.
     genericError: 'Something went wrong. Please ping staff.',
   },
 

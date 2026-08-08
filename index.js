@@ -14,7 +14,14 @@ const { buildPanel, buildClaimPanel, buildTicketPanel, buildQandAPanel } = requi
 const { buildQandAMenu, buildQandAAnswer } = require('./src/qanda');
 const { buildBountyModal, buildApproveEditModal, buildClaimProofModal, buildTicketDetailsModal } = require('./src/modal');
 const { buildBountyEmbed, buildClaimEmbed, formatAmount } = require('./src/bountyCard');
-const { createTicket, createClaimTicket, createHelpTicket, previewButtons } = require('./src/ticket');
+const {
+  createTicket,
+  createClaimTicket,
+  createHelpTicket,
+  toChannelName,
+  alphabetizeCategory,
+  previewButtons,
+} = require('./src/ticket');
 const TEXT = require('./src/text');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
@@ -779,6 +786,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // "Include Requester" inside a claim ticket  →  staff only. Grants the
+    // original bounty requester access to this private channel too, in case
+    // they want to weigh in before it's approved. Safe to click more than
+    // once — re-applying the same overwrite is a no-op.
+    if (interaction.isButton() && interaction.customId.startsWith('include_requester')) {
+      if (!(await requireStaff(interaction, getClaimStaff, 'include the requester'))) return;
+
+      const requesterId = interaction.message.embeds[0]
+        ? extractMentionId(interaction.message.embeds[0], TEXT.CARD.claim.fieldOriginalRequester)
+        : null;
+
+      if (!requesterId) {
+        await interaction.reply({ content: TEXT.REPLIES.includeRequesterFailed, flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      await interaction.channel.permissionOverwrites.create(requesterId, {
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+      });
+
+      await interaction.reply({
+        content: `👥 <@${requesterId}> has been added to this ticket by ${interaction.user}.`,
+      });
+      return;
+    }
+
     // "Approve Claim" inside a claim ticket  →  staff only. Finalizes the
     // claim (guarded against a bounty already claimed elsewhere), marks the
     // original request-board post claimed, and logs it to the claim board.
@@ -836,10 +871,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       // Move the resolved ticket out of general view instead of deleting it —
       // lockPermissions adopts the archive category's own overwrites, so it
-      // drops out of everyone's sight except whoever that category is scoped to.
+      // drops out of everyone's sight except whoever that category is scoped
+      // to. Renamed to reflect it's done, then that category gets
+      // re-alphabetized so it stays easy to scan by name.
       const archiveCategoryId = await getClaimArchiveCategory();
       if (archiveCategoryId) {
         await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
+        await interaction.channel.setName(toChannelName('declared', updated.name)).catch(console.error);
+        await alphabetizeCategory(interaction.channel.parent);
         notes.push('archived');
       }
 

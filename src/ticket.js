@@ -9,25 +9,64 @@ const {
 const TEXT = require('./text');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
-// Turn "jeiss" + "Catching 6789!" into a Discord-safe channel name like
-// "jeiss-catching-6789". Discord lowercases and hyphenates channel names anyway
-// and strips most punctuation, so we do it up front to keep the result
-// predictable. The pretty title (caps + punctuation) still lives in the embed.
-function toChannelName(nickname, title) {
-  const raw = `${nickname}-${title}`;
+// Turns parts like ('pending', 'jeiss', 'Catching 6789!') into a Discord-safe
+// channel name like "pending-jeiss-catching-6789". Discord lowercases and
+// hyphenates channel names anyway and strips most punctuation, so we do it
+// up front to keep the result predictable. The pretty title (caps +
+// punctuation) still lives in the embed. Order of parts is up to the caller
+// — request/claim tickets deliberately use different orders (see below).
+function toChannelName(...parts) {
+  const raw = parts.join('-');
   let clean = raw
     .toLowerCase()
     .replace(/[^a-z0-9\s_-]/g, '') // drop anything Discord wouldn't keep
     .trim()
     .replace(/\s+/g, '-') // spaces → hyphens
-    .replace(/-+/g, '-'); // collapse repeated hyphens
+    .replace(/-+/g, '-') // collapse repeated hyphens
+    .replace(/^-+|-+$/g, ''); // drop leading/trailing hyphens (e.g. a part that was emoji-only)
 
   if (!clean) {
-    // Title was all emoji/symbols and stripped to nothing — fall back to nickname.
-    clean = nickname.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'bounty';
+    // Every part was all emoji/symbols and stripped to nothing — fall back
+    // to just the first part (usually the status prefix, e.g. "pending").
+    clean = parts[0]?.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'bounty';
   }
 
   return clean.slice(0, 90); // stay well under Discord's 100-char limit
+}
+
+// Default sort: plain alphabetical by channel name.
+function byName(a, b) {
+  return a.name.localeCompare(b.name);
+}
+
+// Claim tickets sort by bounty title first, then by creation time within
+// matching titles (oldest first) — so if the same bounty gets claimed by
+// multiple people before one is approved, whoever went first shows first.
+// The title comes from the channel's TOPIC, not parsed from its name: the
+// name is "claim-{title}-{claimant}" and both halves are slugified, so
+// there's no reliable way to tell where the title ends and the claimant's
+// name begins just from the string. Falls back to the name itself for any
+// channel that predates this (no topic set).
+function byClaimTitleThenAge(a, b) {
+  const titleCompare = (a.topic || a.name).localeCompare(b.topic || b.name);
+  if (titleCompare !== 0) return titleCompare;
+  return a.createdTimestamp - b.createdTimestamp;
+}
+
+// Re-sorts every channel directly in `category`, in ONE bulk API call (not
+// one call per channel). `compare` defaults to plain alphabetical by name;
+// pass byClaimTitleThenAge (or another comparator) for categories that need
+// smarter grouping. Called after a ticket lands in a category so browsing it
+// doesn't depend on creation order. Swallows its own errors — if the bot's
+// permissions don't allow reordering, the ticket itself still exists and
+// works fine, it just stays wherever Discord put it.
+async function alphabetizeCategory(category, compare = byName) {
+  if (!category) return;
+  const channels = [...category.children.cache.values()].sort(compare);
+  if (channels.length === 0) return;
+  await category.guild.channels
+    .setPositions(channels.map((channel, position) => ({ channel, position })))
+    .catch(console.error);
 }
 
 // [Submit] [Close] shown on the EPHEMERAL preview, before any channel exists.
@@ -79,6 +118,11 @@ function claimReviewButtons(bountyId) {
       .setLabel(TEXT.TICKET.denyClaimButton)
       .setStyle(ButtonStyle.Danger)
       .setEmoji(TEXT.TICKET.denyClaimEmoji),
+    new ButtonBuilder()
+      .setCustomId(`include_requester:${bountyId}`)
+      .setLabel(TEXT.TICKET.includeRequesterButton)
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji(TEXT.TICKET.includeRequesterEmoji),
   );
 }
 
@@ -109,7 +153,7 @@ function staffMentions(staffRoleId, staffUserId) {
 // different categories, each set by their own /deploy* command.
 //
 // Throws 'NO_CATEGORY' if that category was never configured.
-async function createReviewChannel({ guild, member, botId, channelName, staffRoleId, staffUserId, categoryId }) {
+async function createReviewChannel({ guild, member, botId, channelName, staffRoleId, staffUserId, categoryId, topic }) {
   if (!categoryId) throw new Error('NO_CATEGORY');
 
   const overwrites = [
@@ -164,6 +208,7 @@ async function createReviewChannel({ guild, member, botId, channelName, staffRol
     type: ChannelType.GuildText,
     parent: categoryId,
     permissionOverwrites: overwrites,
+    ...(topic ? { topic } : {}),
   });
 }
 
@@ -171,9 +216,11 @@ async function createReviewChannel({ guild, member, botId, channelName, staffRol
 // the requester presses Submit on the preview — so the bounty is already
 // "submitted" by this point. The channel is created with staff already able
 // to see it, the card posted inside, staff pinged, and Approve/Deny ready.
+// Named "pending-{requester}-{title}" and the category gets re-alphabetized
+// so it's easy to scan by name, not by whoever opened a ticket last.
 // Returns the channel. Throws 'NO_CATEGORY' if that category was never set.
 async function createTicket({ guild, member, botId, embed, title, staffRoleId, staffUserId, bountyId, categoryId }) {
-  const channelName = toChannelName(member.displayName, title);
+  const channelName = toChannelName('pending', member.displayName, title);
   const channel = await createReviewChannel({ guild, member, botId, channelName, staffRoleId, staffUserId, categoryId });
 
   const mentions = staffMentions(staffRoleId, staffUserId);
@@ -189,16 +236,31 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, s
     },
   });
 
+  await alphabetizeCategory(channel.parent);
   return channel;
 }
 
 // Same idea, for a bounty CLAIM: opened right after the claimant submits the
 // proof modal. `files` (Attachment objects from the modal's file-upload
 // field) get re-posted as a follow-up message so staff see the proof inline.
-// Throws 'NO_CATEGORY' if that category was never set.
+// Named "claim-{title}-{claimant}" (title first, unlike the request ticket
+// above — matches how these are meant to be browsed, by which bounty). The
+// exact title also gets stored as the channel's topic (see byClaimTitleThenAge)
+// so the category can be grouped by bounty, oldest attempt first within each
+// group, without having to reverse-parse the channel name. Throws
+// 'NO_CATEGORY' if that category was never set.
 async function createClaimTicket({ guild, member, botId, embed, title, staffRoleId, staffUserId, bountyId, files, categoryId }) {
-  const channelName = toChannelName(`claim-${member.displayName}`, title);
-  const channel = await createReviewChannel({ guild, member, botId, channelName, staffRoleId, staffUserId, categoryId });
+  const channelName = toChannelName('claim', title, member.displayName);
+  const channel = await createReviewChannel({
+    guild,
+    member,
+    botId,
+    channelName,
+    staffRoleId,
+    staffUserId,
+    categoryId,
+    topic: title,
+  });
 
   const mentions = staffMentions(staffRoleId, staffUserId);
   await channel.send({
@@ -217,6 +279,7 @@ async function createClaimTicket({ guild, member, botId, embed, title, staffRole
     await channel.send({ files: files.map((f) => ({ attachment: f.url, name: f.name })) });
   }
 
+  await alphabetizeCategory(channel.parent, byClaimTitleThenAge);
   return channel;
 }
 
@@ -261,6 +324,7 @@ module.exports = {
   createClaimTicket,
   createHelpTicket,
   toChannelName,
+  alphabetizeCategory,
   previewButtons,
   staffReviewButtons,
   claimReviewButtons,
