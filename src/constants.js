@@ -5,6 +5,7 @@ module.exports = {
     pending: 0xc5efff, // blurple while awaiting review
     approved: 0x57f287, // green
     denied: 0xed4245, // red
+    claimed: 0x99aab5, // muted grey, shown on the board once a bounty is claimed
   },
 
   // Banner shown inside bounty card embeds (renders once, no duplicate).

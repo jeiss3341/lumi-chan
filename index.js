@@ -7,11 +7,13 @@ const {
   MessageFlags,
   EmbedBuilder,
   PermissionFlagsBits,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
 } = require('discord.js');
-const { buildPanel } = require('./src/panel');
-const { buildBountyModal, buildApproveEditModal } = require('./src/modal');
-const { buildBountyEmbed } = require('./src/bountyCard');
-const { createTicket, previewButtons } = require('./src/ticket');
+const { buildPanel, buildClaimPanel } = require('./src/panel');
+const { buildBountyModal, buildApproveEditModal, buildClaimProofModal } = require('./src/modal');
+const { buildBountyEmbed, buildClaimEmbed, formatAmount } = require('./src/bountyCard');
+const { createTicket, createClaimTicket, previewButtons } = require('./src/ticket');
 const { COLORS, BANNER_URL } = require('./src/constants');
 
 // We only need the Guilds intent. No Message Content intent required, so you
@@ -21,6 +23,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const {
   initDb,
   setTicketCategory,
+  getTicketCategory,
   setStaffRole,
   getStaffRole,
   setStaffUser,
@@ -28,13 +31,31 @@ const {
   clearSetting,
   setBoardChannel,
   getBoardChannel,
+  setClaimTicketCategory,
+  getClaimTicketCategory,
+  setClaimStaffRole,
+  getClaimStaffRole,
+  setClaimStaffUser,
+  getClaimStaffUser,
   createBounty,
   getBountyById,
   updateBounty,
   approveBounty,
   denyBounty,
   getBounties,
+  getClaimableBounties,
+  setBoardMessage,
+  claimBounty,
 } = require('./src/db');
+
+// Pulls the Discord user ID out of an embed field's mention value, e.g. reads
+// "<@123>" back out of a field named 'Claimant'. Used on Approve Claim, where
+// the claimant's ID isn't otherwise threaded through the customId.
+function extractMentionId(embed, fieldName) {
+  const field = embed.fields.find((f) => f.name === fieldName);
+  const match = field?.value.match(/<@!?(\d+)>/);
+  return match ? match[1] : null;
+}
 
 // Pull the first number out of free-text like "$10" or "10 bucks" → 10.
 function parseReward(raw) {
@@ -69,6 +90,52 @@ function isStaff(member, staffRoleId, staffUserId) {
   return false;
 }
 
+// Fetches a pipeline's configured staff (role and/or person) as one pair,
+// since every call site needs both together.
+async function getRequestStaff() {
+  return { staffRoleId: await getStaffRole(), staffUserId: await getStaffUser() };
+}
+
+async function getClaimStaff() {
+  return { staffRoleId: await getClaimStaffRole(), staffUserId: await getClaimStaffUser() };
+}
+
+// Replies with an ephemeral "only staff" message and returns false if the
+// invoking member doesn't qualify. Callers do:
+// `if (!(await requireStaff(interaction, getRequestStaff, 'approve bounties'))) return;`
+async function requireStaff(interaction, getStaffIds, action) {
+  const { staffRoleId, staffUserId } = await getStaffIds();
+  if (isStaff(interaction.member, staffRoleId, staffUserId)) return true;
+  await interaction.reply({ content: `⛔ Only staff can ${action}.`, flags: MessageFlags.Ephemeral });
+  return false;
+}
+
+// The bounty/claim id baked into a customId like "approve_bounty:42".
+function customIdArg(interaction) {
+  return interaction.customId.split(':')[1];
+}
+
+// Deny buttons just close the ticket a few seconds later, so staff's message
+// is visible first.
+function closeChannelSoon(channel, delayMs = 4000) {
+  setTimeout(() => channel.delete().catch(() => {}), delayMs);
+}
+
+// Shared by /deployrequestbounty and /deployclaimbounty's confirmation replies.
+function describeReviewers(staffRole, staffUser) {
+  return [staffRole?.name, staffUser ? `@${staffUser.username}` : null].filter(Boolean).join(' and ');
+}
+
+// Shared by ticket_submit and claim_proof_modal: both create a private
+// channel and can fail the same two ways.
+function ticketCreationError(err, deployCommand, kind) {
+  if (err.message === 'NO_CATEGORY') {
+    return `⚠️ Setup isn't finished yet — a staff member needs to run \`/${deployCommand}\` and pick a ticket category first.`;
+  }
+  console.error(err);
+  return `❌ I couldn't create your ${kind} channel. This usually means I'm missing the **Manage Channels** permission. Please ping staff.`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ONE global interaction handler. Everything routes off a static customId.
 //
@@ -79,8 +146,8 @@ function isStaff(member, staffRoleId, staffUserId) {
 // ─────────────────────────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    // /deploy  →  save category + staff (role and/or person) + board channel, then post the panel
-    if (interaction.isChatInputCommand() && interaction.commandName === 'deploy') {
+    // /deployrequestbounty  →  save category + staff (role and/or person) + board channel, then post the panel
+    if (interaction.isChatInputCommand() && interaction.commandName === 'deployrequestbounty') {
       const category = interaction.options.getChannel('category');
       const board = interaction.options.getChannel('board');
       const staffRole = interaction.options.getRole('staff_role');
@@ -101,9 +168,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await interaction.channel.send(buildPanel());
 
-      const reviewers = [staffRole?.name, staffUser ? `@${staffUser.username}` : null]
-        .filter(Boolean)
-        .join(' and ');
+      const reviewers = describeReviewers(staffRole, staffUser);
 
       await interaction.reply({
         content: `✅ Bounty panel deployed. Tickets open under **${category.name}**, reviewed by **${reviewers}**, approved bounties post to ${board}.`,
@@ -138,7 +203,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const reward = b.reward != null ? `$${b.reward}` : '—';
 
         let meta = `by <@${b.requester_id}>`;
-        if (b.status === 'approved' && b.approver_id) {
+        if (b.status === 'claimed' && b.claimer_id) {
+          const when = dateTag(b.claimed_at);
+          meta += ` · 🔒 claimed by <@${b.claimer_id}>${when ? ` · ${when}` : ''}`;
+        } else if (b.status === 'approved' && b.approver_id) {
           const when = dateTag(b.approved_at);
           meta += ` · ✅ approved by <@${b.approver_id}>${when ? ` · ${when}` : ''}`;
         } else if (b.status === 'denied' && b.approver_id) {
@@ -163,6 +231,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       return;
     }
+    // /deployclaimbounty  →  save the CLAIM pipeline's own category + staff
+    // (entirely separate from the request pipeline's), then post the claim panel.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'deployclaimbounty') {
+      const category = interaction.options.getChannel('category');
+      const staffRole = interaction.options.getRole('staff_role');
+      const staffUser = interaction.options.getUser('staff_user');
+
+      if (!staffRole && !staffUser) {
+        await interaction.reply({
+          content: '⚠️ Set at least a staff role or a staff person to review claims.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      await setClaimTicketCategory(category.id);
+      if (staffRole) await setClaimStaffRole(staffRole.id); else await clearSetting('claim_staff_role');
+      if (staffUser) await setClaimStaffUser(staffUser.id); else await clearSetting('claim_staff_user');
+
+      await interaction.channel.send(buildClaimPanel());
+
+      const reviewers = describeReviewers(staffRole, staffUser);
+
+      await interaction.reply({
+        content: `✅ Claim board deployed. Claims open under **${category.name}**, reviewed by **${reviewers}**.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
 // /readme  →  how the system works (staff only)
     if (interaction.isChatInputCommand() && interaction.commandName === 'readme') {
       const embed = new EmbedBuilder()
@@ -176,12 +274,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
             '> 3. Review the preview → **Submit** to open a ticket, or **Close** to cancel.',
             '> 4. A private channel opens where staff review it with you.',
             '',
+            '',
+            '**Claiming a bounty:**',
+            '> 1. Press **Claim Bounty** on the claim board.',
+            '> 2. Pick which approved bounty you completed from the dropdown.',
+            '> 3. Fill out proof (notes + a screenshot or clip) and submit.',
+            '> 4. A private channel opens where staff verify your claim.',
+            '',
             '**For staff:**',
             '> • Submitted bounties open a private ticket and ping the staff role.',
-            '> • **Approve** → logs it, posts the card to the board channel.',
+            '> • **Approve** → edit if needed, logs it, posts the card to the board channel.',
             '> • **Deny** → closes the ticket.',
-            '> • `/allbounties status:` → list approved / pending / denied / all.',
-            '> • `/deploy` → set the category, staff role, and board channel (setup).',
+            '> • **Approve Claim** → marks it claimed, updates the board card.',
+            '> • **Deny Claim** → closes the ticket; bounty stays claimable.',
+            '> • `/allbounties status:` → list approved / pending / claimed / denied / all.',
+            '> • `/deployrequestbounty` → set the category, staff, and board channel for requests (setup).',
+            '> • `/deployclaimbounty` → set the category and staff for claims, own channel (setup).',
           ].join('\n'),
         )
         .setImage(BANNER_URL)
@@ -221,8 +329,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
 
       try {
-        const staffRoleId = await getStaffRole();
-        const staffUserId = await getStaffUser();
+        const { staffRoleId, staffUserId } = await getRequestStaff();
+        const categoryId = await getTicketCategory();
 
         // Record the bounty as 'pending' so it has a DB id for the buttons.
         const bountyId = await createBounty({
@@ -241,9 +349,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           staffRoleId,
           staffUserId,
           bountyId,
+          categoryId,
         });
 
-      pendingBounties.delete(interaction.user.id);
+        pendingBounties.delete(interaction.user.id);
 
         const readyBanner = new EmbedBuilder().setImage(BANNER_URL);
 
@@ -254,22 +363,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       } catch (err) {
         pendingBounties.delete(interaction.user.id);
-        if (err.message === 'NO_CATEGORY') {
-          await interaction.editReply({
-            content:
-              "⚠️ Setup isn't finished yet — a staff member needs to run `/deploy` and pick a ticket category first.",
-            embeds: [],
-            components: [],
-          });
-        } else {
-          console.error(err);
-          await interaction.editReply({
-            content:
-              "❌ I couldn't create your ticket channel. This usually means I'm missing the **Manage Channels** permission. Please ping staff.",
-            embeds: [],
-            components: [],
-          });
-        }
+        await interaction.editReply({
+          content: ticketCreationError(err, 'deployrequestbounty', 'ticket'),
+          embeds: [],
+          components: [],
+        });
       }
       return;
     }
@@ -289,17 +387,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // bounty first; nothing is finalized/shipped to the board until that modal
     // is submitted (see approve_edit_modal below).
     if (interaction.isButton() && interaction.customId.startsWith('approve_bounty')) {
-      const staffRoleId = await getStaffRole();
-      const staffUserId = await getStaffUser();
-      if (!isStaff(interaction.member, staffRoleId, staffUserId)) {
-        await interaction.reply({
-          content: '⛔ Only staff can approve bounties.',
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
+      if (!(await requireStaff(interaction, getRequestStaff, 'approve bounties'))) return;
 
-      const bountyId = interaction.customId.split(':')[1]; // may be undefined on old tickets
+      const bountyId = customIdArg(interaction); // may be undefined on old tickets
       const bounty = bountyId ? await getBountyById(bountyId) : null;
 
       if (!bounty) {
@@ -330,17 +420,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // "Deny" inside a ticket  →  staff only. Logs it, then closes the ticket.
     if (interaction.isButton() && interaction.customId.startsWith('deny_bounty')) {
-      const staffRoleId = await getStaffRole();
-      const staffUserId = await getStaffUser();
-      if (!isStaff(interaction.member, staffRoleId, staffUserId)) {
-        await interaction.reply({
-          content: '⛔ Only staff can deny bounties.',
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
+      if (!(await requireStaff(interaction, getRequestStaff, 'deny bounties'))) return;
 
-      const bountyId = interaction.customId.split(':')[1];
+      const bountyId = customIdArg(interaction);
       if (bountyId) {
         await denyBounty(bountyId, interaction.user.id).catch(console.error);
       }
@@ -348,9 +430,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         content: `⛔ **Denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
       });
-      setTimeout(() => {
-        interaction.channel.delete().catch(() => {});
-      }, 4000);
+      closeChannelSoon(interaction.channel);
       return;
     }
 
@@ -385,7 +465,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // finalize approval and ship it to the board. This is what "Approve"
     // actually commits — the button click above only opens this modal.
     if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_edit_modal')) {
-      const bountyId = interaction.customId.split(':')[1];
+      const bountyId = customIdArg(interaction);
 
       const name = interaction.fields.getTextInputValue('bounty_name');
       const description = interaction.fields.getTextInputValue('bounty_description');
@@ -417,13 +497,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // update() edits that same message (turns it green, drops the buttons).
       await interaction.update({ embeds: [approved], components: [] });
 
-      // Post the (possibly edited) approved card to the public board.
+      // Post the (possibly edited) approved card to the public board, and
+      // remember where it landed so a later claim can find and edit it.
       let boardNote = '';
       const boardChannelId = await getBoardChannel();
       if (boardChannelId) {
         const board = await interaction.guild.channels.fetch(boardChannelId).catch(() => null);
         if (board) {
-          await board.send({ embeds: [approved] });
+          const boardMsg = await board.send({ embeds: [approved] });
+          await setBoardMessage(bountyId, board.id, boardMsg.id).catch(console.error);
           boardNote = ` and posted to ${board}`;
         }
       }
@@ -431,6 +513,158 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.followUp({
         content: `✅ **Approved** by ${interaction.user}${boardNote}.`,
       });
+      return;
+    }
+
+    // "Claim Bounty" button on the claim board  →  show a dropdown of
+    // currently approved (and not yet claimed) bounties to pick from.
+    if (interaction.isButton() && interaction.customId === 'claim_bounty') {
+      const claimable = await getClaimableBounties();
+
+      if (claimable.length === 0) {
+        await interaction.reply({
+          content: '📭 No approved bounties are available to claim right now.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('claim_select')
+          .setPlaceholder('Choose a bounty to claim')
+          .addOptions(
+            claimable.map((b) => ({
+              label: b.name.slice(0, 100),
+              description: formatAmount(b.reward).slice(0, 100),
+              value: String(b.id),
+            })),
+          ),
+      );
+
+      await interaction.reply({
+        content: 'Which bounty are you claiming?',
+        components: [row],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // Bounty picked from the claim dropdown  →  pop the proof modal.
+    // NOTE: showModal must be the FIRST response to the interaction.
+    if (interaction.isStringSelectMenu() && interaction.customId === 'claim_select') {
+      const bounty = await getBountyById(interaction.values[0]);
+
+      if (!bounty || bounty.status !== 'approved') {
+        await interaction.update({
+          content: '⚠️ That bounty is no longer available to claim.',
+          components: [],
+        });
+        return;
+      }
+
+      await interaction.showModal(buildClaimProofModal(bounty));
+      return;
+    }
+
+    // Proof modal submitted  →  create the private claim ticket immediately.
+    // Unlike bounty requests there's no separate preview/submit step here —
+    // the proof itself (notes + files) IS the submission.
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('claim_proof_modal')) {
+      const bountyId = customIdArg(interaction);
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const bounty = await getBountyById(bountyId);
+      if (!bounty || bounty.status !== 'approved') {
+        await interaction.editReply({
+          content: '⚠️ This bounty is no longer available to claim (it may have already been claimed).',
+        });
+        return;
+      }
+
+      const notes = interaction.fields.getTextInputValue('claim_notes');
+      const uploaded = interaction.fields.getUploadedFiles('claim_files', false);
+      const files = uploaded ? [...uploaded.values()] : [];
+
+      const embed = buildClaimEmbed({ bounty, claimant: interaction.user, notes, status: 'pending' });
+
+      try {
+        const { staffRoleId, staffUserId } = await getClaimStaff();
+        const categoryId = await getClaimTicketCategory();
+
+        const channel = await createClaimTicket({
+          guild: interaction.guild,
+          member: interaction.member,
+          botId: client.user.id,
+          embed,
+          title: bounty.name,
+          staffRoleId,
+          staffUserId,
+          bountyId: bounty.id,
+          files,
+          categoryId,
+        });
+
+        await interaction.editReply({ content: `✅ Your claim is in: ${channel}` });
+      } catch (err) {
+        await interaction.editReply({ content: ticketCreationError(err, 'deployclaimbounty', 'claim') });
+      }
+      return;
+    }
+
+    // "Approve Claim" inside a claim ticket  →  staff only. Finalizes the
+    // claim (guarded against a bounty already claimed elsewhere) and updates
+    // the original board post to show it's no longer available.
+    if (interaction.isButton() && interaction.customId.startsWith('approve_claim')) {
+      if (!(await requireStaff(interaction, getClaimStaff, 'approve claims'))) return;
+
+      const bountyId = customIdArg(interaction);
+      const claimantId = interaction.message.embeds[0]
+        ? extractMentionId(interaction.message.embeds[0], 'Claimant')
+        : null;
+      const updated = bountyId && claimantId ? await claimBounty(bountyId, claimantId) : null;
+
+      if (!updated) {
+        await interaction.reply({
+          content: '⚠️ Could not finalize this claim — the bounty may have already been claimed elsewhere, or its record is missing.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0]).setColor(COLORS.approved);
+      await interaction.update({ embeds: [approvedEmbed], components: [] });
+
+      let boardNote = '';
+      if (updated.board_channel_id && updated.board_message_id) {
+        const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);
+        const boardMsg = boardChannel
+          ? await boardChannel.messages.fetch(updated.board_message_id).catch(() => null)
+          : null;
+        if (boardMsg?.embeds[0]) {
+          const claimedEmbed = EmbedBuilder.from(boardMsg.embeds[0])
+            .setColor(COLORS.claimed)
+            .setTitle(`🔒 CLAIMED — ${updated.name}`);
+          await boardMsg.edit({ embeds: [claimedEmbed] }).catch(console.error);
+          boardNote = ' and marked claimed on the board';
+        }
+      }
+
+      await interaction.followUp({
+        content: `✅ **Claim approved** by ${interaction.user}${boardNote}.`,
+      });
+      return;
+    }
+
+    // "Deny Claim" inside a claim ticket  →  staff only. Just closes the
+    // ticket; the bounty stays 'approved' so it's still claimable by anyone.
+    if (interaction.isButton() && interaction.customId.startsWith('deny_claim')) {
+      if (!(await requireStaff(interaction, getClaimStaff, 'deny claims'))) return;
+
+      await interaction.reply({
+        content: `⛔ **Claim denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
+      });
+      closeChannelSoon(interaction.channel);
       return;
     }
   } catch (err) {

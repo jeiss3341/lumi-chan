@@ -28,4 +28,23 @@
       .setTimestamp();
   }
 
-  module.exports = { buildBountyEmbed, formatAmount };
+  // Builds the claim-review card shown inside a claim ticket. `notes` is the
+  // claimant's proof/description text; the actual screenshot/clip is posted
+  // as a follow-up attachment message, not embedded here.
+  function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
+    return new EmbedBuilder()
+      .setColor(COLORS[status] ?? COLORS.pending)
+      .setTitle(`🏁 Bounty Claim: ${bounty.name}`)
+      .setDescription(notes)
+      .setThumbnail(claimant.displayAvatarURL())
+      .addFields(
+        { name: 'Claimant', value: `<@${claimant.id}>`, inline: true },
+        { name: 'Reward', value: formatAmount(bounty.reward), inline: true },
+        { name: 'Original Requester', value: `<@${bounty.requester_id}>`, inline: true },
+      )
+      .setImage(BANNER_URL)
+      .setFooter({ text: 'Coastal Clash • Bounty System' })
+      .setTimestamp();
+  }
+
+  module.exports = { buildBountyEmbed, buildClaimEmbed, formatAmount };

@@ -3,6 +3,7 @@ const {
   LabelBuilder,
   TextInputBuilder,
   TextInputStyle,
+  FileUploadBuilder,
 } = require('discord.js');
 
 // The bounty request form. Modern modals wrap every input in a LabelBuilder,
@@ -97,4 +98,37 @@ function buildApproveEditModal(bounty) {
   return modal;
 }
 
-module.exports = { buildBountyModal, buildApproveEditModal };
+// Shown after a claimant picks a bounty from the claim-board dropdown.
+// Collects the proof: written notes, plus an actual screenshot/clip upload —
+// no channel is created until this is submitted.
+function buildClaimProofModal(bounty) {
+  const modal = new ModalBuilder()
+    .setCustomId(`claim_proof_modal:${bounty.id}`)
+    .setTitle(`Claim: ${bounty.name}`.slice(0, 45));
+
+  const notesInput = new TextInputBuilder()
+    .setCustomId('claim_notes')
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder('Describe how you completed this and how it can be verified.')
+    .setMaxLength(1000)
+    .setRequired(true);
+  const notesLabel = new LabelBuilder()
+    .setLabel('Proof / Notes')
+    .setDescription('What did you do, and how can staff verify it?')
+    .setTextInputComponent(notesInput);
+
+  const fileInput = new FileUploadBuilder()
+    .setCustomId('claim_files')
+    .setMinValues(0)
+    .setMaxValues(3)
+    .setRequired(false);
+  const fileLabel = new LabelBuilder()
+    .setLabel('Proof (Screenshot or Video)')
+    .setDescription('Optional — attach a screenshot or clip if you have one.')
+    .setFileUploadComponent(fileInput);
+
+  modal.addLabelComponents(notesLabel, fileLabel);
+  return modal;
+}
+
+module.exports = { buildBountyModal, buildApproveEditModal, buildClaimProofModal };

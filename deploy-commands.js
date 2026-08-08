@@ -8,13 +8,13 @@ const { clientId, guildId } = require('./config.json');
 // is a one-server event bot, guild registration is exactly what you want.
 const commands = [
   new SlashCommandBuilder()
-    .setName('deploy')
-    .setDescription('Set up the bounty system and post the panel (staff only).')
+    .setName('deployrequestbounty')
+    .setDescription('Set up bounty requests and post the request board (staff only).')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addChannelOption((option) =>
       option
         .setName('category')
-        .setDescription('The category new bounty ticket channels will be created under.')
+        .setDescription('The category new bounty REQUEST ticket channels will be created under.')
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true),
     )
@@ -51,6 +51,7 @@ const commands = [
         .addChoices(
           { name: 'Approved', value: 'approved' },
           { name: 'Pending', value: 'pending' },
+          { name: 'Claimed', value: 'claimed' },
           { name: 'Denied', value: 'denied' },
           { name: 'All', value: 'all' },
         )
@@ -61,6 +62,32 @@ const commands = [
     .setName('readme')
     .setDescription('How the bounty system works (staff only).')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName('deployclaimbounty')
+    .setDescription('Set up bounty claiming and post the claim board (staff only).')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption((option) =>
+      option
+        .setName('category')
+        .setDescription('The category new bounty CLAIM ticket channels will be created under.')
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true),
+    )
+    // Optional: a specific person that can review/approve claims + gets pinged.
+    .addUserOption((option) =>
+      option
+        .setName('staff_user')
+        .setDescription('A specific person who can review claims and gets pinged. (Set a role and/or a person.)')
+        .setRequired(false),
+    )
+    // Optional: a role that can review/approve claims + gets pinged.
+    .addRoleOption((option) =>
+      option
+        .setName('staff_role')
+        .setDescription('A role that can review claims and gets pinged. (Set a role and/or a person.)')
+        .setRequired(false),
+    )
     .toJSON(),
 ];
 

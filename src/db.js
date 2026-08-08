@@ -38,17 +38,30 @@
     // Every bounty request. Approver + approved_at are the fields /allbounties wants.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS bounties (
-      id            SERIAL PRIMARY KEY,
-      name          TEXT NOT NULL,
-      description   TEXT NOT NULL,
-      reward        NUMERIC,
-      requester_id  TEXT NOT NULL,
-      approver_id   TEXT,
-      approved_at   TIMESTAMPTZ,
-      status        TEXT NOT NULL DEFAULT 'pending',
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id               SERIAL PRIMARY KEY,
+      name             TEXT NOT NULL,
+      description      TEXT NOT NULL,
+      reward           NUMERIC,
+      requester_id     TEXT NOT NULL,
+      approver_id      TEXT,
+      approved_at      TIMESTAMPTZ,
+      status           TEXT NOT NULL DEFAULT 'pending',
+      created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      claimer_id       TEXT,
+      claimed_at       TIMESTAMPTZ,
+      board_channel_id TEXT,
+      board_message_id TEXT
       );
     `);
+
+    // These four columns were added after bounties already existed in
+    // production — ADD COLUMN IF NOT EXISTS backfills them on an existing
+    // table without touching the CREATE TABLE path above (which only ever
+    // runs once, for brand-new databases).
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS claimer_id TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS board_channel_id TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS board_message_id TEXT;`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +134,33 @@
     return setSetting('board_channel', channelId);
   }
 
+  // The claim pipeline is configured separately from the request pipeline —
+  // its own ticket category and its own staff (role and/or person), set via
+  // /deployclaimbounty instead of /deployrequestbounty.
+  function getClaimTicketCategory() {
+    return getSetting('claim_ticket_category');
+  }
+
+  function setClaimTicketCategory(categoryId) {
+    return setSetting('claim_ticket_category', categoryId);
+  }
+
+  function getClaimStaffRole() {
+    return getSetting('claim_staff_role');
+  }
+
+  function setClaimStaffRole(roleId) {
+    return setSetting('claim_staff_role', roleId);
+  }
+
+  function getClaimStaffUser() {
+    return getSetting('claim_staff_user');
+  }
+
+  function setClaimStaffUser(userId) {
+    return setSetting('claim_staff_user', userId);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Bounty records
   // ─────────────────────────────────────────────────────────────────────────────
@@ -168,6 +208,39 @@
     );
   }
 
+  // Approved bounties currently sitting on the board, oldest-approved first —
+  // this is exactly the claimable pool for the claim-board dropdown (max 25
+  // to match Discord's select menu limit).
+  async function getClaimableBounties() {
+    const result = await pool.query(
+      `SELECT * FROM bounties WHERE status = 'approved' ORDER BY approved_at ASC LIMIT 25`,
+    );
+    return result.rows;
+  }
+
+  // Records where the approved card got posted, so a later claim can find and
+  // edit that same message instead of posting a duplicate.
+  async function setBoardMessage(id, channelId, messageId) {
+    await pool.query(
+      `UPDATE bounties SET board_channel_id = $2, board_message_id = $3 WHERE id = $1`,
+      [id, channelId, messageId],
+    );
+  }
+
+  // Flips an approved bounty to claimed — guarded by "still approved" so two
+  // simultaneous claim approvals can't both succeed for the same bounty.
+  // Returns the updated row (with board_channel_id/board_message_id) so the
+  // caller can go update that board post, or null if someone beat them to it.
+  async function claimBounty(id, claimerId) {
+    const result = await pool.query(
+      `UPDATE bounties SET status = 'claimed', claimer_id = $2, claimed_at = NOW()
+       WHERE id = $1 AND status = 'approved'
+       RETURNING *`,
+      [id, claimerId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   // Bounties filtered by status ('approved' | 'pending' | 'denied'), or all of
   // them. Newest action first. Powers /allbounties.
   async function getBounties(status) {
@@ -198,10 +271,19 @@
     setStaffUser,
     getBoardChannel,
     setBoardChannel,
+    getClaimTicketCategory,
+    setClaimTicketCategory,
+    getClaimStaffRole,
+    setClaimStaffRole,
+    getClaimStaffUser,
+    setClaimStaffUser,
     createBounty,
     getBountyById,
     updateBounty,
     approveBounty,
     denyBounty,
     getBounties,
+    getClaimableBounties,
+    setBoardMessage,
+    claimBounty,
   };
