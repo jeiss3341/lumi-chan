@@ -54,7 +54,7 @@ module.exports = {
 
   // Used at the bottom of every embed across the whole bot (panels, cards,
   // /readme). One shared string so it only needs updating in one place.
-  FOOTER: 'Coastal Clash • Bounty System',
+  FOOTER: 'Project Lumi • Coastal Clash',
 
   // The four permanent boards, in the order players actually encounter
   // them: put in a request, claim it once approved, or (if something's
