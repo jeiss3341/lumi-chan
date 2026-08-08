@@ -1,10 +1,22 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const path = require('path');
 const { COLORS } = require('./constants');
 
 const TYPE_TAGS = {
   solo: '🔒 Solo Only',
   stackable: '♾️ Stackable',
 };
+
+// The banner lives in the repo (assets/banner.jpeg), so it ships with the bot to
+// Railway and never expires like a CDN link would. We attach the file to each
+// message and the embed references it by name via attachment://.
+const BANNER_FILE = path.join(__dirname, '..', 'assets', 'banner.jpeg');
+const BANNER_NAME = 'banner.jpeg';
+
+// Call this alongside the embed to attach the banner file to a message.
+function bannerAttachment() {
+  return new AttachmentBuilder(BANNER_FILE, { name: BANNER_NAME });
+}
 
 // The amount comes in as free text, so pull the first number out of whatever
 // they typed and format it as money. Falls back to their raw text if there's
@@ -29,8 +41,9 @@ function buildBountyEmbed({ name, description, type, amountRaw, user, status = '
       { name: 'Reward', value: formatAmount(amountRaw), inline: true },
       { name: 'Type', value: TYPE_TAGS[type] ?? type, inline: true },
     )
+    .setImage(`attachment://${BANNER_NAME}`)
     .setFooter({ text: 'Coastal Clash • Bounty System' })
     .setTimestamp();
 }
 
-module.exports = { buildBountyEmbed, formatAmount };
+module.exports = { buildBountyEmbed, formatAmount, bannerAttachment };

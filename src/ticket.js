@@ -6,6 +6,7 @@ const {
   ButtonStyle,
 } = require('discord.js');
 const { getTicketCategory } = require('./db');
+const { bannerAttachment } = require('./bountyCard');
 
 // Turn "jeiss" + "Catching 6789!" into a Discord-safe channel name like
 // "jeiss-catching-6789". Discord lowercases and hyphenates channel names anyway
@@ -124,6 +125,7 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, b
       ? `<@&${staffRoleId}> — a new bounty from ${member} is ready for review.`
       : "⚠️ No staff role is configured — a staff member should run `/deploy` to set one.",
     embeds: [embed],
+    files: [bannerAttachment()],
     components: [staffReviewButtons(bountyId)],
     allowedMentions: staffRoleId ? { roles: [staffRoleId] } : {},
   });
