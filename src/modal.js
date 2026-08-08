@@ -3,8 +3,6 @@ const {
   LabelBuilder,
   TextInputBuilder,
   TextInputStyle,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
 } = require('discord.js');
 
 // The bounty request form. Modern modals wrap every input in a LabelBuilder,
@@ -38,27 +36,6 @@ function buildBountyModal() {
     .setDescription('What has to happen? Add all the flavor you want.')
     .setTextInputComponent(descInput);
 
-  // 3) Solo Only / Stackable — a real dropdown, no typos possible
-  const typeSelect = new StringSelectMenuBuilder()
-    .setCustomId('bounty_type')
-    .setPlaceholder('Make a selection')
-    .setRequired(true) // modal-only property that forces a choice
-    .addOptions(
-      new StringSelectMenuOptionBuilder()
-        .setLabel('Solo Only')
-        .setValue('solo')
-        .setDescription('Only one person can claim this bounty')
-        .setEmoji('🔒'),
-      new StringSelectMenuOptionBuilder()
-        .setLabel('Stackable')
-        .setValue('stackable')
-        .setDescription('Multiple people can complete this bounty')
-        .setEmoji('♾️'),
-    );
-  const typeLabel = new LabelBuilder()
-    .setLabel('Solo Only or Stackable?')
-    .setStringSelectMenuComponent(typeSelect);
-
   // 4) Amount Donated — single line (validated on submit since it's free text)
   const amountInput = new TextInputBuilder()
     .setCustomId('bounty_amount')
@@ -71,7 +48,7 @@ function buildBountyModal() {
     .setDescription('Numbers only, e.g. 10')
     .setTextInputComponent(amountInput);
 
-  modal.addLabelComponents(nameLabel, descLabel, typeLabel, amountLabel);
+  modal.addLabelComponents(nameLabel, descLabel, amountLabel);
   return modal;
 }
 

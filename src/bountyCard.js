@@ -1,13 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { COLORS, BANNER_URL } = require('./constants');
 
-const TYPE_TAGS = {
-  solo: '🔒 Solo Only',
-  stackable: '♾️ Stackable',
-};
-
-
-
 // The amount comes in as free text, so pull the first number out of whatever
 // they typed and format it as money. Falls back to their raw text if there's
 // no number in there at all.
@@ -20,7 +13,7 @@ function formatAmount(raw) {
 
 // Builds the bounty card. Pass a different `status` to recolor it as it moves
 // through the flow: 'pending' (blurple) → 'approved' (green) / 'denied' (red).
-function buildBountyEmbed({ name, description, type, amountRaw, user, status = 'pending' }) {
+function buildBountyEmbed({ name, description, amountRaw, user, status = 'pending' }) {
   return new EmbedBuilder()
     .setColor(COLORS[status] ?? COLORS.pending)
     .setTitle(`📥 Bounty Request: ${name}`)
@@ -29,7 +22,6 @@ function buildBountyEmbed({ name, description, type, amountRaw, user, status = '
     .addFields(
       { name: 'Requester', value: `<@${user.id}>`, inline: true },
       { name: 'Reward', value: formatAmount(amountRaw), inline: true },
-      { name: 'Type', value: TYPE_TAGS[type] ?? type, inline: true },
     )
     .setImage(BANNER_URL)
     .setFooter({ text: 'Coastal Clash • Bounty System' })

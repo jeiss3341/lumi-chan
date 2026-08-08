@@ -38,16 +38,15 @@ async function initDb() {
   // Every bounty request. Approver + approved_at are the fields /allbounties wants.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bounties (
-      id            SERIAL PRIMARY KEY,
-      name          TEXT NOT NULL,
-      description   TEXT NOT NULL,
-      type          TEXT NOT NULL,
-      reward        NUMERIC,
-      requester_id  TEXT NOT NULL,
-      approver_id   TEXT,
-      approved_at   TIMESTAMPTZ,
-      status        TEXT NOT NULL DEFAULT 'pending',
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id            SERIAL PRIMARY KEY,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL,
+    reward        NUMERIC,
+    requester_id  TEXT NOT NULL,
+    approver_id   TEXT,
+    approved_at   TIMESTAMPTZ,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 }
@@ -112,12 +111,12 @@ function setBoardChannel(channelId) {
 
 // Insert a new bounty as 'pending' when the ticket is created. Returns its id
 // so we can bake it into the Approve/Deny buttons.
-async function createBounty({ name, description, type, reward, requesterId }) {
+async function createBounty({ name, description, reward, requesterId }) {
   const result = await pool.query(
-    `INSERT INTO bounties (name, description, type, reward, requester_id, status)
-     VALUES ($1, $2, $3, $4, $5, 'pending')
+    `INSERT INTO bounties (name, description, reward, requester_id, status)
+     VALUES ($1, $2, $3, $4, 'pending')
      RETURNING id`,
-    [name, description, type, reward, requesterId],
+    [name, description, reward, requesterId],
   );
   return result.rows[0].id;
 }

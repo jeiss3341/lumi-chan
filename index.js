@@ -108,7 +108,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const shown = rows.slice(0, 25); // keep the embed within limits
       const lines = shown.map((b) => {
         const reward = b.reward != null ? `$${b.reward}` : '—';
-        const typeStr = b.type === 'solo' ? '🔒 Solo' : '♾️ Stackable';
 
         let meta = `by <@${b.requester_id}>`;
         if (b.status === 'approved' && b.approver_id) {
@@ -121,7 +120,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           meta += ` · ⏳ pending`;
         }
 
-        return `**${b.name}** — ${reward} · ${typeStr}\n${meta}`;
+        return `**${b.name}** — ${reward}\n${meta}`;
       });
 
       let description = lines.join('\n\n');
@@ -200,7 +199,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const bountyId = await createBounty({
           name: data.name,
           description: data.description,
-          type: data.type,
           reward: parseReward(data.amountRaw),
           requesterId: interaction.user.id,
         });
@@ -324,16 +322,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId === 'bounty_modal') {
       const name = interaction.fields.getTextInputValue('bounty_name');
       const description = interaction.fields.getTextInputValue('bounty_description');
-      const type = interaction.fields.getStringSelectValues('bounty_type')[0]; // returns an array
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
 
       // Stash for the Submit button (that click won't have the form data).
-      pendingBounties.set(interaction.user.id, { name, description, type, amountRaw });
+      pendingBounties.set(interaction.user.id, { name, description, amountRaw });
 
       const embed = buildBountyEmbed({
         name,
         description,
-        type,
         amountRaw,
         user: interaction.user,
         status: 'pending',
