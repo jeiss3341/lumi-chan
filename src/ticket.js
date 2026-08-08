@@ -68,7 +68,7 @@ function staffReviewButtons(bountyId) {
 // inside, staff pinged, and Approve/Deny ready. Returns the channel.
 //
 // Throws 'NO_CATEGORY' if /deploy was never run.
-async function createTicket({ guild, member, botId, embed, title, staffRoleId, bountyId }) {
+async function createTicket({ guild, member, botId, embed, title, staffRoleId, staffUserId, bountyId }) {
   const categoryId = await getTicketCategory();
   if (!categoryId) throw new Error('NO_CATEGORY');
 
@@ -110,6 +110,16 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, b
       ],
     });
   }
+  if (staffUserId) {
+    overwrites.push({
+      id: staffUserId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+      ],
+    });
+  }
 
   const channel = await guild.channels.create({
     name: channelName,
@@ -119,13 +129,20 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, b
   });
 
   // Ping staff + post the card with Approve/Deny, all in one clean message.
+  const mentions = [];
+  if (staffRoleId) mentions.push(`<@&${staffRoleId}>`);
+  if (staffUserId) mentions.push(`<@${staffUserId}>`);
+
   await channel.send({
-    content: staffRoleId
-      ? `<@&${staffRoleId}> — a new bounty from ${member} is ready for review.`
-      : "⚠️ No staff role is configured — a staff member should run `/deploy` to set one.",
+    content: mentions.length
+      ? `${mentions.join(' ')} — a new bounty from ${member} is ready for review.`
+      : "⚠️ No staff is configured — a staff member should run `/deploy` to set one.",
     embeds: [embed],
     components: [staffReviewButtons(bountyId)],
-    allowedMentions: staffRoleId ? { roles: [staffRoleId] } : {},
+    allowedMentions: {
+      roles: staffRoleId ? [staffRoleId] : [],
+      users: staffUserId ? [staffUserId] : [],
+    },
   });
 
   return channel;

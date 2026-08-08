@@ -9,10 +9,8 @@ const { clientId, guildId } = require('./config.json');
 const commands = [
   new SlashCommandBuilder()
     .setName('deploy')
-    .setDescription('Set the category, staff role, and board channel, then post the panel (staff only).')
-    // Only members who can Manage Server see/use this command.
+    .setDescription('Set up the bounty system and post the panel (staff only).')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    // Required: which category new ticket channels get created under.
     .addChannelOption((option) =>
       option
         .setName('category')
@@ -20,20 +18,26 @@ const commands = [
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true),
     )
-    // Required: which role can review, approve, and deny bounties.
-    .addRoleOption((option) =>
-      option
-        .setName('staff')
-        .setDescription('The role allowed to review and approve bounties.')
-        .setRequired(true),
-    )
-    // Required: which channel approved bounties get posted to for players to browse.
     .addChannelOption((option) =>
       option
         .setName('board')
         .setDescription('The public channel where approved bounties are posted.')
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true),
+    )
+    // Optional: a role that can review/approve + gets pinged.
+    .addUserOption((option) =>
+      option
+        .setName('staff_user')
+        .setDescription('A specific person who can approve bounties and gets pinged. (Set a role and/or a person.)')
+        .setRequired(false),
+    )
+    // Optional: a specific person that can review/approve + gets pinged.
+    .addRoleOption((option) =>
+      option
+        .setName('staff_role')
+        .setDescription('A role that can approve bounties and gets pinged. (Set a role and/or a person.)')
+        .setRequired(false),
     )
     .toJSON(),
   new SlashCommandBuilder()
@@ -53,7 +57,7 @@ const commands = [
         .setRequired(false),
     )
     .toJSON(),
-    new SlashCommandBuilder()
+  new SlashCommandBuilder()
     .setName('readme')
     .setDescription('How the bounty system works (staff only).')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)

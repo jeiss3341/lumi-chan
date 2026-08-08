@@ -9,7 +9,7 @@ const {
   PermissionFlagsBits,
 } = require('discord.js');
 const { buildPanel } = require('./src/panel');
-const { buildBountyModal } = require('./src/modal');
+const { buildBountyModal, buildApproveEditModal } = require('./src/modal');
 const { buildBountyEmbed } = require('./src/bountyCard');
 const { createTicket, previewButtons } = require('./src/ticket');
 const { COLORS, BANNER_URL } = require('./src/constants');
@@ -23,9 +23,14 @@ const {
   setTicketCategory,
   setStaffRole,
   getStaffRole,
+  setStaffUser,
+  getStaffUser,
+  clearSetting,
   setBoardChannel,
   getBoardChannel,
   createBounty,
+  getBountyById,
+  updateBounty,
   approveBounty,
   denyBounty,
   getBounties,
@@ -47,14 +52,20 @@ client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}`);
   await initDb();
   console.log('Database ready.');
+
+  c.user.setPresence({
+    activities: [{ name: 'boop', type: 4 }],
+  });
 });
 
 // Is this member allowed to review bounties? True if they hold the configured
-// staff role, or have Manage Server (covers owner/admins as a safety net).
-function isStaff(member, staffRoleId) {
+// staff role, are the configured staff person, or have Manage Server (covers
+// owner/admins as a safety net).
+function isStaff(member, staffRoleId, staffUserId) {
   if (!member) return false;
   if (member.permissions?.has(PermissionFlagsBits.ManageGuild)) return true;
   if (staffRoleId && member.roles?.cache?.has(staffRoleId)) return true;
+  if (staffUserId && member.id === staffUserId) return true;
   return false;
 }
 
@@ -68,26 +79,43 @@ function isStaff(member, staffRoleId) {
 // ─────────────────────────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    // /deploy  →  save category + staff role + board channel, then post the panel
+    // /deploy  →  save category + staff (role and/or person) + board channel, then post the panel
     if (interaction.isChatInputCommand() && interaction.commandName === 'deploy') {
       const category = interaction.options.getChannel('category');
-      const staffRole = interaction.options.getRole('staff');
       const board = interaction.options.getChannel('board');
+      const staffRole = interaction.options.getRole('staff_role');
+      const staffUser = interaction.options.getUser('staff_user');
+
+      if (!staffRole && !staffUser) {
+        await interaction.reply({
+          content: '⚠️ Set at least a staff role or a staff person to review bounties.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
 
       await setTicketCategory(category.id);
-      await setStaffRole(staffRole.id);
       await setBoardChannel(board.id);
+      if (staffRole) await setStaffRole(staffRole.id); else await clearSetting('staff_role');
+      if (staffUser) await setStaffUser(staffUser.id); else await clearSetting('staff_user');
 
       await interaction.channel.send(buildPanel());
 
+      const reviewers = [staffRole?.name, staffUser ? `@${staffUser.username}` : null]
+        .filter(Boolean)
+        .join(' and ');
+
       await interaction.reply({
-        content: `✅ Bounty panel deployed. Tickets open under **${category.name}**, reviewed by **${staffRole.name}**, approved bounties post to ${board}.`,
+        content: `✅ Bounty panel deployed. Tickets open under **${category.name}**, reviewed by **${reviewers}**, approved bounties post to ${board}.`,
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
-    // /allbounties  →  list bounties by status (staff only)
+    // /allbounties  →  list bounties by status. Gated entirely by Discord's
+    // default member permissions (ManageGuild) on the command itself, so
+    // members without that permission never even see it in the command list —
+    // no in-code check needed here.
     if (interaction.isChatInputCommand() && interaction.commandName === 'allbounties') {
       const status = interaction.options.getString('status') ?? 'approved';
       const rows = await getBounties(status);
@@ -194,6 +222,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       try {
         const staffRoleId = await getStaffRole();
+        const staffUserId = await getStaffUser();
 
         // Record the bounty as 'pending' so it has a DB id for the buttons.
         const bountyId = await createBounty({
@@ -210,6 +239,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           embed,
           title: data.name,
           staffRoleId,
+          staffUserId,
           bountyId,
         });
 
@@ -255,10 +285,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // "Approve" inside a ticket  →  staff only. Turns the card green + logs it.
+    // "Approve" inside a ticket  →  staff only. Opens an editable preview of the
+    // bounty first; nothing is finalized/shipped to the board until that modal
+    // is submitted (see approve_edit_modal below).
     if (interaction.isButton() && interaction.customId.startsWith('approve_bounty')) {
       const staffRoleId = await getStaffRole();
-      if (!isStaff(interaction.member, staffRoleId)) {
+      const staffUserId = await getStaffUser();
+      if (!isStaff(interaction.member, staffRoleId, staffUserId)) {
         await interaction.reply({
           content: '⛔ Only staff can approve bounties.',
           flags: MessageFlags.Ephemeral,
@@ -267,36 +300,39 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const bountyId = interaction.customId.split(':')[1]; // may be undefined on old tickets
+      const bounty = bountyId ? await getBountyById(bountyId) : null;
 
-      const approved = EmbedBuilder.from(interaction.message.embeds[0]).setColor(COLORS.approved);
-      await interaction.update({ embeds: [approved], components: [] });
+      if (!bounty) {
+        // No DB record to edit (very old ticket) — fall back to approving as-is.
+        const approved = EmbedBuilder.from(interaction.message.embeds[0]).setColor(COLORS.approved);
+        await interaction.update({ embeds: [approved], components: [] });
 
-      // Record the approval (approver + timestamp).
-      if (bountyId) {
-        await approveBounty(bountyId, interaction.user.id).catch(console.error);
-      }
-
-      // Post the approved card to the public board for players to browse.
-      let boardNote = '';
-      const boardChannelId = await getBoardChannel();
-      if (boardChannelId) {
-        const board = await interaction.guild.channels.fetch(boardChannelId).catch(() => null);
-        if (board) {
-          await board.send({ embeds: [approved] });
-          boardNote = ` and posted to ${board}`;
+        let boardNote = '';
+        const boardChannelId = await getBoardChannel();
+        if (boardChannelId) {
+          const board = await interaction.guild.channels.fetch(boardChannelId).catch(() => null);
+          if (board) {
+            await board.send({ embeds: [approved] });
+            boardNote = ` and posted to ${board}`;
+          }
         }
+
+        await interaction.followUp({
+          content: `✅ **Approved** by ${interaction.user}${boardNote}.`,
+        });
+        return;
       }
 
-      await interaction.followUp({
-        content: `✅ **Approved** by ${interaction.user}${boardNote}.`,
-      });
+      // showModal must be the FIRST response — nothing above this sends one.
+      await interaction.showModal(buildApproveEditModal(bounty));
       return;
     }
 
     // "Deny" inside a ticket  →  staff only. Logs it, then closes the ticket.
     if (interaction.isButton() && interaction.customId.startsWith('deny_bounty')) {
       const staffRoleId = await getStaffRole();
-      if (!isStaff(interaction.member, staffRoleId)) {
+      const staffUserId = await getStaffUser();
+      if (!isStaff(interaction.member, staffRoleId, staffUserId)) {
         await interaction.reply({
           content: '⛔ Only staff can deny bounties.',
           flags: MessageFlags.Ephemeral,
@@ -341,6 +377,59 @@ client.on(Events.InteractionCreate, async (interaction) => {
         embeds: [embed],
         components: [previewButtons()],
         flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // Approve/edit modal submitted  →  save whatever staff edited, THEN
+    // finalize approval and ship it to the board. This is what "Approve"
+    // actually commits — the button click above only opens this modal.
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_edit_modal')) {
+      const bountyId = interaction.customId.split(':')[1];
+
+      const name = interaction.fields.getTextInputValue('bounty_name');
+      const description = interaction.fields.getTextInputValue('bounty_description');
+      const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
+      const reward = parseReward(amountRaw);
+
+      const bounty = await getBountyById(bountyId);
+      if (!bounty) {
+        await interaction.reply({
+          content: '⚠️ This bounty no longer exists in the database.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      await updateBounty(bountyId, { name, description, reward });
+      await approveBounty(bountyId, interaction.user.id);
+
+      const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
+      const approved = buildBountyEmbed({
+        name,
+        description,
+        amountRaw,
+        user: requester ?? interaction.user,
+        status: 'approved',
+      });
+
+      // This modal was opened from the ticket message's Approve button, so
+      // update() edits that same message (turns it green, drops the buttons).
+      await interaction.update({ embeds: [approved], components: [] });
+
+      // Post the (possibly edited) approved card to the public board.
+      let boardNote = '';
+      const boardChannelId = await getBoardChannel();
+      if (boardChannelId) {
+        const board = await interaction.guild.channels.fetch(boardChannelId).catch(() => null);
+        if (board) {
+          await board.send({ embeds: [approved] });
+          boardNote = ` and posted to ${board}`;
+        }
+      }
+
+      await interaction.followUp({
+        content: `✅ **Approved** by ${interaction.user}${boardNote}.`,
       });
       return;
     }
