@@ -21,6 +21,7 @@ const fieldSchema = require('./fieldSchema');
 const qandaTopics = require('./qandaTopics');
 const auth = require('./auth');
 const bountyRoutes = require('./bountyRoutes');
+const ticketRoutes = require('./ticketRoutes');
 const { readBody, redirectTo } = require('./httpUtil');
 
 // `session` is always present here — every caller runs after the auth gate
@@ -349,7 +350,7 @@ function startServer(client) {
       return;
     }
 
-    const bountyIdMatch = path.match(/^\/bounties\/(\d+)\/(edit|approve|deny|cancel)$/);
+    const bountyIdMatch = path.match(/^\/bounties\/(\d+)\/(edit|status)$/);
     if (bountyIdMatch) {
       const [, idStr, action] = bountyIdMatch;
       const id = Number(idStr);
@@ -361,18 +362,27 @@ function startServer(client) {
         bountyRoutes.handleEditBounty(req, res, session, client, id);
         return;
       }
-      if (req.method === 'POST' && action === 'approve') {
-        bountyRoutes.handleApproveBounty(req, res, session, client, id);
+      if (req.method === 'POST' && action === 'status') {
+        bountyRoutes.handleChangeBountyStatus(req, res, session, client, id);
         return;
       }
-      if (req.method === 'POST' && action === 'deny') {
-        bountyRoutes.handleDenyBounty(req, res, session, client, id);
-        return;
-      }
-      if (req.method === 'POST' && action === 'cancel') {
-        bountyRoutes.handleCancelBounty(req, res, session, client, id);
-        return;
-      }
+    }
+
+    if (req.method === 'GET' && path === '/tickets') {
+      ticketRoutes.handleTicketsList(req, res, session, client);
+      return;
+    }
+    if (req.method === 'POST' && path === '/tickets/archive-settings') {
+      ticketRoutes.handleSaveArchiveSettings(req, res);
+      return;
+    }
+    // Discord channel IDs are 64-bit snowflakes — always handled as strings,
+    // never Number()'d (unlike bounty ids above), since they'd lose
+    // precision past Number.MAX_SAFE_INTEGER.
+    const ticketIdMatch = path.match(/^\/tickets\/(\d+)$/);
+    if (req.method === 'GET' && ticketIdMatch) {
+      ticketRoutes.handleTicketDetail(req, res, session, client, ticketIdMatch[1]);
+      return;
     }
 
     res.writeHead(req.method === 'GET' ? 404 : 405, { 'Content-Type': 'text/plain' });

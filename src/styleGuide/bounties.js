@@ -22,6 +22,10 @@ const STATUS_LABELS = {
 
 const STATUS_FILTERS = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled'];
 
+// Statuses the admin edit page's free status-change control can move a
+// bounty between — 'claimed' is deliberately excluded (see buildBountyEditHtml).
+const STATUS_ORDER = ['pending', 'approved', 'denied', 'cancelled'];
+
 function statusBadge(status) {
   const label = STATUS_LABELS[status] ?? status;
   return `<span class="status-badge status-${esc(status)}">${esc(label)}</span>`;
@@ -132,8 +136,18 @@ ${BASE_STYLES}
   .field-error { grid-column: 2; color: var(--warn); font-size: 12px; }
   .frow.has-error .finput, .frow.has-error .ftextarea { border-color: var(--warn); }
   .save-row { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
-  .action-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; padding-top: 20px; border-top: 1px dashed var(--line); }
+  .action-row { flex-wrap: wrap; margin-top: 20px; padding-top: 20px; border-top: 1px dashed var(--line); }
   .board-link { font-size: 13px; }
+  .status-changer summary { list-style: none; cursor: pointer; }
+  .status-changer summary::-webkit-details-marker { display: none; }
+  .status-changer summary::marker { content: ''; }
+  .confirm-box {
+    margin-top: 12px; padding: 14px 16px; border: 1px solid var(--warn); border-radius: 8px;
+    background: var(--warn-bg); max-width: 480px;
+  }
+  .confirm-box p { margin: 0 0 12px; color: var(--warn); font-size: 13px; font-weight: 600; }
+  .confirm-box form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .confirm-box .fselect { width: auto; flex: 1; min-width: 150px; }
   @media (max-width: 640px) {
     .bounty-row { flex-direction: column; align-items: stretch; }
     .bounty-row .b-reward { text-align: left; }
@@ -225,24 +239,25 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
   const v = values ?? bounty;
   const toast = message ? `<div class="toast${message.warn ? ' warn' : ''}">${esc(message.text)}</div>` : '';
 
-  const canApprove = bounty.status === 'pending';
-  const canDeny = bounty.status === 'pending';
-  const canCancel = bounty.status !== 'cancelled' && bounty.status !== 'claimed';
-
   // 'claimed' locks status changes here — flipping it would leave claimer_id
   // stale/inconsistent, since that's only ever set by the real claim flow
-  // (src/db.js claimBounty), not by anything on this page.
-  const actionButtons = [
-    canApprove ? `<form method="POST" action="/bounties/${bounty.id}/approve" onsubmit="return confirm('Approve this bounty and post it to the board?');">
-      <button type="submit" class="btn btn-primary">Approve</button>
-    </form>` : '',
-    canDeny ? `<form method="POST" action="/bounties/${bounty.id}/deny" onsubmit="return confirm('Deny this bounty request?');">
-      <button type="submit" class="btn btn-danger">Deny</button>
-    </form>` : '',
-    canCancel ? `<form method="POST" action="/bounties/${bounty.id}/cancel" onsubmit="return confirm('Cancel this bounty? It will come off the board if it was posted. This can be undone by an admin later, but not from this page.');">
-      <button type="submit" class="btn btn-danger">Cancel Bounty</button>
-    </form>` : '',
-  ].filter(Boolean).join('');
+  // (src/db.js claimBounty), not by anything on this page. Every other
+  // status can move freely to any of the other three.
+  const otherStatuses = STATUS_ORDER.filter((s) => s !== bounty.status);
+  const statusChanger = bounty.status === 'claimed'
+    ? '<span class="fhint">Status is locked while claimed — only the real in-Discord claim flow can set or change this.</span>'
+    : `<details class="status-changer">
+      <summary class="btn">Change Status</summary>
+      <div class="confirm-box">
+        <p>Are you sure? Moving a bounty to Approved posts/updates it on the board; moving it away from Approved pulls it off the board. Takes effect immediately.</p>
+        <form method="POST" action="/bounties/${bounty.id}/status">
+          <select name="status" class="fselect">
+            ${otherStatuses.map((s) => `<option value="${esc(s)}">${esc(STATUS_LABELS[s] ?? s)}</option>`).join('')}
+          </select>
+          <button type="submit" class="btn btn-primary">Confirm Change</button>
+        </form>
+      </div>
+    </details>`;
 
   const body = `
   <header class="masthead">
@@ -272,7 +287,7 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       ${bounty.status === 'claimed' ? '<p class="fhint" style="margin-top:10px;">This bounty is claimed — its board post already moved to the claim log and isn\'t tracked here, so saving updates the record only, not any Discord message.</p>' : ''}
     </form>
 
-    <div class="action-row">${actionButtons || `<span class="fhint">No status actions available for a ${esc(bounty.status)} bounty.</span>`}</div>
+    <div class="action-row">${statusChanger}</div>
   </div>`;
 
   return pageShell({ title: bounty.name, active: 'bounties', username, body });

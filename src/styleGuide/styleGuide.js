@@ -84,6 +84,7 @@ function topBar({ active, username }) {
     <span class="nav-links">
       <a href="/" class="${active === 'style' ? 'active' : ''}">Content &amp; Style</a>
       <a href="/bounties" class="${active === 'bounties' ? 'active' : ''}">Bounties</a>
+      <a href="/tickets" class="${active === 'tickets' ? 'active' : ''}">Tickets</a>
     </span>
     <span class="session-info">Logged in as <strong>${esc(username)}</strong> · <a href="/logout">Log out</a></span>
   </div>`;

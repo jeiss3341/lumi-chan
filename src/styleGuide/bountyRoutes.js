@@ -1,18 +1,23 @@
-// Route handlers for the bounty admin pages (list / new / edit / approve /
-// deny / cancel) — split out of server.js because these, unlike everything
+// Route handlers for the bounty admin pages (list / new / edit / free
+// status change) — split out of server.js because these, unlike everything
 // else on the style-guide site, need the live Discord `client` to keep an
 // approved bounty's board post in sync with edits made here, on top of the
 // usual DB read/write. src/styleGuide/bounties.js does the HTML; this file
 // does the async work and hands it data to render.
 const {
   getBounties, getBountyById, createBounty, updateBounty, findTitleConflict,
-  approveBounty, denyBounty, cancelBounty, setBoardMessage, getBoardChannel,
+  approveBounty, setBountyStatus, setBoardMessage, getBoardChannel,
 } = require('../db');
 const { buildBountyEmbed } = require('../bountyCard');
 const { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS } = require('./bounties');
 const { readBody, redirectTo } = require('./httpUtil');
 
 const VALID_STATUSES = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled'];
+
+// The admin edit page's free status-change control can move a bounty to any
+// of these, from any of these, regardless of current value — 'claimed' is
+// deliberately not included (see handleChangeBountyStatus below).
+const ALLOWED_STATUS_TARGETS = ['pending', 'approved', 'denied', 'cancelled'];
 
 function handleBountyError(res, err) {
   if (err.message === 'BODY_TOO_LARGE') {
@@ -226,8 +231,8 @@ async function handleEditBountyPage(req, res, session, client, id, failure) {
 }
 
 // POST /bounties/:id/edit — name/description/reward only. Status changes go
-// through the dedicated approve/deny/cancel actions below, each with its
-// own confirmation, rather than a freeform status field here.
+// through handleChangeBountyStatus below (its own confirmation), not a
+// status field on this form.
 async function handleEditBounty(req, res, session, client, id) {
   const bounty = await getBountyById(id);
   if (!bounty) {
@@ -283,73 +288,71 @@ async function handleEditBounty(req, res, session, client, id) {
   }
 }
 
-// POST /bounties/:id/approve
-async function handleApproveBounty(req, res, session, client, id) {
+// POST /bounties/:id/status — free status change among pending/approved/
+// denied/cancelled, any to any (matches src/styleGuide/bounties.js's
+// "Change Status" control, revealed via the same inline confirm the user
+// asked for instead of a browser confirm() popup). 'claimed' is
+// deliberately not a valid target: claimer_id is only ever set by the real
+// Discord claim flow (src/db.js claimBounty), and this route has no field
+// to collect one, so setting a bounty to "claimed" here would leave that
+// column blank while the status said otherwise.
+async function handleChangeBountyStatus(req, res, session, client, id) {
   const bounty = await getBountyById(id);
   if (!bounty) {
     notFound(res);
     return;
   }
-  if (bounty.status !== 'pending') {
-    redirectTo(res, bountyEditRedirect(id, 'Only a pending bounty can be approved.', true), 303);
+  if (bounty.status === 'claimed') {
+    redirectTo(res, bountyEditRedirect(id, "A claimed bounty's status is locked — only the real claim flow can change it.", true), 303);
     return;
   }
-  const conflict = await findTitleConflict(bounty.name, id);
-  if (conflict) {
-    redirectTo(res, bountyEditRedirect(id, `Can't approve — "${conflict.name}" already uses this name.`, true), 303);
-    return;
-  }
-  try {
-    await approveBounty(id, session.id);
-    const updated = await getBountyById(id);
-    const result = await syncApprovedBoardPost(client, updated);
-    const msg = result.ok ? 'Approved and posted to the board.' : `Approved, but couldn't post to the board: ${result.reason}`;
-    redirectTo(res, bountyEditRedirect(id, msg, !result.ok), 303);
-  } catch (err) {
-    console.error('Failed to approve bounty:', err);
-    redirectTo(res, bountyEditRedirect(id, 'Something went wrong approving this bounty.', true), 303);
-  }
-}
 
-// POST /bounties/:id/deny
-async function handleDenyBounty(req, res, session, client, id) {
-  const bounty = await getBountyById(id);
-  if (!bounty) {
-    notFound(res);
-    return;
-  }
-  if (bounty.status !== 'pending') {
-    redirectTo(res, bountyEditRedirect(id, 'Only a pending bounty can be denied.', true), 303);
-    return;
-  }
+  let params;
   try {
-    await denyBounty(id, session.id);
-    redirectTo(res, bountyEditRedirect(id, 'Denied.', false), 303);
+    params = new URLSearchParams(await readBody(req));
   } catch (err) {
-    console.error('Failed to deny bounty:', err);
-    redirectTo(res, bountyEditRedirect(id, 'Something went wrong denying this bounty.', true), 303);
+    handleBountyError(res, err);
+    return;
   }
-}
 
-// POST /bounties/:id/cancel — soft-delete (src/db.js cancelBounty), pulling
-// it off the board first if it was posted.
-async function handleCancelBounty(req, res, session, client, id) {
-  const bounty = await getBountyById(id);
-  if (!bounty) {
-    notFound(res);
+  const newStatus = params.get('status');
+  if (!ALLOWED_STATUS_TARGETS.includes(newStatus)) {
+    redirectTo(res, bountyEditRedirect(id, 'Not a valid status to change to.', true), 303);
     return;
   }
-  if (bounty.status === 'cancelled' || bounty.status === 'claimed') {
-    redirectTo(res, bountyEditRedirect(id, 'This bounty cannot be cancelled from here.', true), 303);
+  if (newStatus === bounty.status) {
+    redirectTo(res, bountyEditRedirect(id, `Already ${newStatus}.`, true), 303);
     return;
   }
+  if (newStatus === 'approved') {
+    const conflict = await findTitleConflict(bounty.name, id);
+    if (conflict) {
+      redirectTo(res, bountyEditRedirect(id, `Can't move to Approved — "${conflict.name}" already uses this name.`, true), 303);
+      return;
+    }
+  }
+
   try {
-    if (bounty.status === 'approved') await removeBoardPost(client, bounty);
-    await cancelBounty(id, session.id);
-    redirectTo(res, `/bounties?status=all&msg=${encodeURIComponent(`"${bounty.name}" was cancelled.`)}`, 303);
+    // Leaving 'approved' pulls the old post off the board first — using
+    // `bounty` (the pre-change row), since that's the one that still has
+    // board_channel_id/board_message_id to look up.
+    if (bounty.status === 'approved' && newStatus !== 'approved') {
+      await removeBoardPost(client, bounty);
+    }
+
+    await setBountyStatus(id, newStatus, session.id);
+
+    let warnText = '';
+    if (newStatus === 'approved') {
+      const updated = await getBountyById(id);
+      const result = await syncApprovedBoardPost(client, updated);
+      if (!result.ok) warnText = ` Couldn't post to the board: ${result.reason}`;
+    }
+
+    redirectTo(res, bountyEditRedirect(id, `Status changed to ${newStatus}.${warnText}`, Boolean(warnText)), 303);
   } catch (err) {
-    console.error('Failed to cancel bounty:', err);
-    redirectTo(res, bountyEditRedirect(id, 'Something went wrong cancelling this bounty.', true), 303);
+    console.error('Failed to change bounty status:', err);
+    redirectTo(res, bountyEditRedirect(id, 'Something went wrong changing the status.', true), 303);
   }
 }
 
@@ -359,7 +362,5 @@ module.exports = {
   handleCreateBounty,
   handleEditBountyPage,
   handleEditBounty,
-  handleApproveBounty,
-  handleDenyBounty,
-  handleCancelBounty,
+  handleChangeBountyStatus,
 };

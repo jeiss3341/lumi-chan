@@ -142,6 +142,19 @@
     return setSetting('ticket_category', categoryId);
   }
 
+  // The category a request ticket channel gets MOVED to once it's approved
+  // or denied, mirroring getClaimArchiveCategory below — set from the admin
+  // Tickets page (src/styleGuide/ticketRoutes.js) rather than a slash
+  // command. If unset, closing falls back to the original delayed-delete
+  // behavior (see index.js closeOrArchiveTicket).
+  function getRequestArchiveCategory() {
+    return getSetting('request_archive_category');
+  }
+
+  function setRequestArchiveCategory(categoryId) {
+    return setSetting('request_archive_category', categoryId);
+  }
+
   // Same idea for the staff role: the role allowed to review/approve/deny bounties.
   function getStaffRole() {
     return getSetting('staff_role');
@@ -220,15 +233,25 @@
   }
 
   // A third, entirely separate pipeline: general "talk to staff" support
-  // tickets (opened from /help), configured via /deployticket. No board or
-  // archive category — these aren't bounties, just a private conversation
-  // that gets closed when it's resolved.
+  // tickets (opened from /help), configured via /deployticket. No board —
+  // these aren't bounties, just a private conversation that gets closed
+  // when it's resolved.
   function getHelpTicketCategory() {
     return getSetting('help_ticket_category');
   }
 
   function setHelpTicketCategory(categoryId) {
     return setSetting('help_ticket_category', categoryId);
+  }
+
+  // Same archive-on-close idea as request/claim tickets — set from the
+  // admin Tickets page, not a slash command.
+  function getHelpArchiveCategory() {
+    return getSetting('help_archive_category');
+  }
+
+  function setHelpArchiveCategory(categoryId) {
+    return setSetting('help_archive_category', categoryId);
   }
 
   function getHelpStaffRole() {
@@ -296,31 +319,40 @@
     return result.rows[0] ?? null;
   }
 
-  // Flip a bounty to approved, recording who approved it and when.
-  async function approveBounty(id, approverId) {
+  // Shared by approveBounty/denyBounty/cancelBounty/setBountyPending below —
+  // all four are the exact same UPDATE with a different target status, and
+  // the admin bounties page's free status-change control (src/styleGuide/
+  // bountyRoutes.js) uses this directly to move a bounty to any of the four.
+  async function setBountyStatus(id, status, actorId) {
     await pool.query(
-      `UPDATE bounties SET status = 'approved', approver_id = $2, approved_at = NOW() WHERE id = $1`,
-      [id, approverId],
+      `UPDATE bounties SET status = $2, approver_id = $3, approved_at = NOW() WHERE id = $1`,
+      [id, status, actorId],
     );
   }
 
+  // Flip a bounty to approved, recording who approved it and when.
+  function approveBounty(id, approverId) {
+    return setBountyStatus(id, 'approved', approverId);
+  }
+
   // Flip a bounty to denied (kept for the audit trail; excluded from /allbounties).
-  async function denyBounty(id, approverId) {
-    await pool.query(
-      `UPDATE bounties SET status = 'denied', approver_id = $2, approved_at = NOW() WHERE id = $1`,
-      [id, approverId],
-    );
+  function denyBounty(id, approverId) {
+    return setBountyStatus(id, 'denied', approverId);
   }
 
   // Soft-delete: flips a bounty to 'cancelled' rather than removing the row,
   // same audit-trail reasoning as denyBounty — used by the admin bounties
   // page (src/styleGuide/bounties.js) instead of a real DELETE, so a
   // mis-click stays recoverable and the history (who/when) isn't lost.
-  async function cancelBounty(id, cancelledBy) {
-    await pool.query(
-      `UPDATE bounties SET status = 'cancelled', approver_id = $2, approved_at = NOW() WHERE id = $1`,
-      [id, cancelledBy],
-    );
+  function cancelBounty(id, cancelledBy) {
+    return setBountyStatus(id, 'cancelled', cancelledBy);
+  }
+
+  // Reverts a bounty back to pending — the one transition none of the
+  // Discord-side flows ever needed (nothing "un-approves" itself there), but
+  // the admin page's free status control allows it.
+  function setBountyPending(id, actorId) {
+    return setBountyStatus(id, 'pending', actorId);
   }
 
   // Approved bounties currently sitting on the board, alphabetical by name —
@@ -388,6 +420,8 @@
     clearSetting,
     getTicketCategory,
     setTicketCategory,
+    getRequestArchiveCategory,
+    setRequestArchiveCategory,
     getStaffRole,
     setStaffRole,
     getStaffUser,
@@ -406,6 +440,8 @@
     setClaimArchiveCategory,
     getHelpTicketCategory,
     setHelpTicketCategory,
+    getHelpArchiveCategory,
+    setHelpArchiveCategory,
     getHelpStaffRole,
     setHelpStaffRole,
     getHelpStaffUser,
@@ -417,6 +453,8 @@
     approveBounty,
     denyBounty,
     cancelBounty,
+    setBountyPending,
+    setBountyStatus,
     getBounties,
     getClaimableBounties,
     setBoardMessage,

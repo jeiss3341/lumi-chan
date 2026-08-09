@@ -52,6 +52,7 @@ const {
   initDb,
   setTicketCategory,
   getTicketCategory,
+  getRequestArchiveCategory,
   setStaffRole,
   getStaffRole,
   setStaffUser,
@@ -71,6 +72,7 @@ const {
   getClaimArchiveCategory,
   setHelpTicketCategory,
   getHelpTicketCategory,
+  getHelpArchiveCategory,
   setHelpStaffRole,
   getHelpStaffRole,
   setHelpStaffUser,
@@ -246,6 +248,25 @@ function buildClaimPickerPayload(rows, total, offset) {
 // is visible first.
 function closeChannelSoon(channel, delayMs = 4000) {
   setTimeout(() => channel.delete().catch(() => {}), delayMs);
+}
+
+// Moves a resolved ticket out of general view instead of deleting it, same
+// idea as the claim-approval archiving further down this file — but falls
+// back to the original delayed-delete (closeChannelSoon) if no archive
+// category is configured, so nothing changes for anyone who hasn't set one
+// up. Archived channels keep their full message history; that's what makes
+// the admin Tickets page's closed-ticket view (src/styleGuide/
+// ticketRoutes.js) possible at all — deleted ones leave nothing to show.
+// No delay needed here (unlike closeChannelSoon) since archiving doesn't
+// erase the closing message — it's still readable in the archived channel.
+async function closeOrArchiveTicket(channel, archiveCategoryId) {
+  if (archiveCategoryId) {
+    await channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
+    await channel.setName(toChannelName('closed', channel.name)).catch(console.error);
+    await alphabetizeCategory(channel.parent).catch(console.error);
+    return;
+  }
+  closeChannelSoon(channel);
 }
 
 // Shared by /deployrequestbounty and /deployclaimbounty's confirmation replies.
@@ -670,10 +691,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId === 'close_help_ticket') {
       if (!(await requireStaff(interaction, getHelpStaff, 'close tickets'))) return;
 
+      const helpArchiveCategoryId = await getHelpArchiveCategory();
       await interaction.reply({
-        content: `🔒 **Ticket closed** by ${interaction.user}. Closing this channel in a few seconds…`,
+        content: helpArchiveCategoryId
+          ? `🔒 **Ticket closed** by ${interaction.user}. Archiving this channel…`
+          : `🔒 **Ticket closed** by ${interaction.user}. Closing this channel in a few seconds…`,
       });
-      closeChannelSoon(interaction.channel);
+      await closeOrArchiveTicket(interaction.channel, helpArchiveCategoryId);
       return;
     }
 
@@ -795,10 +819,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         }
 
+        const oldTicketArchiveCategoryId = await getRequestArchiveCategory();
         await interaction.followUp({
-          content: `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
+          content: oldTicketArchiveCategoryId
+            ? `✅ **Approved** by ${interaction.user}${boardNote}. Archiving this ticket…`
+            : `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
         });
-        closeChannelSoon(interaction.channel);
+        await closeOrArchiveTicket(interaction.channel, oldTicketArchiveCategoryId);
         return;
       }
 
@@ -816,10 +843,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await denyBounty(bountyId, interaction.user.id).catch(console.error);
       }
 
+      const denyArchiveCategoryId = await getRequestArchiveCategory();
       await interaction.reply({
-        content: `⛔ **Denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
+        content: denyArchiveCategoryId
+          ? `⛔ **Denied** by ${interaction.user}. Archiving this ticket…`
+          : `⛔ **Denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
       });
-      closeChannelSoon(interaction.channel);
+      await closeOrArchiveTicket(interaction.channel, denyArchiveCategoryId);
       return;
     }
 
@@ -911,10 +941,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
+      const editApproveArchiveCategoryId = await getRequestArchiveCategory();
       await interaction.followUp({
-        content: `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
+        content: editApproveArchiveCategoryId
+          ? `✅ **Approved** by ${interaction.user}${boardNote}. Archiving this ticket…`
+          : `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
       });
-      closeChannelSoon(interaction.channel);
+      await closeOrArchiveTicket(interaction.channel, editApproveArchiveCategoryId);
       return;
     }
 
@@ -1129,10 +1162,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('deny_claim')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'deny claims'))) return;
 
+      const claimDenyArchiveCategoryId = await getClaimArchiveCategory();
       await interaction.reply({
-        content: `⛔ **Claim denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
+        content: claimDenyArchiveCategoryId
+          ? `⛔ **Claim denied** by ${interaction.user}. Archiving this ticket…`
+          : `⛔ **Claim denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
       });
-      closeChannelSoon(interaction.channel);
+      await closeOrArchiveTicket(interaction.channel, claimDenyArchiveCategoryId);
       return;
     }
   } catch (err) {
