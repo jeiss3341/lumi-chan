@@ -49,7 +49,7 @@ module.exports = {
       denied: 0xff6b6b, // coral red, still unmistakably "no"
     },
     // Shown inside panels and bounty/claim cards.
-    BANNER_URL: 'https://i.imgur.com/4k7eFBF.jpeg',
+    BANNER_URL: 'https://i.imgur.com/9Kbb4Du.png',
   },
 
   // Used at the bottom of every embed across the whole bot (panels, cards,
