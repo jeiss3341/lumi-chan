@@ -31,6 +31,7 @@
 // /readme content .......................... README
 // Q&A popup's topics (public) ............ QANDA
 // /allbounties status-group headers ...... ALL_BOUNTIES
+// /allbounties' "Export to Spreadsheet" ... EXPORT
 // Bot's ephemeral replies/errors .......... REPLIES
 // Slash command descriptions .............. COMMANDS
 //   (^ that last one needs `node deploy-commands.js` re-run after editing —
@@ -43,18 +44,24 @@ module.exports = {
   // here so there's one file for everything you'd want to reskin.
   VISUALS: {
     COLORS: {
-      brand: 0x39c5f2, // panel / brand accent — vivid ocean blue
-      pending: 0x39c5f2, // same ocean blue while awaiting review
+      brand: 0x2aa9d8, // panel / brand accent — vivid ocean blue
+      pending: 0x2aa9d8, // same ocean blue while awaiting review
       approved: 0x1abc9c, // tropical turquoise, reads as "good to go"
-      denied: 0xff6b6b, // coral red, still unmistakably "no"
+      denied: 0xe8553d, // sunset coral, still unmistakably "no"
+      // Not used for embed status (bountyCard.js only ever looks up
+      // pending/approved), just extra palette pulled from the same beach/
+      // ocean/racing mood board — for spreadsheet exports, future embeds, etc.
+      sand: 0xe4c9a0,
+      navy: 0x123c54,
     },
-    // Shown inside panels and bounty/claim cards.
-    BANNER_URL: 'https://i.imgur.com/9Kbb4Du.png',
+    // Shown inside panels and bounty/claim cards. 1500x500 — the original
+    // banner size (not the 3000x1000 upscale).
+    BANNER_URL: 'https://i.imgur.com/mePdqer.jpeg',
   },
 
   // Used at the bottom of every embed across the whole bot (panels, cards,
   // /readme). One shared string so it only needs updating in one place.
-  FOOTER: 'Project Lumi • Coastal Clash',
+  FOOTER: 'Project Lumi • Coastal Clash 🌊',
 
   // The four permanent boards, in the order players actually encounter
   // them: put in a request, claim it once approved, or (if something's
@@ -62,7 +69,7 @@ module.exports = {
   PANEL: {
     // src/panel.js → buildPanel(). The permanent request-board message.
     request: {
-      title: '💰 Bounty Board',
+      title: '🏴‍☠️ Bounty Board',
       // Joined with '\n' when used — each entry is one line/paragraph.
       description: [
         'Want to put a bounty on the board? Press **Request Bounty** below.',
@@ -70,7 +77,7 @@ module.exports = {
         "You'll fill out a short form, then a private channel opens where staff review and verify it with you.",
         '',
         '**Before you request, make sure your bounty is:**',
-        '> 🔎 Verifiable & trackable (Dak.gg / Match ID)',
+        '> 🧭 Verifiable & trackable (Dak.gg / Match ID)',
         '> ⚖️ Within reason — no "kill 100 Rozzis"',
         '> 🚫 Not creepy, invasive, or trolling',
         '> 📜 Within Eternal Return TOS',
@@ -88,7 +95,7 @@ module.exports = {
         '',
         '**Before you claim, make sure you have:**',
         '> 📸 A screenshot or clip proving it',
-        '> 🔎 Anything needed to verify it (Dak.gg / Match ID)',
+        '> 🧭 Anything needed to verify it (Dak.gg / Match ID)',
       ],
       buttonLabel: 'Claim Bounty',
       buttonEmoji: '🏁',
@@ -258,11 +265,11 @@ module.exports = {
 
   README: {
     // index.js → the /readme command's embed.
-    title: '📖 How the Bounty System Works',
+    title: '🗺️ How the Bounty System Works',
     description: [
       '**For players:**',
       '> 1. Press **Request Bounty** on the panel.',
-      '> 2. Fill out the form (name, description, solo/stackable, reward).',
+      '> 2. Fill out the form (name, description, reward).',
       '> 3. Review the preview → **Submit** to open a ticket, or **Close** to cancel.',
       '> 4. A private channel opens where staff review it with you.',
       '',
@@ -281,7 +288,7 @@ module.exports = {
       '> • **Deny Claim** → closes the ticket; bounty stays claimable.',
       '> • **Include Requester** → gives the original requester access to the claim ticket too.',
       '> • **Close Ticket** → closes a general support ticket opened via the support board.',
-      '> • `/allbounties status: order:` → list approved / pending / claimed / denied / all, sorted newest / oldest / alphabetical.',
+      '> • `/allbounties status: order: filter: export:` → list a status, sorted newest / oldest / alphabetical, optionally filtered into groups by status too; export:Yes sends a spreadsheet instead.',
       '> • `/deployrequestbounty` → set the category, staff, and board channel for requests (setup).',
       '> • `/deployclaimbounty` → set the category, staff, board, and archive category for claims (setup).',
       '> • `/deployticket` → set the category and staff, and post the support board (setup).',
@@ -325,7 +332,7 @@ module.exports = {
         description: 'Rules to follow before requesting',
         title: '📜 Before You Request',
         body: [
-          '> 🔎 Verifiable & trackable (Dak.gg / Match ID)',
+          '> 🧭 Verifiable & trackable (Dak.gg / Match ID)',
           '> ⚖️ Within reason — no "kill 100 Rozzis"',
           '> 🚫 Not creepy, invasive, or trolling',
           '> 📜 Within Eternal Return TOS',
@@ -337,7 +344,7 @@ module.exports = {
         title: '📸 Before You Claim',
         body: [
           '> 📸 A screenshot or clip proving it (optional, but recommended)',
-          '> 🔎 Anything else needed to verify it (Dak.gg / Match ID)',
+          '> 🧭 Anything else needed to verify it (Dak.gg / Match ID)',
           '',
           'Staff review every claim manually, so the easier it is to verify, the faster it gets approved.',
         ],
@@ -389,8 +396,16 @@ module.exports = {
   ALL_BOUNTIES: {
     approved: '✅ Approved',
     pending: '⏳ Pending',
-    claimed: '🔒 Claimed',
+    claimed: '🏁 Claimed',
     denied: '⛔ Denied',
+  },
+
+  // index.js → /allbounties' "Export to Spreadsheet" button, shown below the
+  // results. src/bountyExport.js builds the actual themed .xlsx when it's
+  // pressed — this is just the button's own label/emoji.
+  EXPORT: {
+    buttonLabel: 'Export to Spreadsheet',
+    buttonEmoji: '📊',
   },
 
   // index.js → short ephemeral replies/errors sprinkled through the
@@ -410,15 +425,29 @@ module.exports = {
       "Here's your bounty preview. Press **Submit** to open a private ticket and send it to staff — or **Close** to cancel. Nothing is created until you submit.",
     bountyMissing: '⚠️ This bounty no longer exists in the database.',
 
-    // Claiming a bounty (pick from dropdown → proof → submit).
-    noClaimableBounties: '📭 No approved bounties are available to claim right now.',
+    // Claiming a bounty (pick from dropdown → proof → submit). Discord's
+    // select menu caps at 25 options, so once there are more approved
+    // bounties than that, Prev/Next buttons page through them 25 at a time.
+    noClaimableBounties: '🏝️ No approved bounties are available to claim right now.',
     claimPickPrompt: 'Which bounty are you claiming?',
     claimSelectPlaceholder: 'Choose a bounty to claim',
+    claimPrevButton: '◀ Prev',
+    claimNextButton: 'Next ▶',
     claimBountyUnavailable: '⚠️ That bounty is no longer available to claim.',
     claimNoLongerAvailable: '⚠️ This bounty is no longer available to claim (it may have already been claimed).',
     claimFinalizeFailed:
       '⚠️ Could not finalize this claim — the bounty may have already been claimed elsewhere, or its record is missing.',
     includeRequesterFailed: "⚠️ Couldn't find the original requester on this card.",
+
+    // Duplicate-title prevention (request submit + staff approve/edit).
+    // %s is replaced with the conflicting bounty's exact title.
+    requestTitleTaken:
+      '⚠️ A bounty named **%s** is already approved or claimed. Please pick a different name and try again.',
+    approveTitleTaken:
+      '⚠️ A bounty named **%s** is already approved or claimed. Change this bounty\'s name and press **Approve** again.',
+
+    // /allbounties' "Export to Spreadsheet" button. %s is replaced with the count.
+    exportReady: '📊 Your spreadsheet is ready — %s bounties exported.',
 
     // Catch-all, used when nothing more specific applies.
     genericError: 'Something went wrong. Please ping staff.',
@@ -438,8 +467,10 @@ module.exports = {
     },
     allBounties: {
       command: 'List bounties by status with who reviewed them and when (staff only).',
-      status: 'Which bounties to show (defaults to approved).',
+      status: 'Which bounties to show.',
       order: 'How to sort the results (defaults to newest first).',
+      filter: 'Filter the results into groups by status too (default: on for All).',
+      export: 'Get a themed spreadsheet (.xlsx) instead of the on-screen list.',
     },
     readme: {
       command: 'How the bounty system works (staff only).',

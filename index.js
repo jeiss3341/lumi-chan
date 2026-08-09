@@ -9,11 +9,15 @@ const {
   PermissionFlagsBits,
   ActionRowBuilder,
   StringSelectMenuBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  AttachmentBuilder,
 } = require('discord.js');
 const { buildPanel, buildClaimPanel, buildTicketPanel, buildQandAPanel } = require('./src/panel');
 const { buildQandAMenu, buildQandAAnswer } = require('./src/qanda');
 const { buildBountyModal, buildApproveEditModal, buildClaimProofModal, buildTicketDetailsModal } = require('./src/modal');
 const { buildBountyEmbed, buildClaimEmbed, formatAmount } = require('./src/bountyCard');
+const { buildBountiesWorkbook } = require('./src/bountyExport');
 const {
   createTicket,
   createClaimTicket,
@@ -59,6 +63,7 @@ const {
   createBounty,
   getBountyById,
   updateBounty,
+  findTitleConflict,
   approveBounty,
   denyBounty,
   getBounties,
@@ -153,6 +158,75 @@ function sortBounties(rows, order) {
   return sorted;
 }
 
+// Flattens rows into their final /allbounties order. `order` is the within-
+// group sort (see sortBounties); `groupByStatus` adds status as the PRIMARY
+// key, concatenating the groups in TEXT.ALL_BOUNTIES' order (Approved →
+// Pending → Claimed → Denied) so, e.g., "alphabetical + by status" reads as
+// each status block sorted A–Z. Used by the export; the on-screen list builds
+// the same grouping itself so it can add section headers.
+function orderBounties(rows, order, groupByStatus) {
+  if (!groupByStatus) return sortBounties(rows, order);
+  const ordered = [];
+  const known = new Set();
+  for (const groupStatus of Object.keys(TEXT.ALL_BOUNTIES)) {
+    known.add(groupStatus);
+    ordered.push(...sortBounties(rows.filter((b) => b.status === groupStatus), order));
+  }
+  // Anything with a status not listed in ALL_BOUNTIES still gets included.
+  ordered.push(...sortBounties(rows.filter((b) => !known.has(b.status)), order));
+  return ordered;
+}
+
+// Discord's select menu caps at 25 options, so the claim dropdown is
+// paginated in pages of this size (alphabetical, see getClaimableBounties).
+const CLAIM_PAGE_SIZE = 25;
+
+// Builds the { content, components } payload for the claim dropdown at a
+// given page — shared by the "Claim Bounty" button (page 0) and the
+// claim_page Prev/Next buttons (any later page), so both render identically.
+function buildClaimPickerPayload(rows, total, offset) {
+  const row = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('claim_select')
+      .setPlaceholder(TEXT.REPLIES.claimSelectPlaceholder)
+      .addOptions(
+        rows.map((b) => ({
+          label: b.name.slice(0, 100),
+          description: formatAmount(b.reward).slice(0, 100),
+          value: String(b.id),
+        })),
+      ),
+  );
+
+  const components = [row];
+  let content = TEXT.REPLIES.claimPickPrompt;
+
+  if (total > CLAIM_PAGE_SIZE) {
+    const page = Math.floor(offset / CLAIM_PAGE_SIZE);
+    const totalPages = Math.ceil(total / CLAIM_PAGE_SIZE);
+    const prevOffset = Math.max(0, offset - CLAIM_PAGE_SIZE);
+    const nextOffset = offset + CLAIM_PAGE_SIZE;
+
+    components.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`claim_page:${prevOffset}`)
+          .setLabel(TEXT.REPLIES.claimPrevButton)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(offset === 0),
+        new ButtonBuilder()
+          .setCustomId(`claim_page:${nextOffset}`)
+          .setLabel(TEXT.REPLIES.claimNextButton)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(nextOffset >= total),
+      ),
+    );
+    content += ` (Page ${page + 1}/${totalPages})`;
+  }
+
+  return { content, components };
+}
+
 // Deny buttons just close the ticket a few seconds later, so staff's message
 // is visible first.
 function closeChannelSoon(channel, delayMs = 4000) {
@@ -198,6 +272,68 @@ async function createHelpTicketReply(interaction, { subject, body } = {}) {
   } catch (err) {
     return { content: ticketCreationError(err, 'deployticket', 'support'), embeds: [], components: [] };
   }
+}
+
+// Builds the themed .xlsx for `status`/`order` and sends it as the reply.
+// Shared by /allbounties' `export:true` option AND its "Export to Spreadsheet"
+// button, so both produce the exact same file. `groupByStatus` mirrors the
+// command's `sort` option — when true, rows are blocked by status then ordered
+// within. The interaction MUST already be deferred (ephemeral) before calling
+// this — the workbook + user lookups take a moment.
+async function sendBountyExport(interaction, status, order, groupByStatus) {
+  const rows = orderBounties(await getBounties(status), order, groupByStatus);
+  const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
+
+  if (rows.length === 0) {
+    await interaction.editReply({ content: `No ${status === 'all' ? '' : status + ' '}bounties to export yet.` });
+    return;
+  }
+
+  // Resolve every requester/approver/claimant id to a username once.
+  const userIds = new Set();
+  for (const b of rows) {
+    if (b.requester_id) userIds.add(b.requester_id);
+    if (b.approver_id) userIds.add(b.approver_id);
+    if (b.claimer_id) userIds.add(b.claimer_id);
+  }
+  const names = new Map();
+  await Promise.all(
+    [...userIds].map(async (id) => {
+      const user = await client.users.fetch(id).catch(() => null);
+      names.set(id, user ? user.username : 'Unknown User');
+    }),
+  );
+
+  const formatDate = (d) => (d ? new Date(d).toLocaleDateString('en-US', { dateStyle: 'medium' }) : '');
+
+  const entries = rows.map((b) => ({
+    name: b.name,
+    status: b.status.charAt(0).toUpperCase() + b.status.slice(1),
+    reward: formatAmount(b.reward),
+    requester: b.requester_id ? names.get(b.requester_id) : '',
+    approver: b.approver_id ? names.get(b.approver_id) : '',
+    approvedDate: formatDate(b.approved_at),
+    claimant: b.claimer_id ? names.get(b.claimer_id) : '',
+    claimedDate: formatDate(b.claimed_at),
+    description: b.description,
+  }));
+
+  const buffer = await buildBountiesWorkbook({
+    entries,
+    label,
+    order,
+    generatedBy: interaction.user.username,
+  });
+
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const file = new AttachmentBuilder(Buffer.from(buffer), {
+    name: `coastal-clash-${status}-bounties-${dateStamp}.xlsx`,
+  });
+
+  await interaction.editReply({
+    content: TEXT.REPLIES.exportReady.replace('%s', String(entries.length)),
+    files: [file],
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,8 +382,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // members without that permission never even see it in the command list —
     // no in-code check needed here.
     if (interaction.isChatInputCommand() && interaction.commandName === 'allbounties') {
-      const status = interaction.options.getString('status') ?? 'approved';
+      const status = interaction.options.getString('status'); // required, always set
       const order = interaction.options.getString('order') ?? 'newest';
+      // `filter` (whether to group by status) defaults to on for status:all
+      // — how "all" has always behaved — and off otherwise. Since it's a
+      // single-choice option (no explicit "off" value, same idea as
+      // `export`), including it always forces it on.
+      const groupByStatus = interaction.options.getString('filter') === 'by_status' || status === 'all';
+
+      // Including `export` skips the on-screen list and just hands back the
+      // themed .xlsx directly — the same file the results' button produces.
+      if (interaction.options.getString('export') === 'yes') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await sendBountyExport(interaction, status, order, groupByStatus);
+        return;
+      }
+
       const rows = await getBounties(status);
 
       const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
@@ -283,12 +433,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return `**${b.name}** — ${reward}\n${meta}`;
       };
 
-      // For a single status, just sort the flat list. For "all", group by
-      // status first (in TEXT.ALL_BOUNTIES' key order) with a header per
-      // group, then sort within each group — so results read as distinct
-      // categories, not one big list interleaved by date.
+      // With filter:By Status, group by status (in TEXT.ALL_BOUNTIES' key
+      // order) with a header per group, then sort within each group by
+      // `order` — so results read as distinct categories. Otherwise it's one
+      // flat list ordered by `order` alone.
       const sections = [];
-      if (status === 'all') {
+      if (groupByStatus) {
         for (const [groupStatus, header] of Object.entries(TEXT.ALL_BOUNTIES)) {
           const group = sortBounties(rows.filter((b) => b.status === groupStatus), order);
           if (group.length > 0) sections.push({ header, lines: group.map(lineFor) });
@@ -297,27 +447,89 @@ client.on(Events.InteractionCreate, async (interaction) => {
         sections.push({ header: null, lines: sortBounties(rows, order).map(lineFor) });
       }
 
-      // Flatten to a flat line list capped at 25 (Discord embed limits),
-      // keeping section headers attached to whichever lines survive the cap.
-      const blocks = [];
-      let shownCount = 0;
+      // Every bounty gets shown — nothing is truncated. Each section's lines
+      // are chunked into pages of 25 (keeps well under an embed's 4096-char
+      // description limit); a section that spills past one page repeats its
+      // header on the next chunk, marked "(cont.)" so it still reads as one
+      // group. Chunks are then packed into embeds (max 25 entries each so
+      // pages stay easy to scan), and embeds are batched 10 per message
+      // (Discord's per-message embed cap) — extra batches go out as follow-ups.
+      const PAGE_SIZE = 25;
+      const chunks = [];
       for (const section of sections) {
-        if (shownCount >= 25) break;
-        const lines = section.lines.slice(0, 25 - shownCount);
-        shownCount += lines.length;
-        blocks.push(section.header ? `**${section.header}**\n${lines.join('\n\n')}` : lines.join('\n\n'));
+        for (let i = 0; i < section.lines.length; i += PAGE_SIZE) {
+          const lines = section.lines.slice(i, i + PAGE_SIZE);
+          const header = section.header ? (i === 0 ? section.header : `${section.header} (cont.)`) : null;
+          chunks.push({ header, lines });
+        }
       }
 
-      let description = blocks.join('\n\n');
-      if (rows.length > shownCount) description += `\n\n…and ${rows.length - shownCount} more.`;
+      const embeds = chunks.map((chunk, idx) => {
+        const description = chunk.header ? `**${chunk.header}**\n${chunk.lines.join('\n\n')}` : chunk.lines.join('\n\n');
+        const title = chunks.length > 1 ? `📋 ${label} Bounties (${idx + 1}/${chunks.length})` : `📋 ${label} Bounties`;
+        return new EmbedBuilder()
+          .setTitle(title)
+          .setColor(COLORS.approved)
+          .setDescription(description)
+          .setFooter({ text: `Coastal Clash • ${rows.length} ${status === 'all' ? 'total' : status}` });
+      });
 
-      const embed = new EmbedBuilder()
-        .setTitle(`📋 ${label} Bounties`)
-        .setColor(COLORS.approved)
-        .setDescription(description)
-        .setFooter({ text: `Coastal Clash • ${rows.length} ${status === 'all' ? 'total' : status}` });
+      // Discord caps a message at 10 embeds AND 6000 total characters summed
+      // across every embed's title+description+footer — 10 near-full embeds
+      // blows past that second cap well before the first. Batch on whichever
+      // limit hits first.
+      const MAX_EMBEDS_PER_MESSAGE = 10;
+      const MAX_CHARS_PER_MESSAGE = 5900; // small safety margin under Discord's 6000
+      const embedCharCount = (embed) => {
+        const data = embed.toJSON();
+        return (data.title?.length ?? 0) + (data.description?.length ?? 0) + (data.footer?.text?.length ?? 0);
+      };
 
-      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      const batches = [];
+      let batch = [];
+      let batchChars = 0;
+      for (const embed of embeds) {
+        const size = embedCharCount(embed);
+        if (batch.length > 0 && (batch.length >= MAX_EMBEDS_PER_MESSAGE || batchChars + size > MAX_CHARS_PER_MESSAGE)) {
+          batches.push(batch);
+          batch = [];
+          batchChars = 0;
+        }
+        batch.push(embed);
+        batchChars += size;
+      }
+      if (batch.length > 0) batches.push(batch);
+
+      // "Export to Spreadsheet" rides along on the last batch — status/order/
+      // group flag are baked into the customId so the button handler can
+      // re-fetch and re-order the exact same set without us stashing anything.
+      const exportRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`export_bounties:${status}:${order}:${groupByStatus ? 1 : 0}`)
+          .setLabel(TEXT.EXPORT.buttonLabel)
+          .setEmoji(TEXT.EXPORT.buttonEmoji)
+          .setStyle(ButtonStyle.Primary),
+      );
+
+      for (let i = 0; i < batches.length; i++) {
+        const payload = { embeds: batches[i], flags: MessageFlags.Ephemeral };
+        if (i === batches.length - 1) payload.components = [exportRow];
+        if (i === 0) {
+          await interaction.reply(payload);
+        } else {
+          await interaction.followUp(payload);
+        }
+      }
+      return;
+    }
+
+    // "Export to Spreadsheet" on /allbounties' results  →  status/order/group
+    // flag are baked into the customId; hand off to the shared exporter. The
+    // group flag is optional so buttons from older messages still work.
+    if (interaction.isButton() && interaction.customId.startsWith('export_bounties:')) {
+      const [, status, order, group] = interaction.customId.split(':');
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await sendBountyExport(interaction, status, order, group === '1');
       return;
     }
     // /deployclaimbounty  →  save the CLAIM pipeline's own category + staff
@@ -494,6 +706,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // Acknowledge the button first; channel creation can take a beat.
       await interaction.deferUpdate();
 
+      const conflict = await findTitleConflict(data.name);
+      if (conflict) {
+        pendingBounties.delete(interaction.user.id);
+        await interaction.editReply({
+          content: TEXT.REPLIES.requestTitleTaken.replace('%s', conflict.name),
+          embeds: [],
+          components: [],
+        });
+        return;
+      }
+
       const embed = buildBountyEmbed({
         ...data,
         user: interaction.user,
@@ -653,6 +876,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Block approval if this title already belongs to another approved/claimed
+      // bounty — staff has to change the name and press Approve again. The
+      // ticket/buttons are untouched (this reply is ephemeral, not an update),
+      // so they can just retry.
+      const conflict = await findTitleConflict(name, bountyId);
+      if (conflict) {
+        await interaction.reply({
+          content: TEXT.REPLIES.approveTitleTaken.replace('%s', conflict.name),
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
       await updateBounty(bountyId, { name, description, reward: amountRaw });
       await approveBounty(bountyId, interaction.user.id);
 
@@ -690,11 +926,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // "Claim Bounty" button on the claim board  →  show a dropdown of
-    // currently approved (and not yet claimed) bounties to pick from.
+    // currently approved bounties to pick from. Discord's select menu already
+    // has a built-in type-to-search box once it's open, so this one dropdown
+    // is both the list AND the search — no separate typing step needed. Past
+    // 25 approved bounties (Discord's hard cap on select menu options),
+    // Prev/Next buttons page through the rest (see claim_page below).
     if (interaction.isButton() && interaction.customId === 'claim_bounty') {
-      const claimable = await getClaimableBounties();
+      const { rows, total } = await getClaimableBounties(0);
 
-      if (claimable.length === 0) {
+      if (rows.length === 0) {
         await interaction.reply({
           content: TEXT.REPLIES.noClaimableBounties,
           flags: MessageFlags.Ephemeral,
@@ -702,24 +942,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const row = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('claim_select')
-          .setPlaceholder(TEXT.REPLIES.claimSelectPlaceholder)
-          .addOptions(
-            claimable.map((b) => ({
-              label: b.name.slice(0, 100),
-              description: formatAmount(b.reward).slice(0, 100),
-              value: String(b.id),
-            })),
-          ),
-      );
-
       await interaction.reply({
-        content: TEXT.REPLIES.claimPickPrompt,
-        components: [row],
+        ...buildClaimPickerPayload(rows, total, 0),
         flags: MessageFlags.Ephemeral,
       });
+      return;
+    }
+
+    // Prev/Next on the claim dropdown  →  re-fetch that page and swap the
+    // dropdown in place (same ephemeral message, not a new one).
+    if (interaction.isButton() && interaction.customId.startsWith('claim_page:')) {
+      const offset = parseInt(customIdArg(interaction), 10) || 0;
+      const { rows, total } = await getClaimableBounties(offset);
+
+      if (rows.length === 0) {
+        await interaction.update({ content: TEXT.REPLIES.noClaimableBounties, components: [] });
+        return;
+      }
+
+      await interaction.update(buildClaimPickerPayload(rows, total, offset));
       return;
     }
 

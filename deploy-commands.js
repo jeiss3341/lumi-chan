@@ -45,6 +45,9 @@ const commands = [
     .setName('allbounties')
     .setDescription(TEXT.COMMANDS.allBounties.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    // Required (Discord makes required options mandatory before the command
+    // can even be run) so this is filled first — the closest thing Discord
+    // has to "nothing else matters until this is picked."
     .addStringOption((option) =>
       option
         .setName('status')
@@ -56,8 +59,12 @@ const commands = [
           { name: 'Denied', value: 'denied' },
           { name: 'All', value: 'all' },
         )
-        .setRequired(false),
+        .setRequired(true),
     )
+    // Always the actual sort — applied within each status group when
+    // `filter` below is set, or across the whole list when it isn't. Its
+    // choices never overlap with `filter`'s, so there's no combination of
+    // the two that doesn't mean something.
     .addStringOption((option) =>
       option
         .setName('order')
@@ -67,6 +74,27 @@ const commands = [
           { name: 'Oldest First', value: 'oldest' },
           { name: 'Alphabetical (A-Z)', value: 'alphabetical' },
         )
+        .setRequired(false),
+    )
+    // Single choice (no "off" value, same idea as `export` below) — picking
+    // it groups the results by status (Approved → Pending → Claimed →
+    // Denied); leaving it out falls back to the old default (on for All,
+    // off for a single status).
+    .addStringOption((option) =>
+      option
+        .setName('filter')
+        .setDescription(TEXT.COMMANDS.allBounties.filter)
+        .addChoices({ name: 'By Status', value: 'by_status' })
+        .setRequired(false),
+    )
+    // String (not Boolean) with a single choice, so there's no False to
+    // pick — and it's defined last, so it's the last thing Discord ever
+    // has left to suggest filling in.
+    .addStringOption((option) =>
+      option
+        .setName('export')
+        .setDescription(TEXT.COMMANDS.allBounties.export)
+        .addChoices({ name: 'Yes', value: 'yes' })
         .setRequired(false),
     )
     .toJSON(),

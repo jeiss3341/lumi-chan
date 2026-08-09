@@ -278,6 +278,24 @@
     );
   }
 
+  // Checks whether `name` is already used by an approved or claimed bounty
+  // (case/whitespace-insensitive) — keeps official bounty titles unique.
+  // Pending and denied bounties don't count: multiple pending requests can
+  // share a title, they just can't BOTH become official. Pass `excludeId`
+  // when checking a bounty against everyone ELSE (e.g. re-approving it
+  // shouldn't conflict with itself). Returns the conflicting row, or null.
+  async function findTitleConflict(name, excludeId = null) {
+    const result = await pool.query(
+      `SELECT id, name FROM bounties
+       WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+         AND status IN ('approved', 'claimed')
+         AND id IS DISTINCT FROM $2
+       LIMIT 1`,
+      [name, excludeId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   // Flip a bounty to approved, recording who approved it and when.
   async function approveBounty(id, approverId) {
     await pool.query(
@@ -294,14 +312,22 @@
     );
   }
 
-  // Approved bounties currently sitting on the board, oldest-approved first —
-  // this is exactly the claimable pool for the claim-board dropdown (max 25
-  // to match Discord's select menu limit).
-  async function getClaimableBounties() {
-    const result = await pool.query(
-      `SELECT * FROM bounties WHERE status = 'approved' ORDER BY approved_at ASC LIMIT 25`,
-    );
-    return result.rows;
+  // Approved bounties currently sitting on the board, alphabetical by name —
+  // this is exactly the claimable pool for the claim-board dropdown. Discord's
+  // select menu is hard-capped at 25 options, so this is paginated: pass
+  // `offset` to fetch a later page (the dropdown's own built-in type-to-search
+  // still handles narrowing down within whichever page is showing). Returns
+  // `total` too, so the caller knows whether Prev/Next should be enabled.
+  async function getClaimableBounties(offset = 0) {
+    const PAGE_SIZE = 25;
+    const [rows, count] = await Promise.all([
+      pool.query(
+        `SELECT * FROM bounties WHERE status = 'approved' ORDER BY name ASC LIMIT $1 OFFSET $2`,
+        [PAGE_SIZE, offset],
+      ),
+      pool.query(`SELECT COUNT(*) FROM bounties WHERE status = 'approved'`),
+    ]);
+    return { rows: rows.rows, total: parseInt(count.rows[0].count, 10) };
   }
 
   // Records where the approved card got posted, so a later claim can find and
@@ -376,6 +402,7 @@
     createBounty,
     getBountyById,
     updateBounty,
+    findTitleConflict,
     approveBounty,
     denyBounty,
     getBounties,
