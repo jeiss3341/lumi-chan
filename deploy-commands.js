@@ -154,6 +154,16 @@ const commands = [
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true),
     )
+    // Optional (unlike deployclaimbounty's required archive_category) — a
+    // help ticket that never gets archived just deletes on close, same as
+    // the original behavior, so there's no reason to force a choice here.
+    .addChannelOption((option) =>
+      option
+        .setName('archive_category')
+        .setDescription(TEXT.COMMANDS.deployTicket.archiveCategory)
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(false),
+    )
     // Optional: a specific person that gets pinged on new tickets.
     .addUserOption((option) =>
       option

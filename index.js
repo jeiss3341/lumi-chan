@@ -82,6 +82,7 @@ const {
   setHelpTicketCategory,
   getHelpTicketCategory,
   getHelpArchiveCategory,
+  setHelpArchiveCategory,
   setHelpStaffRole,
   getHelpStaffRole,
   setHelpStaffUser,
@@ -591,9 +592,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // /deployticket  →  save the general "talk to staff" pipeline's own
     // category + staff — entirely separate from requests and claims. No
-    // board/archive here; these aren't bounties, just closed when resolved.
+    // board here; these aren't bounties. archive_category is optional
+    // (unlike deployclaimbounty's required one) — unset just falls back to
+    // deleting a closed ticket, same as the original behavior.
     if (interaction.isChatInputCommand() && interaction.commandName === 'deployticket') {
       const category = interaction.options.getChannel('category');
+      const archiveCategory = interaction.options.getChannel('archive_category');
       const staffRole = interaction.options.getRole('staff_role');
       const staffUser = interaction.options.getUser('staff_user');
 
@@ -606,15 +610,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await setHelpTicketCategory(category.id);
+      if (archiveCategory) await setHelpArchiveCategory(archiveCategory.id); else await clearSetting('help_archive_category');
       if (staffRole) await setHelpStaffRole(staffRole.id); else await clearSetting('help_staff_role');
       if (staffUser) await setHelpStaffUser(staffUser.id); else await clearSetting('help_staff_user');
 
       await interaction.channel.send(buildTicketPanel());
 
       const reviewers = describeReviewers(staffRole, staffUser);
+      const archiveNote = archiveCategory ? `, and closed tickets move to **${archiveCategory.name}**` : '';
 
       await interaction.reply({
-        content: `💬 Support board deployed. Tickets open under **${category.name}**, handled by **${reviewers}**.`,
+        content: `💬 Support board deployed. Tickets open under **${category.name}**, handled by **${reviewers}**${archiveNote}.`,
         flags: MessageFlags.Ephemeral,
       });
       return;

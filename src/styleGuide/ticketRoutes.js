@@ -106,14 +106,20 @@ async function fetchTicketDetail(client, channelId) {
       status,
       discordLink: `https://discord.com/channels/${channel.guild.id}/${channel.id}`,
     },
-    messages: sorted.map((m) => ({
-      author: m.member?.displayName || m.author?.username || 'Unknown',
-      avatarUrl: m.author?.displayAvatarURL?.() ?? null,
-      content: m.content || '',
-      createdAt: m.createdTimestamp,
-      embedSummary: m.embeds?.[0] ? summarizeEmbed(m.embeds[0]) : null,
-      attachments: [...m.attachments.values()].map((a) => ({ url: a.url, name: a.name, contentType: a.contentType })),
-    })),
+    // Without the (privileged, deliberately-not-requested — see index.js)
+    // Message Content intent, Discord blanks out .content for anything a
+    // real user sent, leaving nothing to show for that message at all — so
+    // those are dropped here rather than rendered as an empty row.
+    messages: sorted
+      .map((m) => ({
+        author: m.member?.displayName || m.author?.username || 'Unknown',
+        avatarUrl: m.author?.displayAvatarURL?.() ?? null,
+        content: m.content || '',
+        createdAt: m.createdTimestamp,
+        embedSummary: m.embeds?.[0] ? summarizeEmbed(m.embeds[0]) : null,
+        attachments: [...m.attachments.values()].map((a) => ({ url: a.url, name: a.name, contentType: a.contentType })),
+      }))
+      .filter((m) => m.content || m.embedSummary || m.attachments.length > 0),
   };
 }
 
