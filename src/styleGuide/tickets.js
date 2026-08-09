@@ -106,6 +106,7 @@ ${BASE_STYLES}
   .chat-msg .who { font-weight: 700; font-size: 13.5px; }
   .chat-msg .who .when { font-weight: 400; color: var(--muted); font-size: 11.5px; margin-left: 6px; }
   .chat-msg .text { font-size: 14px; color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+  .chat-msg .text.hidden-note { color: var(--muted); font-style: italic; font-size: 13px; }
   .chat-msg .embed-note {
     margin-top: 6px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--paper-raised);
     font-size: 13px; color: var(--ink-soft); border-radius: 0 6px 6px 0;
@@ -206,7 +207,15 @@ function buildTicketDetailHtml({ ticket, messages, username, message }) {
   const toast = message ? `<div class="toast${message.warn ? ' warn' : ''}">${esc(message.text)}</div>` : '';
 
   const log = messages.length
-    ? messages.map((m) => `
+    ? messages.map((m) => {
+      const hasAttachments = (m.attachments || []).length > 0;
+      // The bot doesn't request the (privileged) Message Content intent —
+      // see index.js — so Discord blanks out `content` for anything a real
+      // user sent. A message with nothing to show almost always means that,
+      // not an actually-empty message (Discord won't let you send one), so
+      // say so plainly rather than just leaving a confusing blank row.
+      const nothingToShow = !m.content && !m.embedSummary && !hasAttachments;
+      return `
       <div class="chat-msg">
         <div class="avatar">${m.avatarUrl ? `<img src="${esc(m.avatarUrl)}" alt="">` : esc((m.author || '?').slice(0, 1).toUpperCase())}</div>
         <div class="body">
@@ -214,8 +223,10 @@ function buildTicketDetailHtml({ ticket, messages, username, message }) {
           ${m.content ? `<div class="text">${esc(m.content)}</div>` : ''}
           ${m.embedSummary ? `<div class="embed-note">${esc(m.embedSummary)}</div>` : ''}
           ${(m.attachments || []).map(renderAttachment).join('')}
+          ${nothingToShow ? '<div class="text hidden-note">(message text not visible to this page)</div>' : ''}
         </div>
-      </div>`).join('')
+      </div>`;
+    }).join('')
     : `<div class="empty-state">No messages in this ticket.</div>`;
 
   const body = `

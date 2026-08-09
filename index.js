@@ -34,6 +34,15 @@ const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // We only need the Guilds intent. No Message Content intent required, so you
 // don't have to flip any privileged-intent toggles in the Developer Portal.
+//
+// Deliberate trade-off: without MessageContent (a privileged intent — risky
+// to turn on for a bot mid-event, since Discord rejects the whole
+// connection if it's requested but not enabled in the Developer Portal),
+// Discord blanks out message.content for anything a real user sent. The
+// admin Tickets page's chat log (src/styleGuide/ticketRoutes.js) can
+// therefore only show full content for the bot's OWN messages (embeds,
+// prompts) — a real user's replies show up as an empty row (name/avatar/
+// timestamp, no text). Accepted as-is rather than risk the bot going down.
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // Public style-guide + bounty admin pages — the bounty pages
