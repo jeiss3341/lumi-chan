@@ -1,5 +1,6 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const TEXT = require('./text');
+const { resolveText, resolveLines } = require('./styleGuide/liveText');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // The panel that lives (permanently) in the read-only bounty channel.
@@ -7,17 +8,17 @@ const { COLORS, BANNER_URL } = TEXT.VISUALS;
 function buildPanel() {
   const embed = new EmbedBuilder()
     .setColor(COLORS.brand)
-    .setTitle(TEXT.PANEL.request.title)
-    .setDescription(TEXT.PANEL.request.description.join('\n'))
+    .setTitle(resolveText('PANEL.request.title'))
+    .setDescription(resolveLines('PANEL.request.description').join('\n'))
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('request_bounty')
-      .setLabel(TEXT.PANEL.request.buttonLabel)
+      .setLabel(resolveText('PANEL.request.buttonLabel'))
       .setStyle(ButtonStyle.Success)
-      .setEmoji(TEXT.PANEL.request.buttonEmoji),
+      .setEmoji(resolveText('PANEL.request.buttonEmoji')),
   );
 
   return { embeds: [embed], components: [row] };
@@ -28,17 +29,17 @@ function buildPanel() {
 function buildClaimPanel() {
   const embed = new EmbedBuilder()
     .setColor(COLORS.brand)
-    .setTitle(TEXT.PANEL.claim.title)
-    .setDescription(TEXT.PANEL.claim.description.join('\n'))
+    .setTitle(resolveText('PANEL.claim.title'))
+    .setDescription(resolveLines('PANEL.claim.description').join('\n'))
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('claim_bounty')
-      .setLabel(TEXT.PANEL.claim.buttonLabel)
+      .setLabel(resolveText('PANEL.claim.buttonLabel'))
       .setStyle(ButtonStyle.Primary)
-      .setEmoji(TEXT.PANEL.claim.buttonEmoji),
+      .setEmoji(resolveText('PANEL.claim.buttonEmoji')),
   );
 
   return { embeds: [embed], components: [row] };
@@ -50,17 +51,17 @@ function buildClaimPanel() {
 function buildTicketPanel() {
   const embed = new EmbedBuilder()
     .setColor(COLORS.brand)
-    .setTitle(TEXT.PANEL.ticket.title)
-    .setDescription(TEXT.PANEL.ticket.description.join('\n'))
+    .setTitle(resolveText('PANEL.ticket.title'))
+    .setDescription(resolveLines('PANEL.ticket.description').join('\n'))
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('open_help_ticket')
-      .setLabel(TEXT.PANEL.ticket.buttonLabel)
+      .setLabel(resolveText('PANEL.ticket.buttonLabel'))
       .setStyle(ButtonStyle.Primary)
-      .setEmoji(TEXT.PANEL.ticket.buttonEmoji),
+      .setEmoji(resolveText('PANEL.ticket.buttonEmoji')),
   );
 
   return { embeds: [embed], components: [row] };
@@ -72,17 +73,17 @@ function buildTicketPanel() {
 function buildQandAPanel() {
   const embed = new EmbedBuilder()
     .setColor(COLORS.brand)
-    .setTitle(TEXT.PANEL.qanda.title)
-    .setDescription(TEXT.PANEL.qanda.description.join('\n'))
+    .setTitle(resolveText('PANEL.qanda.title'))
+    .setDescription(resolveLines('PANEL.qanda.description').join('\n'))
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('open_qanda')
-      .setLabel(TEXT.PANEL.qanda.buttonLabel)
+      .setLabel(resolveText('PANEL.qanda.buttonLabel'))
       .setStyle(ButtonStyle.Primary)
-      .setEmoji(TEXT.PANEL.qanda.buttonEmoji),
+      .setEmoji(resolveText('PANEL.qanda.buttonEmoji')),
   );
 
   return { embeds: [embed], components: [row] };

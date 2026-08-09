@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const TEXT = require('./text');
+const { resolveText } = require('./styleGuide/liveText');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // Reward is free text now (not just dollars — could be "250 NP", "5 gems",
@@ -15,15 +16,15 @@ function formatAmount(raw) {
 // there's no 'denied' title — the pending one is a safe fallback.
 function buildBountyEmbed({ name, description, amountRaw, user, status = 'pending' }) {
   const titlePrefix =
-    status === 'approved' ? TEXT.CARD.request.approvedTitlePrefix : TEXT.CARD.request.titlePrefix;
+    status === 'approved' ? resolveText('CARD.request.approvedTitlePrefix') : resolveText('CARD.request.titlePrefix');
   return new EmbedBuilder()
     .setColor(COLORS[status] ?? COLORS.pending)
     .setTitle(`${titlePrefix} ${name}`)
     .setDescription(description)
     .setThumbnail(user.displayAvatarURL())
     .addFields(
-      { name: TEXT.CARD.request.fieldRequester, value: `<@${user.id}>`, inline: true },
-      { name: TEXT.CARD.request.fieldReward, value: formatAmount(amountRaw), inline: true },
+      { name: resolveText('CARD.request.fieldRequester'), value: `<@${user.id}>`, inline: true },
+      { name: resolveText('CARD.request.fieldReward'), value: formatAmount(amountRaw), inline: true },
     )
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER })
@@ -35,16 +36,16 @@ function buildBountyEmbed({ name, description, amountRaw, user, status = 'pendin
 // as a follow-up attachment message, not embedded here. 'approved' retitles
 // it to "Bounty Claimed" — the shared finalized-claim title.
 function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
-  const titlePrefix = status === 'approved' ? TEXT.CARD.claimedTitlePrefix : TEXT.CARD.claim.titlePrefix;
+  const titlePrefix = status === 'approved' ? resolveText('CARD.claimedTitlePrefix') : resolveText('CARD.claim.titlePrefix');
   return new EmbedBuilder()
     .setColor(COLORS[status] ?? COLORS.pending)
     .setTitle(`${titlePrefix} ${bounty.name}`)
     .setDescription(notes)
     .setThumbnail(claimant.displayAvatarURL())
     .addFields(
-      { name: TEXT.CARD.claim.fieldClaimant, value: `<@${claimant.id}>`, inline: true },
-      { name: TEXT.CARD.claim.fieldReward, value: formatAmount(bounty.reward), inline: true },
-      { name: TEXT.CARD.claim.fieldOriginalRequester, value: `<@${bounty.requester_id}>`, inline: true },
+      { name: resolveText('CARD.claim.fieldClaimant'), value: `<@${claimant.id}>`, inline: true },
+      { name: resolveText('CARD.claim.fieldReward'), value: formatAmount(bounty.reward), inline: true },
+      { name: resolveText('CARD.claim.fieldOriginalRequester'), value: `<@${bounty.requester_id}>`, inline: true },
     )
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER })

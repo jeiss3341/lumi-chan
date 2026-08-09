@@ -26,8 +26,20 @@ const {
   alphabetizeCategory,
   previewButtons,
 } = require('./src/ticket');
+const { startServer } = require('./src/styleGuide/server');
+const { loadOverrides } = require('./src/styleGuide/overrides');
+const { resolveText } = require('./src/styleGuide/liveText');
 const TEXT = require('./src/text');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
+
+// Public style-guide page — unrelated to Discord, so it doesn't wait on
+// Discord login. Still has to wait on loadOverrides() though, so the very
+// first request after a cold start doesn't render defaults-only before any
+// saved edits are in the cache.
+(async () => {
+  await loadOverrides();
+  startServer();
+})();
 
 // We only need the Guilds intent. No Message Content intent required, so you
 // don't have to flip any privileged-intent toggles in the Developer Portal.
@@ -188,7 +200,7 @@ function buildClaimPickerPayload(rows, total, offset) {
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('claim_select')
-      .setPlaceholder(TEXT.REPLIES.claimSelectPlaceholder)
+      .setPlaceholder(resolveText('REPLIES.claimSelectPlaceholder'))
       .addOptions(
         rows.map((b) => ({
           label: b.name.slice(0, 100),
@@ -199,7 +211,7 @@ function buildClaimPickerPayload(rows, total, offset) {
   );
 
   const components = [row];
-  let content = TEXT.REPLIES.claimPickPrompt;
+  let content = resolveText('REPLIES.claimPickPrompt');
 
   if (total > CLAIM_PAGE_SIZE) {
     const page = Math.floor(offset / CLAIM_PAGE_SIZE);
@@ -211,12 +223,12 @@ function buildClaimPickerPayload(rows, total, offset) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`claim_page:${prevOffset}`)
-          .setLabel(TEXT.REPLIES.claimPrevButton)
+          .setLabel(resolveText('REPLIES.claimPrevButton'))
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(offset === 0),
         new ButtonBuilder()
           .setCustomId(`claim_page:${nextOffset}`)
-          .setLabel(TEXT.REPLIES.claimNextButton)
+          .setLabel(resolveText('REPLIES.claimNextButton'))
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(nextOffset >= total),
       ),
@@ -330,7 +342,7 @@ async function sendBountyExport(interaction, status, order, groupByStatus) {
   });
 
   await interaction.editReply({
-    content: TEXT.REPLIES.exportReady.replace('%s', String(entries.length)),
+    content: resolveText('REPLIES.exportReady').replace('%s', String(entries.length)),
     files: [file],
   });
 }
@@ -354,7 +366,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!staffRole && !staffUser) {
         await interaction.reply({
-          content: TEXT.REPLIES.missingRequestStaff,
+          content: resolveText('REPLIES.missingRequestStaff'),
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -521,7 +533,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!staffRole && !staffUser) {
         await interaction.reply({
-          content: TEXT.REPLIES.missingClaimStaff,
+          content: resolveText('REPLIES.missingClaimStaff'),
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -554,7 +566,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!staffRole && !staffUser) {
         await interaction.reply({
-          content: TEXT.REPLIES.missingTicketStaff,
+          content: resolveText('REPLIES.missingTicketStaff'),
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -613,7 +625,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'qanda_select') {
       const answer = buildQandAAnswer(interaction.values[0]);
       if (!answer) {
-        await interaction.update({ content: TEXT.REPLIES.genericError, embeds: [], components: [] });
+        await interaction.update({ content: resolveText('REPLIES.genericError'), embeds: [], components: [] });
         return;
       }
       await interaction.update(answer);
@@ -674,7 +686,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const data = pendingBounties.get(interaction.user.id);
       if (!data) {
         await interaction.update({
-          content: TEXT.REPLIES.requestExpired,
+          content: resolveText('REPLIES.requestExpired'),
           embeds: [],
           components: [],
         });
@@ -688,7 +700,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (conflict) {
         pendingBounties.delete(interaction.user.id);
         await interaction.editReply({
-          content: TEXT.REPLIES.requestTitleTaken.replace('%s', conflict.name),
+          content: resolveText('REPLIES.requestTitleTaken').replace('%s', conflict.name),
           embeds: [],
           components: [],
         });
@@ -749,7 +761,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId === 'ticket_cancel') {
       pendingBounties.delete(interaction.user.id);
       await interaction.update({
-        content: TEXT.REPLIES.requestCancelled,
+        content: resolveText('REPLIES.requestCancelled'),
         embeds: [],
         components: [],
       });
@@ -826,7 +838,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
 
       await interaction.reply({
-        content: TEXT.REPLIES.requestPreview,
+        content: resolveText('REPLIES.requestPreview'),
         embeds: [embed],
         components: [previewButtons()],
         flags: MessageFlags.Ephemeral,
@@ -848,7 +860,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const bounty = await getBountyById(bountyId);
       if (!bounty) {
         await interaction.reply({
-          content: TEXT.REPLIES.bountyMissing,
+          content: resolveText('REPLIES.bountyMissing'),
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -861,7 +873,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const conflict = await findTitleConflict(name, bountyId);
       if (conflict) {
         await interaction.reply({
-          content: TEXT.REPLIES.approveTitleTaken.replace('%s', conflict.name),
+          content: resolveText('REPLIES.approveTitleTaken').replace('%s', conflict.name),
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -914,7 +926,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (rows.length === 0) {
         await interaction.reply({
-          content: TEXT.REPLIES.noClaimableBounties,
+          content: resolveText('REPLIES.noClaimableBounties'),
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -934,7 +946,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const { rows, total } = await getClaimableBounties(offset);
 
       if (rows.length === 0) {
-        await interaction.update({ content: TEXT.REPLIES.noClaimableBounties, components: [] });
+        await interaction.update({ content: resolveText('REPLIES.noClaimableBounties'), components: [] });
         return;
       }
 
@@ -949,7 +961,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!bounty || bounty.status !== 'approved') {
         await interaction.update({
-          content: TEXT.REPLIES.claimBountyUnavailable,
+          content: resolveText('REPLIES.claimBountyUnavailable'),
           components: [],
         });
         return;
@@ -969,7 +981,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const bounty = await getBountyById(bountyId);
       if (!bounty || bounty.status !== 'approved') {
         await interaction.editReply({
-          content: TEXT.REPLIES.claimNoLongerAvailable,
+          content: resolveText('REPLIES.claimNoLongerAvailable'),
         });
         return;
       }
@@ -1013,11 +1025,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!(await requireStaff(interaction, getClaimStaff, 'include the requester'))) return;
 
       const requesterId = interaction.message.embeds[0]
-        ? extractMentionId(interaction.message.embeds[0], TEXT.CARD.claim.fieldOriginalRequester)
+        ? extractMentionId(interaction.message.embeds[0], resolveText('CARD.claim.fieldOriginalRequester'))
         : null;
 
       if (!requesterId) {
-        await interaction.reply({ content: TEXT.REPLIES.includeRequesterFailed, flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: resolveText('REPLIES.includeRequesterFailed'), flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -1047,7 +1059,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!updated) {
         await interaction.reply({
-          content: TEXT.REPLIES.claimFinalizeFailed,
+          content: resolveText('REPLIES.claimFinalizeFailed'),
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -1055,7 +1067,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
         .setColor(COLORS.approved)
-        .setTitle(`${TEXT.CARD.claimedTitlePrefix} ${updated.name}`);
+        .setTitle(`${resolveText('CARD.claimedTitlePrefix')} ${updated.name}`);
       await interaction.update({ embeds: [approvedEmbed], components: [] });
 
       const notes = [];
@@ -1081,7 +1093,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           // Same card, minus "Original Requester" — the archived ticket (staff
           // only) keeps it for context, but the claim board is public.
           const publicEmbed = EmbedBuilder.from(approvedEmbed).setFields(
-            approvedEmbed.data.fields.filter((f) => f.name !== TEXT.CARD.claim.fieldOriginalRequester),
+            approvedEmbed.data.fields.filter((f) => f.name !== resolveText('CARD.claim.fieldOriginalRequester')),
           );
           await claimBoard.send({ embeds: [publicEmbed] }).catch(console.error);
           notes.push(`posted to ${claimBoard}`);
@@ -1124,7 +1136,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     console.error(err);
     if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
       await interaction
-        .reply({ content: TEXT.REPLIES.genericError, flags: MessageFlags.Ephemeral })
+        .reply({ content: resolveText('REPLIES.genericError'), flags: MessageFlags.Ephemeral })
         .catch(() => {});
     }
   }

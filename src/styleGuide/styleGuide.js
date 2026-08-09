@@ -1,0 +1,787 @@
+// Builds the HTML for the public style-guide page (src/styleGuide/server.js serves it).
+// The page is organized into small, self-contained "units" (one board, one
+// form, one set of buttons, etc.) — each shows a live preview built from the
+// CURRENT effective value (a saved override, or text.js's default) directly
+// above its own small save form. src/styleGuide/fieldSchema.js is the single source of
+// truth for which fields exist, which unit they belong to, their labels,
+// and the Discord API limits they're validated against — nothing here
+// duplicates that list.
+//
+// Button STYLES (Success/Danger/Primary/Secondary) aren't stored in
+// text.js — they're a code-level choice made in panel.js/ticket.js — so
+// BUTTON_STYLES below mirrors those files by hand. If you ever change a
+// button's ButtonStyle there, update it here too.
+const TEXT = require('../text');
+const overrides = require('./overrides');
+const fieldSchema = require('./fieldSchema');
+const qandaTopics = require('./qandaTopics');
+const { linesToText, textToLines } = require('./textLines');
+const { COLORS } = TEXT.VISUALS;
+
+const BUTTON_STYLES = {
+  requestBounty: 'success', // panel.js buildPanel()
+  claimBounty: 'primary', // panel.js buildClaimPanel()
+  talkToStaff: 'primary', // panel.js buildTicketPanel()
+  askQuestion: 'primary', // panel.js buildQandAPanel()
+  submit: 'success', // ticket.js previewButtons()
+  close: 'danger', // ticket.js previewButtons()
+  approveBounty: 'success', // ticket.js staffReviewButtons()
+  denyBounty: 'danger', // ticket.js staffReviewButtons()
+  approveClaim: 'success', // ticket.js claimReviewButtons()
+  denyClaim: 'danger', // ticket.js claimReviewButtons()
+  includeRequester: 'secondary', // ticket.js claimReviewButtons()
+  closeHelp: 'danger', // ticket.js helpTicketButtons()
+  claimPage: 'secondary', // index.js buildClaimPickerPayload() — Prev/Next
+};
+
+const DISCORD_STYLE_HEX = {
+  success: '#248046',
+  danger: '#da373c',
+  primary: '#5865f2',
+  secondary: '#4e5058',
+};
+
+function getByPath(obj, path) {
+  return path.split('.').reduce((o, k) => o?.[k], obj);
+}
+
+// Escapes for safe use in BOTH HTML text content and double-quoted HTML
+// attributes (value="...", the shape every input/textarea on this page
+// uses). Missing the quote/apostrophe escapes here was a real bug in an
+// earlier version: a saved value containing a literal `"` (e.g. a line
+// quoting something) silently truncated the value="..." attribute the next
+// time the page rendered it, corrupting the saved content.
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// **bold** / *italic* → <b>/<em>, applied AFTER escaping so the markdown
+// characters themselves are never HTML-escaped away.
+function inline(str) {
+  return esc(str)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+}
+
+// Renders an already-effective array of lines (blank = paragraph break, '> '
+// prefix = a quoted/rule line, **bold**/*italic* inline) into HTML.
+function renderLines(lines) {
+  const blocks = [];
+  let quote = [];
+  const flushQuote = () => {
+    if (quote.length) {
+      blocks.push(`<div class="quote">${quote.join('<br>')}</div>`);
+      quote = [];
+    }
+  };
+  for (const raw of lines) {
+    const line = String(raw).trim();
+    if (line === '') {
+      flushQuote();
+      continue;
+    }
+    if (line.startsWith('> ')) {
+      quote.push(inline(line.slice(2)));
+      continue;
+    }
+    flushQuote();
+    blocks.push(`<p>${inline(line)}</p>`);
+  }
+  flushQuote();
+  return blocks.join('\n');
+}
+
+function hex(num) {
+  return '#' + num.toString(16).padStart(6, '0').toUpperCase();
+}
+
+function button(label, emoji, styleKey) {
+  const style = BUTTON_STYLES[styleKey] ?? 'secondary';
+  const emojiHtml = emoji ? `${esc(emoji)} ` : '';
+  return `<span class="dbtn ${style}">${emojiHtml}${esc(label)}</span>`;
+}
+
+function panelPreview(title, descriptionText) {
+  return `
+    <div class="embed-preview">
+      <div class="e-title">${esc(title)}</div>
+      <div class="e-body">${renderLines(textToLines(descriptionText))}</div>
+      <div class="e-foot">${esc(TEXT.FOOTER)}</div>
+    </div>`;
+}
+
+function fieldTable(rows) {
+  const body = rows
+    .map((r) => `<tr><td>${esc(r.label)}</td><td class="mono">${esc(r.placeholder ?? '—')}</td><td>${esc(r.note)}</td></tr>`)
+    .join('');
+  return `<div class="table-wrap"><table class="field-table"><tr><th>Field</th><th>Placeholder</th><th>Note</th></tr>${body}</table></div>`;
+}
+
+function cardStateTable(rows) {
+  const body = rows.map((r) => `<tr><td>${esc(r.state)}</td><td>${inline(r.title)}</td><td>${esc(r.color)}</td></tr>`).join('');
+  return `<div class="table-wrap"><table class="field-table"><tr><th>State</th><th>Title</th><th>Embed color</th></tr>${body}</table></div>`;
+}
+
+function msgRow(trigger, text) {
+  return `<div class="msg-row"><div class="trigger">${esc(trigger)}</div><div class="text">${inline(text)}</div></div>`;
+}
+
+// %s in a REPLIES string becomes this placeholder for display.
+const withPlaceholder = (str, ph) => str.replace('%s', ph);
+
+// Resolves every field belonging to a static unit (one listed in
+// fieldSchema.FIELD_SCHEMA) into { path: currentEffectiveValue }. Multiline
+// fields resolve to a single \n-joined string (ready for a <textarea> or for
+// textToLines() when building a preview).
+function staticUnitValues(unitId) {
+  const values = {};
+  for (const spec of fieldSchema.unitFields(unitId)) {
+    const defaultRaw = getByPath(TEXT, spec.path);
+    const defaultText = spec.multiline ? linesToText(defaultRaw) : defaultRaw;
+    values[spec.path] = overrides.get(spec.path, defaultText);
+  }
+  return values;
+}
+
+// Same shape, for a Q&A topic unit — sourced from qandaTopics (which already
+// resolves overrides vs. text.js defaults for the 6 original topics).
+function topicUnitValues(id) {
+  const t = qandaTopics.getTopic(id);
+  return {
+    [`QANDA.topics.${id}.label`]: t.label,
+    [`QANDA.topics.${id}.description`]: t.description,
+    [`QANDA.topics.${id}.title`]: t.title,
+    [`QANDA.topics.${id}.body`]: linesToText(t.body),
+  };
+}
+
+// Renders one self-contained unit: title, a preview built by the caller, and
+// a save form with one input/textarea per field (pre-filled from `values`,
+// unless this is the one unit that just failed validation — then its inputs
+// show what was actually typed, with inline errors, and the preview above
+// stays untouched/trustworthy since it's still built from `values`, never
+// from the unvalidated attempt).
+function renderUnit(unitId, title, previewHtml, values, failure) {
+  const specs = fieldSchema.unitFields(unitId);
+  const isFailedUnit = failure && failure.unitId === unitId;
+  const errorByPath = isFailedUnit ? Object.fromEntries(failure.errors.map((e) => [e.path, e.message])) : {};
+
+  const rows = specs
+    .map((spec) => {
+      const raw = isFailedUnit && failure.attempted[spec.path] !== undefined ? failure.attempted[spec.path] : values[spec.path];
+      const err = errorByPath[spec.path];
+      const hint = spec.hint ? `<br><span class="fhint">${esc(spec.hint)}</span>` : '';
+      const control = spec.multiline
+        ? `<textarea name="${esc(spec.path)}" class="ftextarea" rows="6">${esc(raw)}</textarea>`
+        : `<input type="text" name="${esc(spec.path)}" value="${esc(raw)}" class="finput">`;
+      return `
+      <label class="frow${err ? ' has-error' : ''}">
+        <span class="flabel">${esc(spec.label)}${hint}</span>
+        ${control}
+        ${err ? `<span class="field-error">⚠️ ${esc(err)}</span>` : ''}
+      </label>`;
+    })
+    .join('');
+
+  const failBanner = isFailedUnit
+    ? `<div class="unit-fail-banner">⚠️ Not saved — fix the highlighted field${failure.errors.length > 1 ? 's' : ''} below and try again.</div>`
+    : '';
+
+  return `
+    <div class="unit-card" id="unit-${esc(unitId)}">
+      <h4 class="unit-title">${esc(title)}</h4>
+      <div class="unit-preview">${previewHtml}</div>
+      ${failBanner}
+      <form method="POST" action="/edit/${esc(unitId)}" class="unit-form">
+        ${rows}
+        <button type="submit" class="save-btn">Save</button>
+      </form>
+    </div>`;
+}
+
+function buildStyleGuideHtml({ savedSection, failure, addTopicFailure } = {}) {
+  const paletteSwatches = [
+    { name: 'Ocean', hex: hex(COLORS.brand), use: 'Brand accent · pending bounty cards · every board\'s embed color' },
+    { name: 'Turquoise', hex: hex(COLORS.approved), use: 'Approved bounty cards · "Approved" chip in the spreadsheet' },
+    { name: 'Coral', hex: hex(COLORS.denied), use: '"Denied" chip in the spreadsheet only (denied tickets just close, no embed re-color)' },
+    { name: 'Sand', hex: hex(COLORS.sand), use: 'Spreadsheet subtitle band' },
+    { name: 'Navy', hex: hex(COLORS.navy), use: 'Spreadsheet header row / deep text' },
+  ]
+    .map(
+      (s) => `
+      <div class="swatch">
+        <div class="chip" style="background:${s.hex}"></div>
+        <div class="info"><div class="name">${esc(s.name)}</div><div class="hex">${s.hex}</div><div class="use">${esc(s.use)}</div></div>
+      </div>`,
+    )
+    .join('');
+
+  const discordSwatches = [
+    { name: 'Success', hex: 'green', use: 'Go-forward actions: Submit, Approve, Approve Claim, Request Bounty' },
+    { name: 'Danger', hex: 'red', use: 'Stop actions: Close, Deny, Deny Claim, Close Ticket' },
+    { name: 'Primary', hex: 'blurple', use: 'Claim Bounty, Talk to Staff, Ask a Question' },
+    { name: 'Secondary', hex: 'grey', use: 'Include Requester (a helper action, not a decision)' },
+  ]
+    .map(
+      (s) => `
+      <div class="swatch">
+        <div class="chip" style="background:${DISCORD_STYLE_HEX[s.name.toLowerCase()]}"></div>
+        <div class="info"><div class="name">${esc(s.name)}</div><div class="hex">${esc(s.hex)}</div><div class="use">${esc(s.use)}</div></div>
+      </div>`,
+    )
+    .join('');
+
+  // ══════════════════════════ Requesting a Bounty ══════════════════════
+  const rv = {
+    ...staticUnitValues('requesting-board'),
+    ...staticUnitValues('requesting-form'),
+    ...staticUnitValues('requesting-preview-buttons'),
+    ...staticUnitValues('requesting-staff-buttons'),
+    ...staticUnitValues('requesting-card'),
+    ...staticUnitValues('requesting-messages'),
+  };
+
+  const requestingBoardHtml = renderUnit(
+    'requesting-board',
+    'Request Board',
+    panelPreview(rv['PANEL.request.title'], rv['PANEL.request.description']) +
+      `<div class="btn-row">${button(rv['PANEL.request.buttonLabel'], rv['PANEL.request.buttonEmoji'], 'requestBounty')}</div>
+       <p class="btn-caption">Posted by <code class="mono">/deployrequestbounty</code>. Opens the request form.</p>`,
+    staticUnitValues('requesting-board'),
+    failure,
+  );
+
+  const requestingFormHtml = renderUnit(
+    'requesting-form',
+    'Request Form Fields',
+    fieldTable([
+      { label: rv['MODAL.bountyRequest.name.label'], placeholder: rv['MODAL.bountyRequest.name.placeholder'], note: rv['MODAL.bountyRequest.name.description'] },
+      { label: rv['MODAL.bountyRequest.description.label'], placeholder: rv['MODAL.bountyRequest.description.placeholder'], note: rv['MODAL.bountyRequest.description.description'] },
+      { label: rv['MODAL.bountyRequest.reward.label'], placeholder: rv['MODAL.bountyRequest.reward.placeholder'], note: rv['MODAL.bountyRequest.reward.description'] },
+    ]) + `<p class="btn-caption">Modal title bar: <b>${esc(rv['MODAL.bountyRequest.title'])}</b></p>`,
+    staticUnitValues('requesting-form'),
+    failure,
+  );
+
+  const requestingPreviewButtonsHtml = renderUnit(
+    'requesting-preview-buttons',
+    'Preview Buttons (before a ticket exists)',
+    `<div class="btn-row">
+      ${button(rv['TICKET.submitButton'], rv['TICKET.submitEmoji'], 'submit')}
+      ${button(rv['TICKET.closeButton'], rv['TICKET.closeEmoji'], 'close')}
+    </div>`,
+    staticUnitValues('requesting-preview-buttons'),
+    failure,
+  );
+
+  const requestingStaffButtonsHtml = renderUnit(
+    'requesting-staff-buttons',
+    'Ticket Buttons (staff only)',
+    `<div class="btn-row">
+      ${button(rv['TICKET.approveBountyButton'], rv['TICKET.approveBountyEmoji'], 'approveBounty')}
+      ${button(rv['TICKET.denyBountyButton'], rv['TICKET.denyBountyEmoji'], 'denyBounty')}
+    </div>`,
+    staticUnitValues('requesting-staff-buttons'),
+    failure,
+  );
+
+  const requestingCardHtml = renderUnit(
+    'requesting-card',
+    'Bounty Card',
+    cardStateTable([
+      { state: 'Pending', title: `${rv['CARD.request.titlePrefix']} *{name}*`, color: 'Ocean' },
+      { state: 'Approved', title: `${rv['CARD.request.approvedTitlePrefix']} *{name}*`, color: 'Turquoise' },
+    ]) + `<p class="btn-caption">Fields shown: <b>${esc(rv['CARD.request.fieldRequester'])}</b>, <b>${esc(rv['CARD.request.fieldReward'])}</b>.</p>`,
+    staticUnitValues('requesting-card'),
+    failure,
+  );
+
+  const requestingMessagesHtml = renderUnit(
+    'requesting-messages',
+    'Messages',
+    [
+      msgRow('no staff configured', rv['REPLIES.missingRequestStaff']),
+      msgRow('preview shown', rv['REPLIES.requestPreview']),
+      msgRow('preview expired', rv['REPLIES.requestExpired']),
+      msgRow('closed', rv['REPLIES.requestCancelled']),
+      msgRow('duplicate title', withPlaceholder(rv['REPLIES.requestTitleTaken'], '{name}')),
+      msgRow('ticket unpinged', rv['TICKET.noRequestStaffConfigured']),
+    ].join(''),
+    staticUnitValues('requesting-messages'),
+    failure,
+  );
+
+  const requestingHtml = `
+  <section class="block" id="requesting">
+    <div class="block-head"><span class="glyph">${esc(rv['PANEL.request.buttonEmoji'])}</span><h2>Requesting a Bounty</h2></div>
+    <p class="block-intro">A player proposes a bounty idea. Staff review it in a private ticket before it goes public.</p>
+    ${requestingBoardHtml}
+    ${requestingFormHtml}
+    ${requestingPreviewButtonsHtml}
+    ${requestingStaffButtonsHtml}
+    ${requestingCardHtml}
+    ${requestingMessagesHtml}
+  </section>`;
+
+  // ══════════════════════════ Claiming a Bounty ════════════════════════
+  const cv = {
+    ...staticUnitValues('claiming-board'),
+    ...staticUnitValues('claiming-form'),
+    ...staticUnitValues('claiming-picker'),
+    ...staticUnitValues('claiming-staff-buttons'),
+    ...staticUnitValues('claiming-card'),
+    ...staticUnitValues('claiming-messages'),
+  };
+
+  const claimingBoardHtml = renderUnit(
+    'claiming-board',
+    'Claim Board',
+    panelPreview(cv['PANEL.claim.title'], cv['PANEL.claim.description']) +
+      `<div class="btn-row">${button(cv['PANEL.claim.buttonLabel'], cv['PANEL.claim.buttonEmoji'], 'claimBounty')}</div>
+       <p class="btn-caption">Posted by <code class="mono">/deployclaimbounty</code>. Opens a searchable dropdown of approved bounties (paginated past 25).</p>`,
+    staticUnitValues('claiming-board'),
+    failure,
+  );
+
+  const claimingFormHtml = renderUnit(
+    'claiming-form',
+    'Claim Form Fields',
+    fieldTable([
+      { label: cv['MODAL.claimProof.notes.label'], placeholder: cv['MODAL.claimProof.notes.placeholder'], note: cv['MODAL.claimProof.notes.description'] },
+      { label: cv['MODAL.claimProof.files.label'], placeholder: '—', note: cv['MODAL.claimProof.files.description'] },
+    ]) + `<p class="btn-caption">Modal title prefix: <b>${esc(cv['MODAL.claimProof.titlePrefix'])}</b> (bounty name follows)</p>`,
+    staticUnitValues('claiming-form'),
+    failure,
+  );
+
+  const claimingPickerHtml = renderUnit(
+    'claiming-picker',
+    'Bounty Picker Dropdown',
+    `<p class="btn-caption">Prompt: <b>${esc(cv['REPLIES.claimPickPrompt'])}</b> · Placeholder: <b>${esc(cv['REPLIES.claimSelectPlaceholder'])}</b></p>
+     <div class="btn-row">
+       ${button(cv['REPLIES.claimPrevButton'], null, 'claimPage')}
+       ${button(cv['REPLIES.claimNextButton'], null, 'claimPage')}
+     </div>`,
+    staticUnitValues('claiming-picker'),
+    failure,
+  );
+
+  const claimingStaffButtonsHtml = renderUnit(
+    'claiming-staff-buttons',
+    'Ticket Buttons (staff only)',
+    `<div class="btn-row">
+      ${button(cv['TICKET.approveClaimButton'], cv['TICKET.approveClaimEmoji'], 'approveClaim')}
+      ${button(cv['TICKET.denyClaimButton'], cv['TICKET.denyClaimEmoji'], 'denyClaim')}
+      ${button(cv['TICKET.includeRequesterButton'], cv['TICKET.includeRequesterEmoji'], 'includeRequester')}
+    </div>`,
+    staticUnitValues('claiming-staff-buttons'),
+    failure,
+  );
+
+  const claimingCardHtml = renderUnit(
+    'claiming-card',
+    'Claim Card',
+    cardStateTable([
+      { state: 'Pending', title: `${cv['CARD.claim.titlePrefix']} *{name}*`, color: 'Ocean' },
+      { state: 'Approved', title: `${cv['CARD.claimedTitlePrefix']} *{name}*`, color: 'Turquoise' },
+    ]) +
+      `<p class="btn-caption">Fields shown: <b>${esc(cv['CARD.claim.fieldClaimant'])}</b>, <b>${esc(cv['CARD.claim.fieldReward'])}</b>, <b>${esc(cv['CARD.claim.fieldOriginalRequester'])}</b> (dropped from the public claim board post — ticket-only).</p>`,
+    staticUnitValues('claiming-card'),
+    failure,
+  );
+
+  const claimingMessagesHtml = renderUnit(
+    'claiming-messages',
+    'Messages',
+    [
+      msgRow('no staff configured', cv['REPLIES.missingClaimStaff']),
+      msgRow('nothing to claim', cv['REPLIES.noClaimableBounties']),
+      msgRow('already claimed', `${cv['REPLIES.claimBountyUnavailable']} / ${cv['REPLIES.claimNoLongerAvailable']}`),
+      msgRow('approve race lost', cv['REPLIES.claimFinalizeFailed']),
+      msgRow('include requester failed', cv['REPLIES.includeRequesterFailed']),
+      msgRow('ticket unpinged', cv['TICKET.noClaimStaffConfigured']),
+    ].join(''),
+    staticUnitValues('claiming-messages'),
+    failure,
+  );
+
+  const claimingHtml = `
+  <section class="block" id="claiming">
+    <div class="block-head"><span class="glyph">${esc(cv['PANEL.claim.buttonEmoji'])}</span><h2>Claiming a Bounty</h2></div>
+    <p class="block-intro">A player who completed an approved bounty submits proof. No preview step — the proof itself is the submission.</p>
+    ${claimingBoardHtml}
+    ${claimingFormHtml}
+    ${claimingPickerHtml}
+    ${claimingStaffButtonsHtml}
+    ${claimingCardHtml}
+    ${claimingMessagesHtml}
+  </section>`;
+
+  // ══════════════════════════ Getting Help ═════════════════════════════
+  const hv = {
+    ...staticUnitValues('help-support-board'),
+    ...staticUnitValues('help-support-form'),
+    ...staticUnitValues('help-support-button'),
+    ...staticUnitValues('help-support-messages'),
+    ...staticUnitValues('help-qanda-board'),
+  };
+
+  const helpSupportBoardHtml = renderUnit(
+    'help-support-board',
+    'Support Board',
+    panelPreview(hv['PANEL.ticket.title'], hv['PANEL.ticket.description']) +
+      `<div class="btn-row">${button(hv['PANEL.ticket.buttonLabel'], hv['PANEL.ticket.buttonEmoji'], 'talkToStaff')}</div>
+       <p class="btn-caption">Posted by <code class="mono">/deployticket</code>. Opens an optional Subject/Details form, then creates a ticket.</p>`,
+    staticUnitValues('help-support-board'),
+    failure,
+  );
+
+  const helpSupportFormHtml = renderUnit(
+    'help-support-form',
+    'Support Form Fields',
+    fieldTable([
+      { label: hv['MODAL.ticketDetails.subject.label'], placeholder: hv['MODAL.ticketDetails.subject.placeholder'], note: hv['MODAL.ticketDetails.subject.description'] },
+      { label: hv['MODAL.ticketDetails.body.label'], placeholder: hv['MODAL.ticketDetails.body.placeholder'], note: hv['MODAL.ticketDetails.body.description'] },
+    ]) + `<p class="btn-caption">Modal title bar: <b>${esc(hv['MODAL.ticketDetails.title'])}</b></p>`,
+    staticUnitValues('help-support-form'),
+    failure,
+  );
+
+  const helpSupportButtonHtml = renderUnit(
+    'help-support-button',
+    'Ticket Button (staff only)',
+    `<div class="btn-row">${button(hv['TICKET.closeHelpButton'], hv['TICKET.closeHelpEmoji'], 'closeHelp')}</div>
+     <p class="btn-caption">No approve/deny here, just closes it.</p>`,
+    staticUnitValues('help-support-button'),
+    failure,
+  );
+
+  const helpSupportMessagesHtml = renderUnit(
+    'help-support-messages',
+    'Messages',
+    [
+      msgRow('no staff configured', hv['REPLIES.missingTicketStaff']),
+      msgRow('ticket unpinged', hv['TICKET.noHelpStaffConfigured']),
+    ].join(''),
+    staticUnitValues('help-support-messages'),
+    failure,
+  );
+
+  const helpQandaBoardHtml = renderUnit(
+    'help-qanda-board',
+    'Q&A Board',
+    panelPreview(hv['PANEL.qanda.title'], hv['PANEL.qanda.description']) +
+      `<div class="btn-row">${button(hv['PANEL.qanda.buttonLabel'], hv['PANEL.qanda.buttonEmoji'], 'askQuestion')}</div>
+       <p class="btn-caption">Posted by <code class="mono">/deployqanda</code>. Replies with a topic dropdown — "${esc(hv['QANDA.prompt'])}" (placeholder: "${esc(hv['QANDA.selectPlaceholder'])}")</p>`,
+    staticUnitValues('help-qanda-board'),
+    failure,
+  );
+
+  const qandaTopicUnitsHtml = qandaTopics
+    .getAllTopics()
+    .map((topic) => {
+      const unitId = `qanda-topic-${topic.id}`;
+      const values = topicUnitValues(topic.id);
+      const preview = `
+        <div class="topic">
+          <div class="t-label">${esc(values[`QANDA.topics.${topic.id}.label`])} — ${esc(values[`QANDA.topics.${topic.id}.description`])}</div>
+          <div class="t-title">${esc(values[`QANDA.topics.${topic.id}.title`])}</div>
+          <div class="t-body">${renderLines(textToLines(values[`QANDA.topics.${topic.id}.body`]))}</div>
+        </div>`;
+      const removeForm = `
+        <form method="POST" action="/qanda/topics/${esc(topic.id)}/delete" class="remove-form">
+          <button type="submit" class="remove-btn">Remove this topic</button>
+        </form>`;
+      return renderUnit(unitId, `Q&A Topic: ${topic.title || topic.id}`, preview + removeForm, values, failure);
+    })
+    .join('');
+
+  const addTopicErrors = addTopicFailure ? Object.fromEntries(addTopicFailure.errors.map((e) => [e.path, e.message])) : {};
+  const addTopicVal = (path) => (addTopicFailure ? addTopicFailure.attempted[path] ?? '' : '');
+  const addTopicField = (path, label, multiline) => {
+    const err = addTopicErrors[path];
+    const control = multiline
+      ? `<textarea name="${esc(path)}" class="ftextarea" rows="6">${esc(addTopicVal(path))}</textarea>`
+      : `<input type="text" name="${esc(path)}" value="${esc(addTopicVal(path))}" class="finput">`;
+    return `
+      <label class="frow${err ? ' has-error' : ''}">
+        <span class="flabel">${esc(label)}</span>
+        ${control}
+        ${err ? `<span class="field-error">⚠️ ${esc(err)}</span>` : ''}
+      </label>`;
+  };
+  const addTopicHtml = `
+    <div class="unit-card" id="unit-qanda-add-topic">
+      <h4 class="unit-title">Add a New Topic</h4>
+      ${addTopicFailure ? `<div class="unit-fail-banner">⚠️ Not added — fix the highlighted field${addTopicFailure.errors.length > 1 ? 's' : ''} below and try again.</div>` : ''}
+      <form method="POST" action="/qanda/topics" class="unit-form">
+        ${addTopicField('label', 'Dropdown label')}
+        ${addTopicField('description', 'Dropdown description')}
+        ${addTopicField('title', 'Answer title')}
+        ${addTopicField('body', 'Answer body', true)}
+        <button type="submit" class="save-btn">Add Topic</button>
+      </form>
+    </div>`;
+
+  const helpHtml = `
+  <section class="block" id="help">
+    <div class="block-head"><span class="glyph">${esc(hv['PANEL.ticket.buttonEmoji'])}</span><h2>Getting Help</h2></div>
+    <p class="block-intro">Two separate boards. Q&amp;A never touches staff or creates a ticket; Talk to Staff always does.</p>
+    ${helpSupportBoardHtml}
+    ${helpSupportFormHtml}
+    ${helpSupportButtonHtml}
+    ${helpSupportMessagesHtml}
+    ${helpQandaBoardHtml}
+    <h3 class="sub-head">Q&amp;A Topics</h3>
+    ${qandaTopicUnitsHtml}
+    ${addTopicHtml}
+  </section>`;
+
+  const savedBanner = savedSection ? `<div class="toast">✅ Saved.</div>` : '';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumi-chan — Content &amp; Style Reference</title>
+<style>
+  :root {
+    --paper: #faf6ee; --paper-raised: #ffffff; --ink: #16303f; --ink-soft: #3d5c6b;
+    --muted: #6b8394; --line: #e2dccb; --line-soft: #ecE6d8; --accent: #1f8fb8;
+    --accent-ink: #0d5a76; --code-bg: #f0ead9; --warn: #c14a2c; --warn-bg: #f7e3da;
+    --shadow: 0 1px 2px rgba(18, 60, 84, 0.06), 0 6px 20px rgba(18, 60, 84, 0.07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #10202a; --paper-raised: #172c38; --ink: #eef2ee; --ink-soft: #c3d3d9;
+      --muted: #8ba6b3; --line: #2a4553; --line-soft: #21394450; --accent: #5cc4e8;
+      --accent-ink: #8fd8f2; --code-bg: #0d1c24; --warn: #ff9d80; --warn-bg: #3a2420;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 28px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10202a; --paper-raised: #172c38; --ink: #eef2ee; --ink-soft: #c3d3d9;
+    --muted: #8ba6b3; --line: #2a4553; --line-soft: #21394450; --accent: #5cc4e8;
+    --accent-ink: #8fd8f2; --code-bg: #0d1c24; --warn: #ff9d80; --warn-bg: #3a2420;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 28px rgba(0, 0, 0, 0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #faf6ee; --paper-raised: #ffffff; --ink: #16303f; --ink-soft: #3d5c6b;
+    --muted: #6b8394; --line: #e2dccb; --line-soft: #ecE6d8; --accent: #1f8fb8;
+    --accent-ink: #0d5a76; --code-bg: #f0ead9; --warn: #c14a2c; --warn-bg: #f7e3da;
+    --shadow: 0 1px 2px rgba(18, 60, 84, 0.06), 0 6px 20px rgba(18, 60, 84, 0.07);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
+  h1, h2, h3, h4 {
+    font-family: Iowan Old Style, "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    color: var(--ink); font-weight: 600; text-wrap: balance; margin: 0;
+  }
+  a { color: var(--accent-ink); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 28px 120px; }
+  .warn-banner {
+    background: var(--warn-bg); color: var(--warn); text-align: center; font-size: 13.5px;
+    font-weight: 600; padding: 10px 16px;
+  }
+  .toast {
+    max-width: 880px; margin: 20px auto 0; padding: 12px 18px; border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 16%, var(--paper-raised)); color: var(--accent-ink);
+    font-weight: 600; font-size: 14px; text-align: center;
+  }
+  .masthead { padding: 64px 0 36px; border-bottom: 1px solid var(--line); }
+  .masthead .eyebrow {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent-ink); margin: 0 0 14px;
+  }
+  .masthead h1 { font-size: clamp(32px, 5vw, 44px); line-height: 1.08; }
+  .masthead p.sub { margin: 14px 0 0; max-width: 62ch; color: var(--ink-soft); font-size: 17px; }
+  .masthead .meta { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .masthead .meta span { white-space: nowrap; }
+  nav.jump {
+    position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--paper) 92%, transparent);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+  }
+  nav.jump .wrap {
+    padding: 0 28px; max-width: 880px; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none;
+  }
+  nav.jump .wrap::-webkit-scrollbar { display: none; }
+  nav.jump a {
+    flex: none; padding: 13px 14px; font-size: 13.5px; font-weight: 600; color: var(--ink-soft);
+    text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap;
+  }
+  nav.jump a:hover { color: var(--accent-ink); }
+  section.block { padding: 56px 0; border-bottom: 1px solid var(--line); }
+  section.block:last-of-type { border-bottom: none; }
+  .block-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
+  .block-head .glyph { font-size: 26px; line-height: 1; }
+  .block-head h2 { font-size: 26px; }
+  .block-intro { color: var(--ink-soft); max-width: 66ch; margin: 10px 0 32px; font-size: 15.5px; }
+  h3.sub-head {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 600; margin: 40px 0 14px;
+  }
+  .embed-preview {
+    background: var(--paper-raised); border: 1px solid var(--line); border-left: 4px solid #2AA9D8;
+    border-radius: 6px; padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .embed-preview .e-title { font-weight: 700; font-size: 16px; margin-bottom: 8px; }
+  .embed-preview .e-body { font-size: 14.5px; color: var(--ink-soft); }
+  .embed-preview .e-body p { margin: 0 0 10px; }
+  .embed-preview .e-body p:last-child { margin-bottom: 0; }
+  .embed-preview .e-body .quote {
+    margin: 10px 0 0; padding: 8px 0 8px 14px; border-left: 2px solid var(--line);
+    font-size: 14px; color: var(--ink-soft); line-height: 1.7;
+  }
+  .embed-preview .e-foot {
+    margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted);
+  }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .dbtn {
+    display: inline-flex; align-items: center; gap: 7px; padding: 8px 15px; border-radius: 4px;
+    font-size: 13.5px; font-weight: 600; color: #fff; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .dbtn.success { background: #248046; }
+  .dbtn.danger { background: #da373c; }
+  .dbtn.primary { background: #5865f2; }
+  .dbtn.secondary { background: #4e5058; }
+  .btn-caption { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  table.field-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 4px; }
+  table.field-table th {
+    text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    font-weight: 600; padding: 0 12px 8px 0; border-bottom: 1px solid var(--line);
+  }
+  table.field-table td {
+    padding: 11px 12px 11px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; color: var(--ink-soft);
+  }
+  table.field-table td:first-child { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  table.field-table tr:last-child td { border-bottom: none; }
+  .table-wrap { overflow-x: auto; }
+  .swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin-top: 14px; }
+  .swatch { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--paper-raised); box-shadow: var(--shadow); }
+  .swatch .chip { height: 52px; }
+  .swatch .info { padding: 10px 12px; }
+  .swatch .name { font-weight: 700; font-size: 13.5px; }
+  .swatch .hex { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .swatch .use { font-size: 12px; color: var(--ink-soft); margin-top: 6px; line-height: 1.4; }
+  .palette-note {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px;
+    font-size: 13.5px; color: var(--ink-soft); margin-top: 18px;
+  }
+  .palette-note strong { color: var(--ink); }
+  .msg-row { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line-soft); font-size: 13.5px; }
+  .msg-row:last-child { border-bottom: none; }
+  .msg-row .trigger { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12.5px; padding-top: 1px; }
+  .msg-row .text { color: var(--ink-soft); }
+  .msg-row .text b { color: var(--ink); }
+  .topic { background: var(--paper-raised); border-radius: 6px; padding: 4px 2px 14px; }
+  .topic .t-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .topic .t-title { font-weight: 700; font-size: 15.5px; margin-bottom: 10px; }
+  .topic .t-body { font-size: 14px; color: var(--ink-soft); }
+  .topic .t-body p { margin: 0 0 8px; }
+  .topic .t-body p:last-child { margin-bottom: 0; }
+  .topic .t-body .quote { border-left: 2px solid var(--line); padding-left: 12px; margin: 6px 0; color: var(--ink-soft); line-height: 1.7; }
+  .topic .t-body b { color: var(--ink); }
+  .unit-card { margin: 28px 0; padding: 20px 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); box-shadow: var(--shadow); }
+  .unit-card:first-of-type { margin-top: 8px; }
+  .unit-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-family: ui-monospace, monospace; margin: 0 0 14px; }
+  .unit-preview { }
+  .unit-fail-banner { background: var(--warn-bg); color: var(--warn); font-size: 13px; font-weight: 600; padding: 10px 14px; border-radius: 6px; margin: 14px 0 0; }
+  .unit-form { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 12px; }
+  .remove-form { margin-top: 10px; }
+  .remove-btn {
+    padding: 7px 14px; border-radius: 6px; border: 1px solid var(--warn); background: transparent; color: var(--warn);
+    font-weight: 600; font-size: 12.5px; cursor: pointer;
+  }
+  .remove-btn:hover { background: var(--warn-bg); }
+  .frow { display: grid; grid-template-columns: minmax(160px, 280px) 1fr; gap: 14px; align-items: start; font-size: 13.5px; }
+  .flabel { color: var(--ink-soft); padding-top: 9px; }
+  .fhint { color: var(--muted); font-size: 11.5px; font-weight: 400; }
+  .finput, .ftextarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--paper); color: var(--ink); font-family: inherit; font-size: 13.5px;
+  }
+  .ftextarea { min-height: 110px; resize: vertical; }
+  .finput:focus, .ftextarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .frow.has-error .finput, .frow.has-error .ftextarea { border-color: var(--warn); }
+  .field-error { grid-column: 2; color: var(--warn); font-size: 12px; }
+  .save-btn {
+    align-self: flex-start; margin-top: 8px; padding: 10px 22px; border-radius: 6px; border: none;
+    background: var(--accent); color: #fff; font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+  .save-btn:hover { background: var(--accent-ink); }
+  .save-btn:focus-visible, .remove-btn:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+  footer.doc-foot { padding: 40px 0 10px; color: var(--muted); font-size: 12.5px; }
+  @media (max-width: 640px) {
+    .masthead { padding: 44px 0 28px; }
+    section.block { padding: 40px 0; }
+    .frow { grid-template-columns: 1fr; gap: 6px; }
+    .field-error { grid-column: 1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="warn-banner">⚠️ This page isn't locked down yet — anyone with this link can edit the sections below. Login is coming later.</div>
+
+<nav class="jump">
+  <div class="wrap">
+    <a href="#palette">Palette</a>
+    <a href="#requesting">Requesting</a>
+    <a href="#claiming">Claiming</a>
+    <a href="#help">Help &amp; Q&amp;A</a>
+  </div>
+</nav>
+
+${savedBanner}
+${failure ? `<div class="toast" style="background:color-mix(in srgb, var(--warn) 16%, var(--paper-raised)); color:var(--warn);">⚠️ Not saved — <a href="#unit-${esc(failure.unitId)}" style="color:inherit;">jump to the error</a></div>` : ''}
+${addTopicFailure ? `<div class="toast" style="background:color-mix(in srgb, var(--warn) 16%, var(--paper-raised)); color:var(--warn);">⚠️ Topic not added — <a href="#unit-qanda-add-topic" style="color:inherit;">jump to the error</a></div>` : ''}
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Lumi-chan · Coastal Clash Bounty Bot</p>
+    <h1>Content &amp; Style Reference</h1>
+    <p class="sub">Every board, button, form, and message the bot sends, organized by what a player is actually doing. The preview at the top of each card is live; the form below it edits the bot directly.</p>
+    <div class="meta">
+      <span>Source: <code class="mono">src/text.js</code> + saved edits</span>
+      <span>Rendered at request time</span>
+    </div>
+  </header>
+
+  <section class="block" id="palette">
+    <div class="block-head"><h2>Palette &amp; Materials</h2></div>
+    <p class="block-intro">Two separate color systems are in play. The bot's own palette controls embed accents and the spreadsheet export. Discord's four button styles are fixed by the platform — buttons can only ever be one of these four, never a custom hex. Colors aren't editable here yet — this section is reference only.</p>
+    <h3 class="sub-head">Bot embed palette</h3>
+    <div class="swatch-grid">${paletteSwatches}</div>
+    <h3 class="sub-head">Discord button colors (fixed by Discord)</h3>
+    <div class="swatch-grid">${discordSwatches}</div>
+    <div class="palette-note">
+      <strong>Banner image</strong> — every board and card carries the same art (<span class="mono">${esc(TEXT.VISUALS.BANNER_URL)}</span>). <strong>Footer</strong> — every embed ends with <em>"${esc(TEXT.FOOTER)}"</em>.
+    </div>
+  </section>
+  ${requestingHtml}
+  ${claimingHtml}
+  ${helpHtml}
+
+  <footer class="doc-foot">
+    Defaults come from <code class="mono">src/text.js</code>; saved edits are layered on top in the database and win over the default — and now actually change what the bot posts to Discord, not just this page. Nothing here ever changes text.js itself.
+  </footer>
+
+</div>
+</body>
+</html>`;
+}
+
+module.exports = { buildStyleGuideHtml };

@@ -1,12 +1,17 @@
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const TEXT = require('./text');
+const { resolveText } = require('./styleGuide/liveText');
+const qandaTopics = require('./styleGuide/qandaTopics');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
+// Topics are an editable collection now (added/removed through the
+// style-guide page, see src/styleGuide/qandaTopics.js) — not the fixed TEXT.QANDA.topics
+// object. Both the dropdown options and individual answers read through it.
 function qandaTopicOptions() {
-  return Object.entries(TEXT.QANDA.topics).map(([value, topic]) => ({
+  return qandaTopics.getAllTopics().map((topic) => ({
     label: topic.label,
     description: topic.description,
-    value,
+    value: topic.id,
   }));
 }
 
@@ -18,7 +23,7 @@ function qandaSelectRow() {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('qanda_select')
-      .setPlaceholder(TEXT.QANDA.selectPlaceholder)
+      .setPlaceholder(resolveText('QANDA.selectPlaceholder'))
       .addOptions(qandaTopicOptions()),
   );
 }
@@ -29,7 +34,7 @@ function qandaSelectRow() {
 function buildQandAMenu() {
   const embed = new EmbedBuilder()
     .setColor(COLORS.brand)
-    .setDescription(TEXT.QANDA.prompt)
+    .setDescription(resolveText('QANDA.prompt'))
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER });
 
@@ -38,10 +43,11 @@ function buildQandAMenu() {
 
 // Shown after a topic is picked from the dropdown. Keeps that dropdown
 // attached so switching topics doesn't require pressing the button again.
-// Returns null if topicKey doesn't match a known topic (stale/invalid pick).
+// Returns null if topicKey isn't a currently-existing topic (stale/invalid
+// pick, or one that's since been removed).
 function buildQandAAnswer(topicKey) {
-  const topic = TEXT.QANDA.topics[topicKey];
-  if (!topic) return null;
+  if (!qandaTopics.getTopicOrder().includes(topicKey)) return null;
+  const topic = qandaTopics.getTopic(topicKey);
 
   const embed = new EmbedBuilder()
     .setColor(COLORS.brand)

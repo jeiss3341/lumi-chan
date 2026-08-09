@@ -7,6 +7,7 @@ const {
   EmbedBuilder,
 } = require('discord.js');
 const TEXT = require('./text');
+const { resolveText } = require('./styleGuide/liveText');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // Turns parts like ('pending', 'jeiss', 'Catching 6789!') into a Discord-safe
@@ -74,14 +75,14 @@ function previewButtons() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('ticket_submit')
-      .setLabel(TEXT.TICKET.submitButton)
+      .setLabel(resolveText('TICKET.submitButton'))
       .setStyle(ButtonStyle.Success)
-      .setEmoji(TEXT.TICKET.submitEmoji),
+      .setEmoji(resolveText('TICKET.submitEmoji')),
     new ButtonBuilder()
       .setCustomId('ticket_cancel')
-      .setLabel(TEXT.TICKET.closeButton)
+      .setLabel(resolveText('TICKET.closeButton'))
       .setStyle(ButtonStyle.Danger)
-      .setEmoji(TEXT.TICKET.closeEmoji),
+      .setEmoji(resolveText('TICKET.closeEmoji')),
   );
 }
 
@@ -92,14 +93,14 @@ function staffReviewButtons(bountyId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`approve_bounty:${bountyId}`)
-      .setLabel(TEXT.TICKET.approveBountyButton)
+      .setLabel(resolveText('TICKET.approveBountyButton'))
       .setStyle(ButtonStyle.Success)
-      .setEmoji(TEXT.TICKET.approveBountyEmoji),
+      .setEmoji(resolveText('TICKET.approveBountyEmoji')),
     new ButtonBuilder()
       .setCustomId(`deny_bounty:${bountyId}`)
-      .setLabel(TEXT.TICKET.denyBountyButton)
+      .setLabel(resolveText('TICKET.denyBountyButton'))
       .setStyle(ButtonStyle.Danger)
-      .setEmoji(TEXT.TICKET.denyBountyEmoji),
+      .setEmoji(resolveText('TICKET.denyBountyEmoji')),
   );
 }
 
@@ -110,19 +111,19 @@ function claimReviewButtons(bountyId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`approve_claim:${bountyId}`)
-      .setLabel(TEXT.TICKET.approveClaimButton)
+      .setLabel(resolveText('TICKET.approveClaimButton'))
       .setStyle(ButtonStyle.Success)
-      .setEmoji(TEXT.TICKET.approveClaimEmoji),
+      .setEmoji(resolveText('TICKET.approveClaimEmoji')),
     new ButtonBuilder()
       .setCustomId(`deny_claim:${bountyId}`)
-      .setLabel(TEXT.TICKET.denyClaimButton)
+      .setLabel(resolveText('TICKET.denyClaimButton'))
       .setStyle(ButtonStyle.Danger)
-      .setEmoji(TEXT.TICKET.denyClaimEmoji),
+      .setEmoji(resolveText('TICKET.denyClaimEmoji')),
     new ButtonBuilder()
       .setCustomId(`include_requester:${bountyId}`)
-      .setLabel(TEXT.TICKET.includeRequesterButton)
+      .setLabel(resolveText('TICKET.includeRequesterButton'))
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(TEXT.TICKET.includeRequesterEmoji),
+      .setEmoji(resolveText('TICKET.includeRequesterEmoji')),
   );
 }
 
@@ -133,9 +134,9 @@ function helpTicketButtons() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('close_help_ticket')
-      .setLabel(TEXT.TICKET.closeHelpButton)
+      .setLabel(resolveText('TICKET.closeHelpButton'))
       .setStyle(ButtonStyle.Danger)
-      .setEmoji(TEXT.TICKET.closeHelpEmoji),
+      .setEmoji(resolveText('TICKET.closeHelpEmoji')),
   );
 }
 
@@ -227,7 +228,7 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, s
   await channel.send({
     content: mentions.length
       ? `${mentions.join(' ')} — a new bounty from ${member} is ready for review.`
-      : TEXT.TICKET.noRequestStaffConfigured,
+      : resolveText('TICKET.noRequestStaffConfigured'),
     embeds: [embed],
     components: [staffReviewButtons(bountyId)],
     allowedMentions: {
@@ -266,7 +267,7 @@ async function createClaimTicket({ guild, member, botId, embed, title, staffRole
   await channel.send({
     content: mentions.length
       ? `${mentions.join(' ')} — a bounty claim from ${member} needs review.`
-      : TEXT.TICKET.noClaimStaffConfigured,
+      : resolveText('TICKET.noClaimStaffConfigured'),
     embeds: [embed],
     components: [claimReviewButtons(bountyId)],
     allowedMentions: {
@@ -307,7 +308,7 @@ async function createHelpTicket({ guild, member, botId, staffRoleId, staffUserId
   await channel.send({
     content: mentions.length
       ? `${mentions.join(' ')} — ${member} needs help.`
-      : TEXT.TICKET.noHelpStaffConfigured,
+      : resolveText('TICKET.noHelpStaffConfigured'),
     embeds,
     components: [helpTicketButtons()],
     allowedMentions: {
