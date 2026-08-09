@@ -25,6 +25,7 @@ const {
   toChannelName,
   alphabetizeCategory,
   previewButtons,
+  helpTicketCloseConfirm,
 } = require('./src/ticket');
 const { startServer } = require('./src/styleGuide/server');
 const { loadOverrides } = require('./src/styleGuide/overrides');
@@ -701,18 +702,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // "Close Ticket" inside a general support ticket  →  staff only. Just
-    // closes it, no DB state to touch (these aren't bounties).
+    // "Close Ticket" inside a general support ticket  →  staff only. Doesn't
+    // close anything yet — shows an ephemeral (staff-only) "are you sure?"
+    // first (confirm_close_help_ticket / cancel_close_help_ticket below).
+    // The original button used to stay clickable after closing, so a second
+    // press on an already-closed ticket would silently re-archive it,
+    // stacking "closed-closed-..." onto the channel name — the confirm step
+    // also drops that button for good once actually closed, fixing that.
     if (interaction.isButton() && interaction.customId === 'close_help_ticket') {
       if (!(await requireStaff(interaction, getHelpStaff, 'close tickets'))) return;
 
-      const helpArchiveCategoryId = await getHelpArchiveCategory();
       await interaction.reply({
+        content: 'Close this ticket? This archives (or deletes, if no archive category is set) the channel.',
+        components: [helpTicketCloseConfirm(interaction.message.id)],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // "Yes, Close It"  →  staff only. This is what actually commits the
+    // close — recolors the original ticket message and drops its button (so
+    // it can never be pressed again), then archives/closes the channel.
+    if (interaction.isButton() && interaction.customId.startsWith('confirm_close_help_ticket')) {
+      if (!(await requireStaff(interaction, getHelpStaff, 'close tickets'))) return;
+
+      const originalMessageId = customIdArg(interaction);
+      const originalMessage = originalMessageId
+        ? await interaction.channel.messages.fetch(originalMessageId).catch(() => null)
+        : null;
+      if (originalMessage) {
+        const embeds = originalMessage.embeds.length
+          ? [EmbedBuilder.from(originalMessage.embeds[0]).setColor(COLORS.navy)]
+          : [];
+        await originalMessage.edit({ embeds, components: [] }).catch(console.error);
+      }
+
+      const helpArchiveCategoryId = await getHelpArchiveCategory();
+      await interaction.update({
         content: helpArchiveCategoryId
           ? `🔒 **Ticket closed** by ${interaction.user}. Archiving this channel…`
           : `🔒 **Ticket closed** by ${interaction.user}. Closing this channel in a few seconds…`,
+        components: [],
       });
       await closeOrArchiveTicket(interaction.channel, helpArchiveCategoryId);
+      return;
+    }
+
+    // "Cancel"  →  just dismisses the confirmation. Nothing else happens.
+    if (interaction.isButton() && interaction.customId === 'cancel_close_help_ticket') {
+      await interaction.update({ content: 'Cancelled — the ticket stays open.', components: [] });
       return;
     }
 

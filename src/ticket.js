@@ -129,7 +129,9 @@ function claimReviewButtons(bountyId) {
 
 // [Close Ticket] shown inside a general support ticket. No approve/deny here
 // — there's nothing to decide, just a conversation that gets closed once
-// it's resolved.
+// it's resolved. Pressing it doesn't close anything by itself — it shows an
+// ephemeral (staff-only) confirmation first, see helpTicketCloseConfirm
+// below — so a second press on an already-closed ticket can't happen.
 function helpTicketButtons() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -137,6 +139,24 @@ function helpTicketButtons() {
       .setLabel(resolveText('TICKET.closeHelpButton'))
       .setStyle(ButtonStyle.Danger)
       .setEmoji(resolveText('TICKET.closeHelpEmoji')),
+  );
+}
+
+// [Yes, Close It] [Cancel] — the ephemeral confirmation shown after Close
+// Ticket is pressed. `messageId` is baked into the confirm button's
+// customId so its handler knows which message (the original ticket post)
+// to recolor/strip buttons from — the ephemeral confirmation is a separate
+// message, not the one the original button lived on.
+function helpTicketCloseConfirm(messageId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`confirm_close_help_ticket:${messageId}`)
+      .setLabel(resolveText('TICKET.confirmCloseHelpButton'))
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId('cancel_close_help_ticket')
+      .setLabel(resolveText('TICKET.cancelCloseHelpButton'))
+      .setStyle(ButtonStyle.Secondary),
   );
 }
 
@@ -329,4 +349,5 @@ module.exports = {
   previewButtons,
   staffReviewButtons,
   claimReviewButtons,
+  helpTicketCloseConfirm,
 };

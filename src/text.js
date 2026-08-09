@@ -251,6 +251,10 @@ module.exports = {
     // support ticket — no approve/deny here, just closing it once resolved.
     closeHelpButton: 'Close Ticket',
     closeHelpEmoji: '🔒',
+    // The ephemeral (staff-only) "are you sure?" confirmation shown after
+    // pressing Close Ticket, before it actually closes/archives anything.
+    confirmCloseHelpButton: 'Yes, Close It',
+    cancelCloseHelpButton: 'Cancel',
     // src/ticket.js → createTicket()/createClaimTicket()/createHelpTicket().
     // Shown instead of a staff ping when no staff role/person is configured
     // for that pipeline yet.
