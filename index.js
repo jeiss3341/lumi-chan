@@ -32,18 +32,21 @@ const { resolveText } = require('./src/styleGuide/liveText');
 const TEXT = require('./src/text');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
-// Public style-guide page — unrelated to Discord, so it doesn't wait on
-// Discord login. Still has to wait on loadOverrides() though, so the very
+// We only need the Guilds intent. No Message Content intent required, so you
+// don't have to flip any privileged-intent toggles in the Developer Portal.
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+// Public style-guide + bounty admin pages — the bounty pages
+// (src/styleGuide/bountyRoutes.js) fetch channels/messages through `client`
+// to keep an approved bounty's board post in sync with admin edits, so
+// `client` has to exist (not necessarily be logged in yet) before
+// startServer() runs. Also has to wait on loadOverrides(), so the very
 // first request after a cold start doesn't render defaults-only before any
 // saved edits are in the cache.
 (async () => {
   await loadOverrides();
-  startServer();
+  startServer(client);
 })();
-
-// We only need the Guilds intent. No Message Content intent required, so you
-// don't have to flip any privileged-intent toggles in the Developer Portal.
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 const {
   initDb,

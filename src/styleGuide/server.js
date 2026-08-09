@@ -19,28 +19,8 @@ const overrides = require('./overrides');
 const fieldSchema = require('./fieldSchema');
 const qandaTopics = require('./qandaTopics');
 const auth = require('./auth');
-
-// Caps how much a single submission can contain — generous for even the
-// biggest unit's form, stingy for abuse.
-const MAX_BODY_BYTES = 200_000;
-
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    let bytes = 0;
-    req.on('data', (chunk) => {
-      bytes += chunk.length;
-      if (bytes > MAX_BODY_BYTES) {
-        reject(new Error('BODY_TOO_LARGE'));
-        req.destroy();
-        return;
-      }
-      body += chunk;
-    });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
-}
+const bountyRoutes = require('./bountyRoutes');
+const { readBody, redirectTo } = require('./httpUtil');
 
 // `session` is always present here — every caller runs after the auth gate
 // in startServer() below.
@@ -48,11 +28,6 @@ function renderPage(req, res, status, session, options) {
   const html = buildStyleGuideHtml({ ...options, username: session.username });
   res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(html);
-}
-
-function redirectTo(res, location, status = 303) {
-  res.writeHead(status, { Location: location });
-  res.end();
 }
 
 // POST /edit/:unitId — saves one of the 17 static units, or a
@@ -243,7 +218,7 @@ function handleLogout(req, res) {
   redirectTo(res, '/', 302);
 }
 
-function startServer() {
+function startServer(client) {
   const port = process.env.PORT || 3000;
 
   const server = http.createServer((req, res) => {
@@ -297,6 +272,45 @@ function startServer() {
     if (req.method === 'POST' && deleteMatch) {
       handleRemoveTopic(req, res, decodeURIComponent(deleteMatch[1]));
       return;
+    }
+
+    if (req.method === 'GET' && path === '/bounties') {
+      bountyRoutes.handleBountiesList(req, res, session, client);
+      return;
+    }
+    if (req.method === 'GET' && path === '/bounties/new') {
+      bountyRoutes.handleNewBountyPage(res, session);
+      return;
+    }
+    if (req.method === 'POST' && path === '/bounties/new') {
+      bountyRoutes.handleCreateBounty(req, res, session, client);
+      return;
+    }
+
+    const bountyIdMatch = path.match(/^\/bounties\/(\d+)\/(edit|approve|deny|cancel)$/);
+    if (bountyIdMatch) {
+      const [, idStr, action] = bountyIdMatch;
+      const id = Number(idStr);
+      if (req.method === 'GET' && action === 'edit') {
+        bountyRoutes.handleEditBountyPage(req, res, session, client, id);
+        return;
+      }
+      if (req.method === 'POST' && action === 'edit') {
+        bountyRoutes.handleEditBounty(req, res, session, client, id);
+        return;
+      }
+      if (req.method === 'POST' && action === 'approve') {
+        bountyRoutes.handleApproveBounty(req, res, session, client, id);
+        return;
+      }
+      if (req.method === 'POST' && action === 'deny') {
+        bountyRoutes.handleDenyBounty(req, res, session, client, id);
+        return;
+      }
+      if (req.method === 'POST' && action === 'cancel') {
+        bountyRoutes.handleCancelBounty(req, res, session, client, id);
+        return;
+      }
     }
 
     res.writeHead(req.method === 'GET' ? 404 : 405, { 'Content-Type': 'text/plain' });

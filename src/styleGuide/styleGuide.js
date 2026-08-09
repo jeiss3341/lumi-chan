@@ -61,7 +61,33 @@ const BASE_STYLES = `
     color: var(--ink); font-weight: 600; text-wrap: balance; margin: 0;
   }
   a { color: var(--accent-ink); }
+  .session-bar {
+    display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap;
+    background: var(--paper-raised); color: var(--ink-soft); text-align: center; font-size: 13.5px;
+    font-weight: 600; padding: 10px 16px; border-bottom: 1px solid var(--line);
+  }
+  .session-bar a { color: var(--accent-ink); }
+  .session-bar .nav-links { display: flex; gap: 4px; }
+  .session-bar .nav-links a {
+    padding: 5px 12px; border-radius: 6px; color: var(--ink-soft); text-decoration: none;
+  }
+  .session-bar .nav-links a:hover { background: var(--line-soft); }
+  .session-bar .nav-links a.active { background: var(--accent); color: #fff; }
+  .session-bar .session-info { color: var(--ink-soft); }
 `;
+
+// The top bar shown on every logged-in page — which page you're on (with a
+// link to the other one) plus who's logged in / log out. `active` is
+// 'style' or 'bounties'.
+function topBar({ active, username }) {
+  return `<div class="session-bar">
+    <span class="nav-links">
+      <a href="/" class="${active === 'style' ? 'active' : ''}">Content &amp; Style</a>
+      <a href="/bounties" class="${active === 'bounties' ? 'active' : ''}">Bounties</a>
+    </span>
+    <span class="session-info">Logged in as <strong>${esc(username)}</strong> · <a href="/logout">Log out</a></span>
+  </div>`;
+}
 
 const BUTTON_STYLES = {
   requestBounty: 'success', // panel.js buildPanel()
@@ -598,11 +624,6 @@ function buildStyleGuideHtml({ savedSection, failure, addTopicFailure, username 
 <style>
 ${BASE_STYLES}
   .wrap { max-width: 880px; margin: 0 auto; padding: 0 28px 120px; }
-  .session-bar {
-    background: var(--paper-raised); color: var(--ink-soft); text-align: center; font-size: 13.5px;
-    font-weight: 600; padding: 10px 16px; border-bottom: 1px solid var(--line);
-  }
-  .session-bar a { color: var(--accent-ink); }
   .toast {
     max-width: 880px; margin: 20px auto 0; padding: 12px 18px; border-radius: 8px;
     background: color-mix(in srgb, var(--accent) 16%, var(--paper-raised)); color: var(--accent-ink);
@@ -741,7 +762,7 @@ ${BASE_STYLES}
 </head>
 <body>
 
-<div class="session-bar">Logged in as <strong>${esc(username)}</strong> · <a href="/logout">Log out</a></div>
+${topBar({ active: 'style', username })}
 
 <nav class="jump">
   <div class="wrap">
@@ -849,4 +870,4 @@ ${BASE_STYLES}
 </html>`;
 }
 
-module.exports = { buildStyleGuideHtml, buildLoginPageHtml };
+module.exports = { buildStyleGuideHtml, buildLoginPageHtml, BASE_STYLES, topBar, esc };

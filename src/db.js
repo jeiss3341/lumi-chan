@@ -312,6 +312,17 @@
     );
   }
 
+  // Soft-delete: flips a bounty to 'cancelled' rather than removing the row,
+  // same audit-trail reasoning as denyBounty — used by the admin bounties
+  // page (src/styleGuide/bounties.js) instead of a real DELETE, so a
+  // mis-click stays recoverable and the history (who/when) isn't lost.
+  async function cancelBounty(id, cancelledBy) {
+    await pool.query(
+      `UPDATE bounties SET status = 'cancelled', approver_id = $2, approved_at = NOW() WHERE id = $1`,
+      [id, cancelledBy],
+    );
+  }
+
   // Approved bounties currently sitting on the board, alphabetical by name —
   // this is exactly the claimable pool for the claim-board dropdown. Discord's
   // select menu is hard-capped at 25 options, so this is paginated: pass
@@ -405,6 +416,7 @@
     findTitleConflict,
     approveBounty,
     denyBounty,
+    cancelBounty,
     getBounties,
     getClaimableBounties,
     setBoardMessage,
