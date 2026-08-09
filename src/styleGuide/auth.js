@@ -188,7 +188,10 @@ async function fetchGoogleUser(accessToken) {
   if (!json.email || json.email_verified !== true) {
     throw new Error('Google account has no verified email.');
   }
-  return { id: json.sub, email: json.email, username: json.name || json.email };
+  // First name only for the "Logged in as ..." display, not the full name
+  // Google returns in `name` — falls back to the full name, then email, if
+  // Google didn't give a given_name for this account.
+  return { id: json.sub, email: json.email, username: json.given_name || json.name || json.email };
 }
 
 // Checks the logged-in Google account's email against ADMIN_GOOGLE_EMAILS
