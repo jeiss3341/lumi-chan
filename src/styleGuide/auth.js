@@ -1,9 +1,12 @@
-// Discord OAuth2 login for the style-guide admin page. No new dependencies —
-// global fetch (Node 18+, see package.json engines) handles the Discord API
-// calls, and the built-in crypto module signs the session cookie.
+// Discord + Google OAuth2 login for the style-guide admin page. No new
+// dependencies — global fetch (Node 18+, see package.json engines) handles
+// both providers' APIs, and the built-in crypto module signs the session
+// cookie. Same session shape either way (src/styleGuide/server.js doesn't
+// care which provider a session came from).
 //
-// "Authorized" means: the logged-in Discord user's ID is in ADMIN_USER_IDS
-// (a comma-separated env var) — a plain, explicit allowlist, independent of
+// "Authorized" means: the logged-in Discord user's ID is in ADMIN_USER_IDS,
+// or the logged-in Google account's email is in ADMIN_GOOGLE_EMAILS (both
+// comma-separated env vars) — plain, explicit allowlists, independent of
 // the bounty/claim/help staff settings.
 const crypto = require('crypto');
 
@@ -13,7 +16,7 @@ const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function requiredEnv(name) {
   const value = process.env[name];
-  if (!value) throw new Error(`Missing required env var ${name} for Discord login.`);
+  if (!value) throw new Error(`Missing required env var ${name} for admin login.`);
   return value;
 }
 
@@ -141,6 +144,60 @@ function isAuthorized(userId) {
   return allowlist.includes(userId);
 }
 
+// ── Google OAuth2 ────────────────────────────────────────────────────────
+
+function buildGoogleAuthorizeUrl(state) {
+  const params = new URLSearchParams({
+    client_id: requiredEnv('GOOGLE_CLIENT_ID'),
+    redirect_uri: requiredEnv('GOOGLE_REDIRECT_URI'),
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    prompt: 'select_account',
+  });
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+async function exchangeGoogleCode(code) {
+  const body = new URLSearchParams({
+    client_id: requiredEnv('GOOGLE_CLIENT_ID'),
+    client_secret: requiredEnv('GOOGLE_CLIENT_SECRET'),
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: requiredEnv('GOOGLE_REDIRECT_URI'),
+  });
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  if (!res.ok) throw new Error(`Google token exchange failed: ${res.status} ${await res.text()}`);
+  const json = await res.json();
+  return json.access_token;
+}
+
+async function fetchGoogleUser(accessToken) {
+  const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Google user fetch failed: ${res.status} ${await res.text()}`);
+  const json = await res.json();
+  // email_verified is Google's own signal that the address is actually
+  // owned by this account — required, not just preferred, since the
+  // allowlist check below trusts this email outright.
+  if (!json.email || json.email_verified !== true) {
+    throw new Error('Google account has no verified email.');
+  }
+  return { id: json.sub, email: json.email, username: json.name || json.email };
+}
+
+// Checks the logged-in Google account's email against ADMIN_GOOGLE_EMAILS
+// (case-insensitive — email addresses aren't case-sensitive in practice).
+function isGoogleAuthorized(email) {
+  const allowlist = requiredEnv('ADMIN_GOOGLE_EMAILS').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+  return allowlist.includes(String(email).toLowerCase());
+}
+
 module.exports = {
   SESSION_COOKIE,
   STATE_COOKIE,
@@ -152,5 +209,9 @@ module.exports = {
   buildAuthorizeUrl,
   exchangeCode,
   fetchDiscordUser,
+  buildGoogleAuthorizeUrl,
+  exchangeGoogleCode,
+  fetchGoogleUser,
+  isGoogleAuthorized,
   isAuthorized,
 };

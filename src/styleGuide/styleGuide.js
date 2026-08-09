@@ -849,6 +849,18 @@ ${BASE_STYLES}
     text-decoration: none; cursor: pointer;
   }
   .discord-btn:hover { background: #4752c4; }
+  .google-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 12px 20px; border-radius: 8px; border: 1px solid var(--line);
+    background: #fff; color: #1f1f1f; font-weight: 700; font-size: 15px;
+    text-decoration: none; cursor: pointer; margin-top: 12px;
+  }
+  .google-btn:hover { background: #f7f7f7; }
+  .btn-divider {
+    display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin: 18px 0;
+  }
+  .btn-divider::before, .btn-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
   .login-error {
     background: var(--warn-bg); color: var(--warn); font-size: 13.5px; font-weight: 600;
     padding: 10px 14px; border-radius: 8px; margin: 0 0 20px;
@@ -859,11 +871,21 @@ ${BASE_STYLES}
   <div class="login-card">
     <p class="eyebrow">Lumi-chan</p>
     <h1>Admin Login</h1>
-    <p>Sign in with Discord to view and edit the bot's content &amp; style reference.</p>
+    <p>Sign in to view and edit the bot's content &amp; style reference.</p>
     ${errorHtml}
     <a class="discord-btn" href="/login/discord">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.07.07 0 0 0-.075.035c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.036 19.736 19.736 0 0 0-4.885 1.515.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127c-.598.35-1.22.645-1.873.893a.076.076 0 0 0-.041.106c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.673-3.549-13.66a.061.061 0 0 0-.031-.028ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.334-.955 2.419-2.157 2.419Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.334-.946 2.419-2.157 2.419Z"/></svg>
       Continue with Discord
+    </a>
+    <div class="btn-divider">or</div>
+    <a class="google-btn" href="/login/google">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+        <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.616z"/>
+        <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.26c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+        <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
+        <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+      </svg>
+      Continue with Google
     </a>
   </div>
 </body>

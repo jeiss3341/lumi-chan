@@ -9,9 +9,10 @@
 // duplicate-process issue) will now fail loudly with EADDRINUSE on startup
 // instead of silently racing each other on Discord interactions.
 //
-// Gated behind Discord OAuth login (src/styleGuide/auth.js) — every route
-// below requires a valid session except /login, /login/discord,
-// /auth/callback, and /logout themselves.
+// Gated behind Discord or Google OAuth login (src/styleGuide/auth.js) —
+// every route below requires a valid session except /login, /login/discord,
+// /auth/callback, /login/google, /auth/google/callback, and /logout
+// themselves.
 const http = require('http');
 const crypto = require('crypto');
 const { buildStyleGuideHtml, buildLoginPageHtml } = require('./styleGuide');
@@ -213,6 +214,59 @@ async function handleAuthCallback(req, res) {
   }
 }
 
+// GET /login/google — same shape as handleStartDiscordLogin, reused
+// oauth_state cookie is fine since only one login flow is ever in flight
+// per browser at a time.
+function handleStartGoogleLogin(req, res) {
+  try {
+    const state = crypto.randomBytes(16).toString('hex');
+    auth.setCookie(res, req, auth.STATE_COOKIE, state, { maxAgeSeconds: 300 });
+    redirectTo(res, auth.buildGoogleAuthorizeUrl(state), 302);
+  } catch (err) {
+    console.error('Failed to start Google login:', err);
+    loginPageRedirect(res, "Google login isn't configured yet — missing Google OAuth settings.");
+  }
+}
+
+// GET /auth/google/callback — same shape as handleAuthCallback, checked
+// against ADMIN_GOOGLE_EMAILS instead of ADMIN_USER_IDS.
+async function handleGoogleAuthCallback(req, res) {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const error = url.searchParams.get('error');
+    const cookies = auth.parseCookies(req);
+
+    if (error) {
+      loginPageRedirect(res, `Google login was cancelled (${error}). Try again if that wasn't intended.`);
+      return;
+    }
+    if (!code || !state || !cookies[auth.STATE_COOKIE] || state !== cookies[auth.STATE_COOKIE]) {
+      loginPageRedirect(res, 'Login failed — the request expired or was tampered with. Try again.');
+      return;
+    }
+    auth.clearCookie(res, req, auth.STATE_COOKIE);
+
+    const accessToken = await auth.exchangeGoogleCode(code);
+    const googleUser = await auth.fetchGoogleUser(accessToken);
+
+    if (!auth.isGoogleAuthorized(googleUser.email)) {
+      loginPageRedirect(
+        res,
+        `You're logged in as ${googleUser.email}, but that Google account isn't on the admin allowlist for this page.`,
+      );
+      return;
+    }
+
+    auth.setCookie(res, req, auth.SESSION_COOKIE, auth.signSession(googleUser), { maxAgeSeconds: 7 * 24 * 60 * 60 });
+    redirectTo(res, '/', 302);
+  } catch (err) {
+    console.error('Google login failed:', err);
+    loginPageRedirect(res, 'Something went wrong talking to Google. Try again in a moment.');
+  }
+}
+
 function handleLogout(req, res) {
   auth.clearCookie(res, req, auth.SESSION_COOKIE);
   redirectTo(res, '/', 302);
@@ -234,6 +288,14 @@ function startServer(client) {
     }
     if (req.method === 'GET' && path === '/auth/callback') {
       handleAuthCallback(req, res);
+      return;
+    }
+    if (req.method === 'GET' && path === '/login/google') {
+      handleStartGoogleLogin(req, res);
+      return;
+    }
+    if (req.method === 'GET' && path === '/auth/google/callback') {
+      handleGoogleAuthCallback(req, res);
       return;
     }
     if (req.method === 'GET' && path === '/logout') {

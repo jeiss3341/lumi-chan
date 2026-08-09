@@ -298,7 +298,7 @@ module.exports = {
       '> • `/deployclaimbounty` → sets up and posts the claim board (where players claim completed bounties).',
       '> • `/deployticket` → sets up and posts the support board (general help tickets).',
       '> • `/deployqanda` → posts the Q&A board.',
-      '> • **Admin site** → [lumi-chan-production.up.railway.app](https://lumi-chan-production.up.railway.app/) — view/edit every bounty and all the bot\'s board/button/message text from a browser (Discord login required, staff only).',
+      '> • **Admin site** → [lumi-chan-production.up.railway.app](https://lumi-chan-production.up.railway.app/) — view/edit every bounty and all the bot\'s board/button/message text from a browser (Discord login required, admin/dev only).',
     ],
   },
 
