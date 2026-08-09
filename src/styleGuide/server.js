@@ -70,7 +70,10 @@ async function handleEditUnit(req, res, unitId) {
       return;
     }
 
-    await overrides.setMany(Object.entries(attempted));
+    // Only write the fields that actually belong to (and were just
+    // validated for) this unit — attempted may carry extra keys from a
+    // hand-crafted POST that were never checked against fieldSchema.
+    await overrides.setMany(fields.map((f) => [f.path, attempted[f.path]]));
     redirectTo(res, `/?saved=${encodeURIComponent(unitId)}#unit-${encodeURIComponent(unitId)}`);
   } catch (err) {
     handleSaveError(res, err);

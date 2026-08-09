@@ -77,20 +77,27 @@ function get(path, fallback) {
 // none silently half-apply.
 async function setMany(entries) {
   if (!entries.length) return;
-  await pool.query('BEGIN');
+  // A dedicated client, not pool.query() per statement — pool.query() checks
+  // a connection out and back in for EACH call, so BEGIN/INSERT.../COMMIT
+  // would each potentially land on a different connection and never actually
+  // form one transaction.
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     for (const [key, value] of entries) {
-      await pool.query(
+      await client.query(
         `INSERT INTO content_overrides (key, value, updated_at)
          VALUES ($1, $2, NOW())
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
         [key, value],
       );
     }
-    await pool.query('COMMIT');
+    await client.query('COMMIT');
   } catch (err) {
-    await pool.query('ROLLBACK');
+    await client.query('ROLLBACK');
     throw err;
+  } finally {
+    client.release();
   }
   for (const [key, value] of entries) cache.set(key, value);
 }
