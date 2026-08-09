@@ -484,7 +484,7 @@ module.exports = {
     deployTicket: {
       command: 'Set up general "talk to staff" support tickets (staff only).',
       category: 'The category new support ticket channels will be created under.',
-      archiveCategory: 'Optional: category closed tickets get MOVED to instead of deleted (make this private/staff-only). Leave unset to delete on close, as before.',
+      archiveCategory: 'Category closed tickets move to (staff-only). Unset = delete on close, as before.',
       staffUser: 'A specific person who gets pinged on new tickets. (Set a role and/or a person.)',
       staffRole: 'A role that gets pinged on new tickets. (Set a role and/or a person.)',
     },
