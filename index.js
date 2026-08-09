@@ -274,12 +274,11 @@ async function createHelpTicketReply(interaction, { subject, body } = {}) {
   }
 }
 
-// Builds the themed .xlsx for `status`/`order` and sends it as the reply.
-// Shared by /allbounties' `export:true` option AND its "Export to Spreadsheet"
-// button, so both produce the exact same file. `groupByStatus` mirrors the
-// command's `sort` option — when true, rows are blocked by status then ordered
-// within. The interaction MUST already be deferred (ephemeral) before calling
-// this — the workbook + user lookups take a moment.
+// Builds the themed .xlsx for `status`/`order` and sends it as the reply, for
+// /allbounties' `export:Yes` option. `groupByStatus` mirrors the command's
+// `filter:By Status` option — when true, rows are blocked by status then
+// ordered within. The interaction MUST already be deferred (ephemeral)
+// before calling this — the workbook + user lookups take a moment.
 async function sendBountyExport(interaction, status, order, groupByStatus) {
   const rows = orderBounties(await getBounties(status), order, groupByStatus);
   const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
@@ -500,20 +499,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       if (batch.length > 0) batches.push(batch);
 
-      // "Export to Spreadsheet" rides along on the last batch — status/order/
-      // group flag are baked into the customId so the button handler can
-      // re-fetch and re-order the exact same set without us stashing anything.
-      const exportRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`export_bounties:${status}:${order}:${groupByStatus ? 1 : 0}`)
-          .setLabel(TEXT.EXPORT.buttonLabel)
-          .setEmoji(TEXT.EXPORT.buttonEmoji)
-          .setStyle(ButtonStyle.Primary),
-      );
-
       for (let i = 0; i < batches.length; i++) {
         const payload = { embeds: batches[i], flags: MessageFlags.Ephemeral };
-        if (i === batches.length - 1) payload.components = [exportRow];
         if (i === 0) {
           await interaction.reply(payload);
         } else {
@@ -523,15 +510,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // "Export to Spreadsheet" on /allbounties' results  →  status/order/group
-    // flag are baked into the customId; hand off to the shared exporter. The
-    // group flag is optional so buttons from older messages still work.
-    if (interaction.isButton() && interaction.customId.startsWith('export_bounties:')) {
-      const [, status, order, group] = interaction.customId.split(':');
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      await sendBountyExport(interaction, status, order, group === '1');
-      return;
-    }
     // /deployclaimbounty  →  save the CLAIM pipeline's own category + staff
     // (entirely separate from the request pipeline's), then post the claim panel.
     if (interaction.isChatInputCommand() && interaction.commandName === 'deployclaimbounty') {

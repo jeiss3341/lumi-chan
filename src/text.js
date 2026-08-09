@@ -31,7 +31,6 @@
 // /readme content .......................... README
 // Q&A popup's topics (public) ............ QANDA
 // /allbounties status-group headers ...... ALL_BOUNTIES
-// /allbounties' "Export to Spreadsheet" ... EXPORT
 // Bot's ephemeral replies/errors .......... REPLIES
 // Slash command descriptions .............. COMMANDS
 //   (^ that last one needs `node deploy-commands.js` re-run after editing —
@@ -400,14 +399,6 @@ module.exports = {
     denied: '⛔ Denied',
   },
 
-  // index.js → /allbounties' "Export to Spreadsheet" button, shown below the
-  // results. src/bountyExport.js builds the actual themed .xlsx when it's
-  // pressed — this is just the button's own label/emoji.
-  EXPORT: {
-    buttonLabel: 'Export to Spreadsheet',
-    buttonEmoji: '📊',
-  },
-
   // index.js → short ephemeral replies/errors sprinkled through the
   // interaction handler. Grouped below by which step triggers them — the
   // group comments are just for scanning, they don't affect anything.
@@ -446,7 +437,7 @@ module.exports = {
     approveTitleTaken:
       '⚠️ A bounty named **%s** is already approved or claimed. Change this bounty\'s name and press **Approve** again.',
 
-    // /allbounties' "Export to Spreadsheet" button. %s is replaced with the count.
+    // /allbounties' `export:Yes` option. %s is replaced with the count.
     exportReady: '📊 Your spreadsheet is ready — %s bounties exported.',
 
     // Catch-all, used when nothing more specific applies.
