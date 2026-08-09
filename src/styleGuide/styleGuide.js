@@ -18,6 +18,51 @@ const qandaTopics = require('./qandaTopics');
 const { linesToText, textToLines } = require('./textLines');
 const { COLORS } = TEXT.VISUALS;
 
+// Shared theme variables + base reset, used by both the main style-guide
+// page and the login page (src/styleGuide/buildLoginPageHtml below) so the
+// two look like one product instead of a styled page linking to a bare one.
+const BASE_STYLES = `
+  :root {
+    --paper: #faf6ee; --paper-raised: #ffffff; --ink: #16303f; --ink-soft: #3d5c6b;
+    --muted: #6b8394; --line: #e2dccb; --line-soft: #ecE6d8; --accent: #1f8fb8;
+    --accent-ink: #0d5a76; --code-bg: #f0ead9; --warn: #c14a2c; --warn-bg: #f7e3da;
+    --shadow: 0 1px 2px rgba(18, 60, 84, 0.06), 0 6px 20px rgba(18, 60, 84, 0.07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #10202a; --paper-raised: #172c38; --ink: #eef2ee; --ink-soft: #c3d3d9;
+      --muted: #8ba6b3; --line: #2a4553; --line-soft: #21394450; --accent: #5cc4e8;
+      --accent-ink: #8fd8f2; --code-bg: #0d1c24; --warn: #ff9d80; --warn-bg: #3a2420;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 28px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10202a; --paper-raised: #172c38; --ink: #eef2ee; --ink-soft: #c3d3d9;
+    --muted: #8ba6b3; --line: #2a4553; --line-soft: #21394450; --accent: #5cc4e8;
+    --accent-ink: #8fd8f2; --code-bg: #0d1c24; --warn: #ff9d80; --warn-bg: #3a2420;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 28px rgba(0, 0, 0, 0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #faf6ee; --paper-raised: #ffffff; --ink: #16303f; --ink-soft: #3d5c6b;
+    --muted: #6b8394; --line: #e2dccb; --line-soft: #ecE6d8; --accent: #1f8fb8;
+    --accent-ink: #0d5a76; --code-bg: #f0ead9; --warn: #c14a2c; --warn-bg: #f7e3da;
+    --shadow: 0 1px 2px rgba(18, 60, 84, 0.06), 0 6px 20px rgba(18, 60, 84, 0.07);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
+  h1, h2, h3, h4 {
+    font-family: Iowan Old Style, "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    color: var(--ink); font-weight: 600; text-wrap: balance; margin: 0;
+  }
+  a { color: var(--accent-ink); }
+`;
+
 const BUTTON_STYLES = {
   requestBounty: 'success', // panel.js buildPanel()
   claimBounty: 'primary', // panel.js buildClaimPanel()
@@ -204,7 +249,7 @@ function renderUnit(unitId, title, previewHtml, values, failure) {
     </div>`;
 }
 
-function buildStyleGuideHtml({ savedSection, failure, addTopicFailure } = {}) {
+function buildStyleGuideHtml({ savedSection, failure, addTopicFailure, username } = {}) {
   const paletteSwatches = [
     { name: 'Ocean', hex: hex(COLORS.brand), use: 'Brand accent · pending bounty cards · every board\'s embed color' },
     { name: 'Turquoise', hex: hex(COLORS.approved), use: 'Approved bounty cards · "Approved" chip in the spreadsheet' },
@@ -551,50 +596,13 @@ function buildStyleGuideHtml({ savedSection, failure, addTopicFailure } = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lumi-chan — Content &amp; Style Reference</title>
 <style>
-  :root {
-    --paper: #faf6ee; --paper-raised: #ffffff; --ink: #16303f; --ink-soft: #3d5c6b;
-    --muted: #6b8394; --line: #e2dccb; --line-soft: #ecE6d8; --accent: #1f8fb8;
-    --accent-ink: #0d5a76; --code-bg: #f0ead9; --warn: #c14a2c; --warn-bg: #f7e3da;
-    --shadow: 0 1px 2px rgba(18, 60, 84, 0.06), 0 6px 20px rgba(18, 60, 84, 0.07);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --paper: #10202a; --paper-raised: #172c38; --ink: #eef2ee; --ink-soft: #c3d3d9;
-      --muted: #8ba6b3; --line: #2a4553; --line-soft: #21394450; --accent: #5cc4e8;
-      --accent-ink: #8fd8f2; --code-bg: #0d1c24; --warn: #ff9d80; --warn-bg: #3a2420;
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 28px rgba(0, 0, 0, 0.35);
-    }
-  }
-  :root[data-theme="dark"] {
-    --paper: #10202a; --paper-raised: #172c38; --ink: #eef2ee; --ink-soft: #c3d3d9;
-    --muted: #8ba6b3; --line: #2a4553; --line-soft: #21394450; --accent: #5cc4e8;
-    --accent-ink: #8fd8f2; --code-bg: #0d1c24; --warn: #ff9d80; --warn-bg: #3a2420;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 28px rgba(0, 0, 0, 0.35);
-  }
-  :root[data-theme="light"] {
-    --paper: #faf6ee; --paper-raised: #ffffff; --ink: #16303f; --ink-soft: #3d5c6b;
-    --muted: #6b8394; --line: #e2dccb; --line-soft: #ecE6d8; --accent: #1f8fb8;
-    --accent-ink: #0d5a76; --code-bg: #f0ead9; --warn: #c14a2c; --warn-bg: #f7e3da;
-    --shadow: 0 1px 2px rgba(18, 60, 84, 0.06), 0 6px 20px rgba(18, 60, 84, 0.07);
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0; background: var(--paper); color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased;
-  }
-  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
-  h1, h2, h3, h4 {
-    font-family: Iowan Old Style, "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
-    color: var(--ink); font-weight: 600; text-wrap: balance; margin: 0;
-  }
-  a { color: var(--accent-ink); }
+${BASE_STYLES}
   .wrap { max-width: 880px; margin: 0 auto; padding: 0 28px 120px; }
-  .warn-banner {
-    background: var(--warn-bg); color: var(--warn); text-align: center; font-size: 13.5px;
-    font-weight: 600; padding: 10px 16px;
+  .session-bar {
+    background: var(--paper-raised); color: var(--ink-soft); text-align: center; font-size: 13.5px;
+    font-weight: 600; padding: 10px 16px; border-bottom: 1px solid var(--line);
   }
+  .session-bar a { color: var(--accent-ink); }
   .toast {
     max-width: 880px; margin: 20px auto 0; padding: 12px 18px; border-radius: 8px;
     background: color-mix(in srgb, var(--accent) 16%, var(--paper-raised)); color: var(--accent-ink);
@@ -733,7 +741,7 @@ function buildStyleGuideHtml({ savedSection, failure, addTopicFailure } = {}) {
 </head>
 <body>
 
-<div class="warn-banner">⚠️ This page isn't locked down yet — anyone with this link can edit the sections below. Login is coming later.</div>
+<div class="session-bar">Logged in as <strong>${esc(username)}</strong> · <a href="/logout">Log out</a></div>
 
 <nav class="jump">
   <div class="wrap">
@@ -751,7 +759,7 @@ ${addTopicFailure ? `<div class="toast" style="background:color-mix(in srgb, var
 <div class="wrap">
 
   <header class="masthead">
-    <p class="eyebrow">Lumi-chan · Coastal Clash Bounty Bot</p>
+    <p class="eyebrow">Lumi-chan</p>
     <h1>Content &amp; Style Reference</h1>
     <p class="sub">Every board, button, form, and message the bot sends, organized by what a player is actually doing. The preview at the top of each card is live; the form below it edits the bot directly.</p>
     <div class="meta">
@@ -784,4 +792,61 @@ ${addTopicFailure ? `<div class="toast" style="background:color-mix(in srgb, var
 </html>`;
 }
 
-module.exports = { buildStyleGuideHtml };
+// The page shown at GET /login before Discord is ever involved — a plain
+// "Continue with Discord" button, so the admin's first sight of this tool
+// isn't an unbranded bounce straight into Discord's own domain. `error`, if
+// present, is an already-human-readable message (server.js decides what to
+// say; this just displays it).
+function buildLoginPageHtml({ error } = {}) {
+  const errorHtml = error
+    ? `<div class="login-error">⚠️ ${esc(error)}</div>`
+    : '';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumi-chan — Admin Login</title>
+<style>
+${BASE_STYLES}
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; }
+  .login-card {
+    max-width: 380px; width: 100%; background: var(--paper-raised); border: 1px solid var(--line);
+    border-radius: 14px; box-shadow: var(--shadow); padding: 36px 32px; text-align: center;
+  }
+  .login-card .eyebrow {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent-ink); margin: 0 0 10px;
+  }
+  .login-card h1 { font-size: 22px; margin: 0 0 10px; }
+  .login-card p { color: var(--ink-soft); font-size: 14.5px; margin: 0 0 26px; }
+  .discord-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 13px 20px; border-radius: 8px; border: none;
+    background: #5865f2; color: #fff; font-weight: 700; font-size: 15px;
+    text-decoration: none; cursor: pointer;
+  }
+  .discord-btn:hover { background: #4752c4; }
+  .login-error {
+    background: var(--warn-bg); color: var(--warn); font-size: 13.5px; font-weight: 600;
+    padding: 10px 14px; border-radius: 8px; margin: 0 0 20px;
+  }
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <p class="eyebrow">Lumi-chan</p>
+    <h1>Admin Login</h1>
+    <p>Sign in with Discord to view and edit the bot's content &amp; style reference.</p>
+    ${errorHtml}
+    <a class="discord-btn" href="/login/discord">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.07.07 0 0 0-.075.035c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.036 19.736 19.736 0 0 0-4.885 1.515.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127c-.598.35-1.22.645-1.873.893a.076.076 0 0 0-.041.106c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.673-3.549-13.66a.061.061 0 0 0-.031-.028ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.334-.955 2.419-2.157 2.419Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.334-.946 2.419-2.157 2.419Z"/></svg>
+      Continue with Discord
+    </a>
+  </div>
+</body>
+</html>`;
+}
+
+module.exports = { buildStyleGuideHtml, buildLoginPageHtml };

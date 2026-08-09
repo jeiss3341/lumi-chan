@@ -9,13 +9,16 @@
 // duplicate-process issue) will now fail loudly with EADDRINUSE on startup
 // instead of silently racing each other on Discord interactions.
 //
-// No auth yet (deliberately deferred — see the warning banner on the page
-// itself). Anyone with the URL can save edits right now.
+// Gated behind Discord OAuth login (src/styleGuide/auth.js) — every route
+// below requires a valid session except /login, /login/discord,
+// /auth/callback, and /logout themselves.
 const http = require('http');
-const { buildStyleGuideHtml } = require('./styleGuide');
+const crypto = require('crypto');
+const { buildStyleGuideHtml, buildLoginPageHtml } = require('./styleGuide');
 const overrides = require('./overrides');
 const fieldSchema = require('./fieldSchema');
 const qandaTopics = require('./qandaTopics');
+const auth = require('./auth');
 
 // Caps how much a single submission can contain — generous for even the
 // biggest unit's form, stingy for abuse.
@@ -39,20 +42,22 @@ function readBody(req) {
   });
 }
 
-function renderPage(res, status, options) {
-  const html = buildStyleGuideHtml(options);
+// `session` is always present here — every caller runs after the auth gate
+// in startServer() below.
+function renderPage(req, res, status, session, options) {
+  const html = buildStyleGuideHtml({ ...options, username: session.username });
   res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(html);
 }
 
-function redirectTo(res, location) {
-  res.writeHead(303, { Location: location });
+function redirectTo(res, location, status = 303) {
+  res.writeHead(status, { Location: location });
   res.end();
 }
 
 // POST /edit/:unitId — saves one of the 17 static units, or a
 // `qanda-topic-<id>` unit (fieldSchema.unitFields handles both shapes).
-async function handleEditUnit(req, res, unitId) {
+async function handleEditUnit(req, res, session, unitId) {
   const fields = fieldSchema.unitFields(unitId);
   if (fields.length === 0) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -66,7 +71,7 @@ async function handleEditUnit(req, res, unitId) {
     const { valid, errors } = fieldSchema.validate(unitId, attempted);
 
     if (!valid) {
-      renderPage(res, 400, { failure: { unitId, attempted, errors } });
+      renderPage(req, res, 400, session, { failure: { unitId, attempted, errors } });
       return;
     }
 
@@ -83,7 +88,7 @@ async function handleEditUnit(req, res, unitId) {
 // POST /qanda/topics — adds a brand-new topic. No unit id exists yet, so
 // this validates against plain field names (fieldSchema.validateNewTopic),
 // not full QANDA.topics.<id>.* paths.
-async function handleAddTopic(req, res) {
+async function handleAddTopic(req, res, session) {
   // Read the body once, up front — req is a stream, and it can't be
   // re-read from a catch block below if something later throws.
   let attempted;
@@ -97,7 +102,7 @@ async function handleAddTopic(req, res) {
 
   const { valid, errors } = fieldSchema.validateNewTopic(attempted);
   if (!valid) {
-    renderPage(res, 400, { addTopicFailure: { attempted, errors } });
+    renderPage(req, res, 400, session, { addTopicFailure: { attempted, errors } });
     return;
   }
 
@@ -108,7 +113,7 @@ async function handleAddTopic(req, res) {
     if (err.message.includes('capped at')) {
       // The 25-topic cap — surface it the same way a validation error would,
       // attached to the label field so it's visible right where "Add" is.
-      renderPage(res, 400, {
+      renderPage(req, res, 400, session, {
         addTopicFailure: { attempted, errors: [{ path: 'label', label: 'Dropdown label', message: err.message }] },
       });
       return;
@@ -145,16 +150,97 @@ function handleSaveError(res, err) {
   res.end('Something went wrong saving your changes.');
 }
 
-function handleGetPage(req, res) {
+function handleGetPage(req, res, session) {
   try {
     const url = new URL(req.url, 'http://localhost');
     const savedSection = url.searchParams.get('saved') || undefined;
-    renderPage(res, 200, { savedSection });
+    renderPage(req, res, 200, session, { savedSection });
   } catch (err) {
     console.error('Failed to build style guide page:', err);
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end('Something went wrong rendering the style guide.');
   }
+}
+
+function textPage(res, status, text) {
+  res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end(text);
+}
+
+function loginPageRedirect(res, error) {
+  redirectTo(res, `/login?error=${encodeURIComponent(error)}`, 302);
+}
+
+// GET /login — the branded landing page (src/styleGuide/styleGuide.js
+// buildLoginPageHtml), with a "Continue with Discord" button. Its own
+// failures (e.g. missing env config) render inline rather than kicking off
+// anything with Discord.
+function handleLoginPage(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  const error = url.searchParams.get('error') || undefined;
+  const html = buildLoginPageHtml({ error });
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(html);
+}
+
+// GET /login/discord — the actual OAuth kickoff, reached by clicking the
+// button on the login page. A random `state` guards against CSRF: it's
+// stashed in a short-lived cookie and checked back against the callback's
+// query param.
+function handleStartDiscordLogin(req, res) {
+  try {
+    const state = crypto.randomBytes(16).toString('hex');
+    auth.setCookie(res, req, auth.STATE_COOKIE, state, { maxAgeSeconds: 300 });
+    redirectTo(res, auth.buildAuthorizeUrl(state), 302);
+  } catch (err) {
+    console.error('Failed to start Discord login:', err);
+    loginPageRedirect(res, "Login isn't configured yet — missing Discord OAuth settings.");
+  }
+}
+
+// GET /auth/callback — exchanges the code, checks the logged-in Discord user
+// against ADMIN_USER_IDS (src/styleGuide/auth.js isAuthorized), and either
+// sets a session cookie or bounces back to /login with an explanation.
+async function handleAuthCallback(req, res) {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const error = url.searchParams.get('error');
+    const cookies = auth.parseCookies(req);
+
+    if (error) {
+      loginPageRedirect(res, `Discord login was cancelled (${error}). Try again if that wasn't intended.`);
+      return;
+    }
+    if (!code || !state || !cookies[auth.STATE_COOKIE] || state !== cookies[auth.STATE_COOKIE]) {
+      loginPageRedirect(res, 'Login failed — the request expired or was tampered with. Try again.');
+      return;
+    }
+    auth.clearCookie(res, req, auth.STATE_COOKIE);
+
+    const accessToken = await auth.exchangeCode(code);
+    const discordUser = await auth.fetchDiscordUser(accessToken);
+
+    if (!auth.isAuthorized(discordUser.id)) {
+      loginPageRedirect(
+        res,
+        `You're logged in as ${discordUser.username}, but that Discord account isn't on the admin allowlist for this page.`,
+      );
+      return;
+    }
+
+    auth.setCookie(res, req, auth.SESSION_COOKIE, auth.signSession(discordUser), { maxAgeSeconds: 7 * 24 * 60 * 60 });
+    redirectTo(res, '/', 302);
+  } catch (err) {
+    console.error('Discord login failed:', err);
+    loginPageRedirect(res, 'Something went wrong talking to Discord. Try again in a moment.');
+  }
+}
+
+function handleLogout(req, res) {
+  auth.clearCookie(res, req, auth.SESSION_COOKIE);
+  redirectTo(res, '/', 302);
 }
 
 function startServer() {
@@ -163,18 +249,47 @@ function startServer() {
   const server = http.createServer((req, res) => {
     const path = req.url.split('?')[0];
 
+    if (req.method === 'GET' && path === '/login') {
+      handleLoginPage(req, res);
+      return;
+    }
+    if (req.method === 'GET' && path === '/login/discord') {
+      handleStartDiscordLogin(req, res);
+      return;
+    }
+    if (req.method === 'GET' && path === '/auth/callback') {
+      handleAuthCallback(req, res);
+      return;
+    }
+    if (req.method === 'GET' && path === '/logout') {
+      handleLogout(req, res);
+      return;
+    }
+
+    const session = auth.getSession(req);
+    if (!session) {
+      if (req.method === 'GET') {
+        redirectTo(res, '/login', 302);
+      } else {
+        // A POST with no/expired session can only be a stale form (or a
+        // direct request) — send them to log back in rather than 401ing.
+        redirectTo(res, '/login', 303);
+      }
+      return;
+    }
+
     if (req.method === 'GET' && (path === '/' || path === '/style-guide')) {
-      handleGetPage(req, res);
+      handleGetPage(req, res, session);
       return;
     }
 
     if (req.method === 'POST' && path.startsWith('/edit/')) {
-      handleEditUnit(req, res, path.slice('/edit/'.length));
+      handleEditUnit(req, res, session, path.slice('/edit/'.length));
       return;
     }
 
     if (req.method === 'POST' && path === '/qanda/topics') {
-      handleAddTopic(req, res);
+      handleAddTopic(req, res, session);
       return;
     }
 
