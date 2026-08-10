@@ -143,6 +143,7 @@ const {
   findTitleConflict,
   denyBounty,
   setBountyStatus,
+  setBountyPending,
   getBounties,
   getClaimableBounties,
   setBoardMessage,
@@ -1391,25 +1392,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
-      const approved = buildBountyEmbed({
-        name,
-        description,
-        amountRaw,
-        groupType: bounty.group_type,
-        user: requester ?? interaction.user,
-        status: 'approved',
-      });
+      // Everything past this point (posting to a board, archiving the
+      // ticket) is real Discord API calls that can fail for reasons outside
+      // our control (a missing permission, a deleted channel) — if any of it
+      // throws, the bounty shouldn't be left stuck 'approved' with no board
+      // post and no way to tell staff tried and failed. Revert to 'pending'
+      // and say so plainly, rather than the old silent half-finished state.
+      try {
+        const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
+        const approved = buildBountyEmbed({
+          name,
+          description,
+          amountRaw,
+          groupType: bounty.group_type,
+          user: requester ?? interaction.user,
+          status: 'approved',
+        });
 
-      await finalizeApproval({
-        interaction,
-        bountyId,
-        approved,
-        boardGetter: claimType === 'submissions' ? getSubmissionsBoardChannel : getBoardChannel,
-        boardComponents: claimType === 'submissions' ? [closeSubmissionBountyRow(bountyId)] : undefined,
-        ticketChannelId,
-        ticketMessageId,
-      });
+        await finalizeApproval({
+          interaction,
+          bountyId,
+          approved,
+          boardGetter: claimType === 'submissions' ? getSubmissionsBoardChannel : getBoardChannel,
+          boardComponents: claimType === 'submissions' ? [closeSubmissionBountyRow(bountyId)] : undefined,
+          ticketChannelId,
+          ticketMessageId,
+        });
+      } catch (err) {
+        console.error('Approval failed partway through — reverting to pending:', err);
+        await setBountyPending(bountyId, interaction.user.id).catch(console.error);
+        const revertReply = {
+          content: "⚠️ Something went wrong finishing this approval — reverted back to **pending** so it isn't stuck. Press **Approve** again to retry.",
+          flags: MessageFlags.Ephemeral,
+        };
+        if (interaction.replied || interaction.deferred) await interaction.followUp(revertReply).catch(() => {});
+        else await interaction.reply(revertReply).catch(() => {});
+      }
       pendingApprovals.delete(bountyId);
       return;
     }
