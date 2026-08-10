@@ -476,6 +476,17 @@ function closeSubmissionBountyConfirmRow(bountyId) {
   );
 }
 
+// Extracts the raw Discord ids listed in an embed's Teammates field (added
+// by Add Premade — see add_premade_select below), or [] if there isn't one.
+// Field values store mentions as literal "<@id>, <@id>" text, so this is
+// just pulling the digit runs back out. Shared by add_premade_select
+// (accumulating across repeated presses) and promoteSubmissionLeader
+// (reading it once, at promotion, to persist onto the bounty row).
+function getTeammateIdsFromEmbed(embed) {
+  const field = embed?.fields?.find((f) => f.name === resolveText('CARD.claim.fieldTeammates'));
+  return field ? field.value.match(/\d+/g) ?? [] : [];
+}
+
 // approve_claim's submissions-type branch, shared by both paths that reach
 // it: straight from the button for a text-metric bounty (nothing to
 // collect), or from submission_value_modal_submit below for a numeric one
@@ -487,7 +498,16 @@ function closeSubmissionBountyConfirmRow(bountyId) {
 // interaction.channel/.message, since the numeric path arrives here from a
 // modal submit — a fresh interaction with neither.
 async function promoteSubmissionLeader({ interaction, bounty, claimantId, value, ticketChannelId, ticketMessageId }) {
-  const updated = await setLeader(bounty.id, { leaderId: claimantId, value, ticketChannelId, ticketMessageId });
+  // Fetched up front (before setLeader) so any Teammates field Add Premade
+  // already put on this ticket's own embed can be read and persisted onto
+  // the bounty row — that field only ever lived on this one Discord
+  // message until now, so the board post and Close Bounty card had no way
+  // to know about it otherwise. Reused below instead of re-fetching.
+  const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
+  const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
+  const teammates = getTeammateIdsFromEmbed(ticketMessage?.embeds[0]);
+
+  const updated = await setLeader(bounty.id, { leaderId: claimantId, value, ticketChannelId, ticketMessageId, teammates });
 
   if (!updated) {
     await interaction.reply({ content: resolveText('REPLIES.claimFinalizeFailed'), flags: MessageFlags.Ephemeral });
@@ -556,8 +576,7 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
   // Archive this (now-leading) ticket — 'submission-won' since, as of right
   // now, this is the submission that's currently winning (same category
   // move approve_claim uses for a regular claim, just its own naming).
-  const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
-  const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
+  // ticketChannel/ticketMessage were already fetched above, before setLeader.
   if (ticketMessage) {
     const approvedEmbed = EmbedBuilder.from(ticketMessage.embeds[0])
       .setColor(COLORS.approved)
@@ -1741,8 +1760,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const updatedEmbed = EmbedBuilder.from(ticketMessage.embeds[0]);
           const fields = updatedEmbed.data.fields ?? [];
           const existing = fields.find((f) => f.name === teammatesFieldName);
-          const existingIds = existing ? existing.value.match(/\d+/g) ?? [] : [];
-          const allIds = [...new Set([...existingIds, ...added])];
+          const allIds = [...new Set([...getTeammateIdsFromEmbed(ticketMessage.embeds[0]), ...added])];
           const teammatesField = { name: teammatesFieldName, value: allIds.map((id) => `<@${id}>`).join(', '), inline: true };
           updatedEmbed.setFields(existing ? fields.map((f) => (f === existing ? teammatesField : f)) : [...fields, teammatesField]);
           await ticketMessage.edit({ embeds: [updatedEmbed] }).catch(console.error);

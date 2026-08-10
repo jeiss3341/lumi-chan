@@ -122,6 +122,11 @@
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_ticket_channel_id TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_ticket_message_id TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_set_at TIMESTAMPTZ;`);
+    // Comma-separated Discord ids of the leader's premade teammates (Add
+    // Premade on their claim ticket), if any — carried here so the
+    // submissions board post and the eventual Close Bounty card can show
+    // them too, not just the ticket itself. Null for a solo claim.
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_teammates TEXT;`);
 
     // Warm the settings cache so the first interaction after boot doesn't have
     // to fall back to the DB for each setting it reads.
@@ -486,7 +491,7 @@
   // read from the same statement's initial snapshot via the `old` CTE below
   // — a subquery inside RETURNING would instead see the row post-update,
   // which is the wrong thing here), or null if the guard failed.
-  async function setLeader(id, { leaderId, value, ticketChannelId, ticketMessageId }) {
+  async function setLeader(id, { leaderId, value, ticketChannelId, ticketMessageId, teammates }) {
     const result = await pool.query(
       `WITH old AS (
          SELECT leader_id, leader_ticket_channel_id, leader_ticket_message_id
@@ -494,7 +499,7 @@
        ),
        updated AS (
          UPDATE bounties SET leader_id = $2, leader_value = $3, leader_ticket_channel_id = $4,
-           leader_ticket_message_id = $5, leader_set_at = NOW()
+           leader_ticket_message_id = $5, leader_teammates = $6, leader_set_at = NOW()
          WHERE id = $1 AND status = 'approved'
          RETURNING *
        )
@@ -502,7 +507,7 @@
          old.leader_ticket_channel_id AS previous_leader_ticket_channel_id,
          old.leader_ticket_message_id AS previous_leader_ticket_message_id
        FROM updated, old`,
-      [id, leaderId, value ?? null, ticketChannelId, ticketMessageId],
+      [id, leaderId, value ?? null, ticketChannelId, ticketMessageId, teammates?.length ? teammates.join(',') : null],
     );
     return result.rows[0] ?? null;
   }

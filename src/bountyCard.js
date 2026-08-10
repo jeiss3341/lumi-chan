@@ -88,7 +88,7 @@ function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
     ? resolveText('CARD.submissions.closedTitlePrefix')
     : resolveText('CARD.request.approvedTitlePrefix');
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(closed ? COLORS.approved : COLORS.pending)
     .setTitle(`${titlePrefix} ${bounty.name}`)
     .setDescription(bounty.description)
@@ -96,7 +96,21 @@ function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
       { name: resolveText('CARD.request.fieldReward'), value: formatAmount(bounty.reward), inline: true },
       { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(bounty.group_type), inline: true },
       { name: resolveText('CARD.submissions.fieldStanding'), value: leaderboardLine(bounty, { closed }), inline: false },
-    )
+    );
+
+  // The leader's premade teammates (Add Premade on their claim ticket), if
+  // any — persisted onto the bounty row by setLeader/promoteSubmissionLeader
+  // (src/db.js, index.js) specifically so this board post and the eventual
+  // Close Bounty card can show them too, not just the ticket.
+  if (bounty.leader_teammates) {
+    embed.addFields({
+      name: resolveText('CARD.claim.fieldTeammates'),
+      value: bounty.leader_teammates.split(',').map((id) => `<@${id}>`).join(', '),
+      inline: true,
+    });
+  }
+
+  return embed
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER })
     .setTimestamp();
