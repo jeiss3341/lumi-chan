@@ -4,7 +4,7 @@
 // This file only turns already-resolved data into HTML, same split as
 // styleGuide.js/server.js.
 const { esc, BASE_STYLES, topBar } = require('./styleGuide');
-const { formatAmount } = require('../bountyCard');
+const { formatAmount, formatGroupType } = require('../bountyCard');
 
 // Player-facing name/description/reward caps mirror MODAL.bountyRequest's
 // own TextInputBuilder limits (src/modal.js) — an admin-created bounty
@@ -23,11 +23,31 @@ const PRIZE_TYPES = [
 
 // Same idea for Tier, matching the DB's tier values.
 const TIERS = [
-  { value: 'None', label: 'None' },
-  { value: 'Bronze', label: 'Bronze' },
-  { value: 'Silver', label: 'Silver' },
-  { value: 'Gold', label: 'Gold' },
+  { value: 'Boot', label: 'Boot' },
+  { value: 'Shrimp', label: 'Shrimp' },
+  { value: 'Crab', label: 'Crab' },
+  { value: 'Pearl', label: 'Pearl' },
+  { value: 'Blue NP', label: 'Blue NP' },
+  { value: 'Treasure Chest', label: 'Treasure Chest' },
 ];
+
+// Same idea for Group Type, matching the Discord request modal's options
+// (src/modal.js) and the DB's group_type values.
+const GROUP_TYPES = [
+  { value: 'solo', label: 'Solo Only' },
+  { value: 'premade', label: 'Premade Allowed' },
+];
+
+// Same idea for Claim Type — which of /deployclaimbounty's two active
+// categories (Claim vs Submissions) this bounty's claim ticket opens under.
+const CLAIM_TYPES = [
+  { value: 'claim', label: 'Claim' },
+  { value: 'submissions', label: 'Submissions' },
+];
+
+function formatClaimType(raw) {
+  return CLAIM_TYPES.find((t) => t.value === raw)?.label ?? 'Claim (default)';
+}
 
 const STATUS_LABELS = {
   pending: '⏳ Pending',
@@ -38,6 +58,9 @@ const STATUS_LABELS = {
 };
 
 const STATUS_FILTERS = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled'];
+
+const GROUP_FILTERS = ['all', 'solo', 'premade'];
+const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Premade Allowed' };
 
 // Statuses the admin edit page's free status-change control can move a
 // bounty between — 'claimed' is deliberately excluded (see buildBountyEditHtml).
@@ -62,11 +85,20 @@ function userLabel(id, tags) {
   return tag ? `${esc(tag)} <span class="id-hint mono">${esc(id)}</span>` : `<span class="mono">${esc(id)}</span>`;
 }
 
-function filterBar(active) {
+// Both filter bars link with both query params so switching one doesn't
+// drop whichever value the other is currently set to.
+function filterBar(activeStatus, activeGroup) {
   return `<div class="filter-bar">${STATUS_FILTERS.map((s) => {
     const label = s === 'all' ? 'All' : (STATUS_LABELS[s] ?? s);
-    const cls = s === active ? 'filter-link active' : 'filter-link';
-    return `<a class="${cls}" href="/bounties?status=${esc(s)}">${esc(label)}</a>`;
+    const cls = s === activeStatus ? 'filter-link active' : 'filter-link';
+    return `<a class="${cls}" href="/bounties?status=${esc(s)}&group=${esc(activeGroup)}">${esc(label)}</a>`;
+  }).join('')}</div>`;
+}
+
+function groupFilterBar(activeGroup, activeStatus) {
+  return `<div class="filter-bar">${GROUP_FILTERS.map((g) => {
+    const cls = g === activeGroup ? 'filter-link active' : 'filter-link';
+    return `<a class="${cls}" href="/bounties?status=${esc(activeStatus)}&group=${esc(g)}">${esc(GROUP_FILTER_LABELS[g])}</a>`;
   }).join('')}</div>`;
 }
 
@@ -182,7 +214,7 @@ ${body}
 </html>`;
 }
 
-function buildBountiesListHtml({ bounties, tags, filterStatus, username, message }) {
+function buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, username, message }) {
   const toast = message
     ? `<div class="toast${message.warn ? ' warn' : ''}">${esc(message.text)}</div>`
     : '';
@@ -193,7 +225,7 @@ function buildBountiesListHtml({ bounties, tags, filterStatus, username, message
         <div class="b-main">
           <div class="b-name">${esc(b.name)} ${statusBadge(b.status)}</div>
           <div class="b-meta">
-            Requested by ${userLabel(b.requester_id, tags)} · ${fmtDate(b.created_at)}
+            Requested by ${userLabel(b.requester_id, tags)} · ${fmtDate(b.created_at)} · ${esc(formatGroupType(b.group_type))}
             ${b.claimer_id ? ` · claimed by ${userLabel(b.claimer_id, tags)}` : ''}
           </div>
         </div>
@@ -212,7 +244,8 @@ function buildBountiesListHtml({ bounties, tags, filterStatus, username, message
   </header>
   ${toast}
   <a class="new-btn" href="/bounties/new" style="margin-top:24px;">+ New Bounty</a>
-  ${filterBar(filterStatus)}
+  ${filterBar(filterStatus, filterGroup)}
+  ${groupFilterBar(filterGroup, filterStatus)}
   <div class="bounty-list">${rows}</div>`;
 
   return pageShell({ title: 'Bounties', active: 'bounties', username, body });
@@ -262,6 +295,8 @@ function buildBountyNewHtml({ username, errors = {}, values = {} }) {
       ${selectRow({ name: 'tier', label: 'Tier', value: values.tier, error: errors.tier, options: TIERS, hint: 'Optional.' })}
       ${selectRow({ name: 'prize_type', label: 'Reward Type', value: values.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward below.' })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: values.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters — free text, e.g. "$10" or "250 NP".` })}
+      ${selectRow({ name: 'group_type', label: 'Group Type', value: values.group_type, error: errors.group_type, options: GROUP_TYPES, hint: 'Optional — solo only, or premade allowed?' })}
+      ${selectRow({ name: 'claim_type', label: 'Claim Type', value: values.claim_type, error: errors.claim_type, options: CLAIM_TYPES, hint: 'Optional — which category the claim ticket opens under. Defaults to Claim.' })}
       <div class="save-row">
         <button type="submit" name="initialStatus" value="pending" class="btn">Create as Pending</button>
         <button type="submit" name="initialStatus" value="approved" class="btn btn-primary">Create &amp; Post to Board</button>
@@ -307,6 +342,8 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       <div><div class="m-label">Requester</div><div class="m-value">${userLabel(bounty.requester_id, tags)}</div></div>
       <div><div class="m-label">Donator</div><div class="m-value">${esc(bounty.donator_name || '—')}</div></div>
       <div><div class="m-label">Tier</div><div class="m-value">${esc(bounty.tier || '—')}</div></div>
+      <div><div class="m-label">Group Type</div><div class="m-value">${esc(formatGroupType(bounty.group_type))}</div></div>
+      <div><div class="m-label">Claim Type</div><div class="m-value">${esc(formatClaimType(bounty.claim_type))}</div></div>
       <div><div class="m-label">Claimer</div><div class="m-value">${userLabel(bounty.claimer_id, tags)}</div></div>
       <div><div class="m-label">Created</div><div class="m-value">${fmtDate(bounty.created_at)}</div></div>
       <div><div class="m-label">Decided</div><div class="m-value">${fmtDate(bounty.approved_at)}</div></div>
@@ -321,6 +358,8 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       ${selectRow({ name: 'tier', label: 'Tier', value: v.tier, error: errors.tier, options: TIERS, hint: 'Optional.' })}
       ${selectRow({ name: 'prize_type', label: 'Reward Type', value: v.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward below.' })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: v.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters.` })}
+      ${selectRow({ name: 'claim_type', label: 'Claim Type', value: v.claim_type, error: errors.claim_type, options: CLAIM_TYPES, hint: 'Optional — which category the claim ticket opens under. Defaults to Claim.' })}
+      ${selectRow({ name: 'group_type', label: 'Group Type', value: v.group_type, error: errors.group_type, options: GROUP_TYPES, hint: 'Optional — solo only, or premade allowed?' })}
       <div class="save-row">
         <button type="submit" class="btn btn-primary">Save Changes</button>
       </div>
@@ -334,4 +373,4 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
   return pageShell({ title: bounty.name, active: 'bounties', username, body });
 }
 
-module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS };
+module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS, GROUP_TYPES, CLAIM_TYPES };

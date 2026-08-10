@@ -17,8 +17,9 @@ server run side by side, sharing one Postgres database.
 
 - **Request a bounty** — press a button on the public board, fill out a
   short form (an optional preferred name — falls back to your Discord
-  nickname — plus name, description, and reward), preview the card, and
-  submit it. Submitting opens a private ticket where staff review it.
+  nickname — plus name, description, reward, and whether it's Solo Only or
+  Premade Allowed), preview the card, and submit it. Submitting opens a
+  private ticket where staff review it.
 - **Claim a bounty** — press a button on the claim board, pick an approved
   bounty from a searchable dropdown (paginated past Discord's 25-option
   limit), and submit proof (notes plus up to 3 screenshots/clips, or a
@@ -33,10 +34,12 @@ server run side by side, sharing one Postgres database.
 - **Approve / Deny** a bounty request, editing the wording/reward first if
   needed. Approving opens a two-step form — Discord caps a modal at 5
   fields, so step 1 (preferred name, name, description) leads into step 2
-  (tier, reward type, reward) via a Continue button. Tier
-  (None/Bronze/Silver/Gold) and reward type (Money/NP Code/Merch-Items/
-  Other) are staff-only, never shown to players. Approved bounties post to
-  the public board automatically.
+  (tier, reward type, claim type, reward) via a Continue button. Tier
+  (Boot/Shrimp/Crab/Pearl/Blue NP/Treasure Chest), reward type (Money/NP
+  Code/Merch-Items/Other), and claim type (Claim/Submissions — which of
+  `/deployclaimbounty`'s two categories this bounty's claim ticket opens
+  under later) are all staff-only, never shown to players. Approved
+  bounties post to the public board automatically.
 - **Approve / Deny** a claim. Approving marks it claimed, removes it from
   the request board, posts it to a separate claim board, and moves the
   ticket into an archive category (or closes it, if none is configured).
@@ -45,8 +48,11 @@ server run side by side, sharing one Postgres database.
 - **Close** a general support ticket, with a confirmation step first.
 - **`/deployrequestbounty`** — posts the request board; sets its ticket
   category, public board channel, and staff (role and/or person).
-- **`/deployclaimbounty`** — same, for the claim pipeline, plus the
-  category approved claim tickets get archived to.
+- **`/deployclaimbounty`** — sets up claiming: two ticket categories (Claim
+  and Submissions — a bounty's claim type, set at approval, decides which
+  one its ticket opens under), a shared public board channel, staff
+  (role and/or person), and a shared category approved claim tickets get
+  archived to.
 - **`/deployticket`** — sets up general support tickets; optionally, a
   category closed tickets get archived to instead of deleted.
 - **`/deployqanda`** — posts the Q&A board.
@@ -67,7 +73,7 @@ sections:
 - **Bounties** — view every bounty (filterable by status), create one
   directly (skipping the normal ticket flow — useful for sponsor
   bounties), edit its fields (name, description, reward, donator, tier,
-  reward type), and freely change its status
+  reward type, group type, claim type), and freely change its status
   (pending/approved/denied/cancelled, any to any) with an inline
   confirmation. Editing or approving a bounty that's already posted
   updates its live Discord message to match.

@@ -107,10 +107,20 @@ const commands = [
     .setName('deployclaimbounty')
     .setDescription(TEXT.COMMANDS.deployClaimBounty.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    // Two separate active categories — which one a given bounty's claim
+    // ticket opens in is decided per-bounty by staff during approval (see
+    // the Claim Type field on the approve modal), not by this command.
     .addChannelOption((option) =>
       option
-        .setName('category')
-        .setDescription(TEXT.COMMANDS.deployClaimBounty.category)
+        .setName('claim_category')
+        .setDescription(TEXT.COMMANDS.deployClaimBounty.claimCategory)
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true),
+    )
+    .addChannelOption((option) =>
+      option
+        .setName('submissions_category')
+        .setDescription(TEXT.COMMANDS.deployClaimBounty.submissionsCategory)
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true),
     )

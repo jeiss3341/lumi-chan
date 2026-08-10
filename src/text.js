@@ -140,6 +140,7 @@ module.exports = {
       approvedTitlePrefix: '✅ Bounty Approved:', // once approved, still unclaimed
       fieldRequester: 'Requester',
       fieldReward: 'Reward',
+      fieldGroupType: 'Group Type',
     },
     // src/bountyCard.js → buildClaimEmbed(). The card shown in claim
     // tickets and posted to the claim board.
@@ -181,6 +182,10 @@ module.exports = {
         description: "How you'd like to be credited — leave blank to use your Discord nickname",
         placeholder: 'e.g. Squortle',
       },
+      groupType: {
+        label: 'Group Type',
+        description: 'Solo only, or can a premade group complete it together?',
+      },
     },
     // src/modal.js → buildApproveModalStep1()/buildApproveModalStep2(). Staff's
     // edit-before-approve form — pre-filled with the bounty's current values,
@@ -209,7 +214,11 @@ module.exports = {
       },
       tier: {
         label: 'Tier',
-        description: 'None, Bronze, Silver, or Gold — staff only, never shown to players',
+        description: 'Reward tier — staff only, never shown to players',
+      },
+      claimType: {
+        label: 'Claim Type',
+        description: 'Which claim-ticket category this opens under later — staff only',
       },
     },
     // src/modal.js → buildClaimProofModal(). The claimant's proof form.
@@ -294,9 +303,9 @@ module.exports = {
       '**What players go through:**',
       '',
       '💰 **Requesting a Bounty**',
-      '> 1. The **requester** presses **Request Bounty** on the request board and fills out a short form: an optional preferred name (falls back to their Discord nickname), name, description, and reward.',
+      '> 1. The **requester** presses **Request Bounty** on the request board and fills out a short form: an optional preferred name (falls back to their Discord nickname), name, description, reward, and whether it\'s Solo Only or Premade Allowed.',
       '> 2. They get an ephemeral preview of the bounty card. **Submit** opens a private ticket under the configured category and pings staff. **Close** cancels — nothing is created.',
-      '> 3. Inside the ticket, staff **Approve** or **Deny** (closes the ticket). Approving opens a two-step edit form — Discord caps a single popup at 5 fields, so step 1 (preferred name, name, description) is followed by a **Continue** button into step 2 (tier, reward type, reward). Tier (None/Bronze/Silver/Gold) and reward type (Money/NP Code/Merch-Items/Other) are staff-only — players never see them. Nothing is saved until step 2 is submitted.',
+      '> 3. Inside the ticket, staff **Approve** or **Deny** (closes the ticket). Approving opens a two-step edit form — Discord caps a single popup at 5 fields, so step 1 (preferred name, name, description) is followed by a **Continue** button into step 2 (tier, reward type, claim type, reward). Tier (Boot/Shrimp/Crab/Pearl/Blue NP/Treasure Chest), reward type (Money/NP Code/Merch-Items/Other), and claim type (Claim/Submissions — which ticket category this bounty\'s claim opens under) are staff-only — players never see them. Nothing is saved until step 2 is submitted.',
       '> 4. Approved bounties post to the public board and remain until claimed. Titles must be unique among approved/claimed bounties — a duplicate name blocks approval.',
       '',
       '🏁 **Claiming a Bounty**',
@@ -320,7 +329,7 @@ module.exports = {
       '>   — **filter**: set to *By Status* to also group the results into sections.',
       '>   — **export**: set to *Yes* to get a spreadsheet instead of the on-screen list.',
       '> • `/deployrequestbounty` → sets up and posts the request board (where players submit bounty ideas).',
-      '> • `/deployclaimbounty` → sets up and posts the claim board (where players claim completed bounties).',
+      '> • `/deployclaimbounty` → sets up and posts the claim board — two categories (Claim, Submissions), a shared board channel and archive category. A bounty\'s claim type (set at approval) decides which category its claim opens under.',
       '> • `/deployticket` → sets up and posts the support board (general help tickets).',
       '> • `/deployqanda` → posts the Q&A board.',
       '> • **Admin site** → [lumi-chan-production.up.railway.app](https://lumi-chan-production.up.railway.app/) — view/edit every bounty, browse active and archived tickets (with message logs), and edit all the bot\'s board/button/message text from a browser (Discord/Google login required, admin/dev only).',
@@ -500,7 +509,8 @@ module.exports = {
     },
     deployClaimBounty: {
       command: 'Set up bounty claiming and post the claim board (staff only).',
-      category: 'The category new bounty CLAIM ticket channels will be created under.',
+      claimCategory: 'The category new CLAIM-type bounty claim tickets will be created under.',
+      submissionsCategory: 'The category new SUBMISSIONS-type bounty claim tickets will be created under.',
       board: 'The public channel where finalized (approved) claims are posted.',
       archiveCategory: 'Category approved claim tickets get MOVED to (make this private/staff-only).',
       staffUser: 'A specific person who can review claims and gets pinged. (Set a role and/or a person.)',

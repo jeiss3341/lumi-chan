@@ -12,7 +12,8 @@ const { resolveText } = require('./styleGuide/liveText');
 // The bounty request form. Modern modals wrap every input in a LabelBuilder,
 // which gives you the header + subtext you saw in the screenshot.
 //
-// Max 5 top-level components per modal. We use 4 (preferred name, name, description, reward).
+// Max 5 top-level components per modal. We use all 5 (preferred name, name,
+// description, reward, group type).
 function buildBountyModal() {
   const modal = new ModalBuilder().setCustomId('bounty_modal').setTitle(resolveText('MODAL.bountyRequest.title'));
 
@@ -65,7 +66,22 @@ function buildBountyModal() {
     .setDescription(resolveText('MODAL.bountyRequest.reward.description'))
     .setTextInputComponent(amountInput);
 
-  modal.addLabelComponents(donatorLabel, nameLabel, descLabel, amountLabel);
+  // 5) Group Type — can this be completed alone, or does it allow a premade
+  // group? Shown on the bounty card so claimants know before attempting it.
+  const groupTypeSelect = new StringSelectMenuBuilder()
+    .setCustomId('bounty_group_type')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'Solo Only', value: 'solo' },
+      { label: 'Premade Allowed', value: 'premade' },
+    );
+  const groupTypeLabel = new LabelBuilder()
+    .setLabel(resolveText('MODAL.bountyRequest.groupType.label'))
+    .setDescription(resolveText('MODAL.bountyRequest.groupType.description'))
+    .setStringSelectMenuComponent(groupTypeSelect);
+
+  modal.addLabelComponents(donatorLabel, nameLabel, descLabel, amountLabel, groupTypeLabel);
   return modal;
 }
 
@@ -134,10 +150,12 @@ function buildApproveModalStep2(bounty) {
     .setMinValues(1)
     .setMaxValues(1)
     .addOptions(
-      { label: 'None', value: 'None', default: !bounty.tier || bounty.tier === 'None' },
-      { label: 'Bronze', value: 'Bronze', default: bounty.tier === 'Bronze' },
-      { label: 'Silver', value: 'Silver', default: bounty.tier === 'Silver' },
-      { label: 'Gold', value: 'Gold', default: bounty.tier === 'Gold' },
+      { label: 'Boot', value: 'Boot', default: bounty.tier === 'Boot' },
+      { label: 'Shrimp', value: 'Shrimp', default: bounty.tier === 'Shrimp' },
+      { label: 'Crab', value: 'Crab', default: bounty.tier === 'Crab' },
+      { label: 'Pearl', value: 'Pearl', default: bounty.tier === 'Pearl' },
+      { label: 'Blue NP', value: 'Blue NP', default: bounty.tier === 'Blue NP' },
+      { label: 'Treasure Chest', value: 'Treasure Chest', default: bounty.tier === 'Treasure Chest' },
     );
   const tierLabel = new LabelBuilder()
     .setLabel(TEXT.MODAL.approveEdit.tier.label)
@@ -161,6 +179,22 @@ function buildApproveModalStep2(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.rewardType.description)
     .setStringSelectMenuComponent(rewardTypeSelect);
 
+  // Claim Type — decides which of /deployclaimbounty's two active categories
+  // (Claim vs Submissions) this bounty's claim ticket opens under later (see
+  // index.js claim_proof_modal). Defaults to Claim if unset.
+  const claimTypeSelect = new StringSelectMenuBuilder()
+    .setCustomId('bounty_claim_type')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'Claim', value: 'claim', default: !bounty.claim_type || bounty.claim_type === 'claim' },
+      { label: 'Submissions', value: 'submissions', default: bounty.claim_type === 'submissions' },
+    );
+  const claimTypeLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.claimType.label)
+    .setDescription(TEXT.MODAL.approveEdit.claimType.description)
+    .setStringSelectMenuComponent(claimTypeSelect);
+
   const amountInput = new TextInputBuilder()
     .setCustomId('bounty_amount')
     .setStyle(TextInputStyle.Short)
@@ -172,7 +206,7 @@ function buildApproveModalStep2(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.reward.description)
     .setTextInputComponent(amountInput);
 
-  modal.addLabelComponents(tierLabel, rewardTypeLabel, amountLabel);
+  modal.addLabelComponents(tierLabel, rewardTypeLabel, claimTypeLabel, amountLabel);
   return modal;
 }
 

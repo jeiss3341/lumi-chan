@@ -91,6 +91,17 @@
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS prize_type TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS tier TEXT;`);
 
+    // group_type: 'solo' | 'premade' — whether a premade group is allowed to
+    // complete this bounty together, or it must be done alone. Collected
+    // straight from the player at request time, shown on the bounty card.
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS group_type TEXT;`);
+
+    // claim_type: 'claim' | 'submissions' — which of the two claim-ticket
+    // categories this bounty's claim opens under (see getSubmissionsTicketCategory
+    // above). Staff-only, set during approval — unset/legacy bounties fall
+    // back to 'claim' wherever this is read (see index.js claim_proof_modal).
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS claim_type TEXT;`);
+
     // reward used to be NUMERIC (dollars-only) — it's free text now, since
     // rewards can be anything ("250 NP", "5 gems", not just cash). Safe to
     // rerun every boot: casting TEXT to TEXT is a no-op once already migrated.
@@ -203,6 +214,18 @@
     return setSetting('claim_ticket_category', categoryId);
   }
 
+  // A second active category for claim tickets, alongside the one above —
+  // which one a given bounty's claim ticket opens in is decided per-bounty
+  // (bounties.claim_type, set by staff during approval), but both share the
+  // same board channel and archive category, so only this category differs.
+  function getSubmissionsTicketCategory() {
+    return getSetting('submissions_ticket_category');
+  }
+
+  function setSubmissionsTicketCategory(categoryId) {
+    return setSetting('submissions_ticket_category', categoryId);
+  }
+
   function getClaimStaffRole() {
     return getSetting('claim_staff_role');
   }
@@ -285,12 +308,12 @@
 
   // Insert a new bounty as 'pending' when the ticket is created. Returns its id
   // so we can bake it into the Approve/Deny buttons.
-  async function createBounty({ name, description, reward, requesterId, donatorName }) {
+  async function createBounty({ name, description, reward, requesterId, donatorName, groupType }) {
     const result = await pool.query(
-      `INSERT INTO bounties (name, description, reward, requester_id, donator_name, status)
-      VALUES ($1, $2, $3, $4, $5, 'pending')
+      `INSERT INTO bounties (name, description, reward, requester_id, donator_name, group_type, status)
+      VALUES ($1, $2, $3, $4, $5, $6, 'pending')
       RETURNING id`,
-      [name, description, reward, requesterId, donatorName ?? null],
+      [name, description, reward, requesterId, donatorName ?? null, groupType ?? null],
     );
     return result.rows[0].id;
   }
@@ -303,10 +326,10 @@
 
   // Overwrites the editable fields, e.g. after staff tweaks them in the
   // approve/edit modal. Status/approver are handled separately by approveBounty.
-  async function updateBounty(id, { name, description, reward, donatorName, prizeType, tier }) {
+  async function updateBounty(id, { name, description, reward, donatorName, prizeType, tier, groupType, claimType }) {
     await pool.query(
-      `UPDATE bounties SET name = $2, description = $3, reward = $4, donator_name = $5, prize_type = $6, tier = $7 WHERE id = $1`,
-      [id, name, description, reward, donatorName ?? null, prizeType ?? null, tier ?? null],
+      `UPDATE bounties SET name = $2, description = $3, reward = $4, donator_name = $5, prize_type = $6, tier = $7, group_type = $8, claim_type = $9 WHERE id = $1`,
+      [id, name, description, reward, donatorName ?? null, prizeType ?? null, tier ?? null, groupType ?? null, claimType ?? null],
     );
   }
 
@@ -450,6 +473,8 @@
     setBoardChannel,
     getClaimTicketCategory,
     setClaimTicketCategory,
+    getSubmissionsTicketCategory,
+    setSubmissionsTicketCategory,
     getClaimStaffRole,
     setClaimStaffRole,
     getClaimStaffUser,

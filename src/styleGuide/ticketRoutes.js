@@ -8,7 +8,7 @@
 // enumerated fresh from the configured ticket/archive categories on every
 // page load. Nothing is cached across requests.
 const {
-  getTicketCategory, getClaimTicketCategory, getHelpTicketCategory,
+  getTicketCategory, getClaimTicketCategory, getSubmissionsTicketCategory, getHelpTicketCategory,
   getRequestArchiveCategory, getClaimArchiveCategory, getHelpArchiveCategory,
   setRequestArchiveCategory, setClaimArchiveCategory, setHelpArchiveCategory,
   clearSetting,
@@ -20,11 +20,11 @@ const VALID_TYPES = ['all', 'request', 'claim', 'help'];
 const VALID_STATUSES = ['all', 'active', 'archived'];
 
 async function fetchCategories() {
-  const [reqCat, claimCat, helpCat, reqArchive, claimArchive, helpArchive] = await Promise.all([
-    getTicketCategory(), getClaimTicketCategory(), getHelpTicketCategory(),
+  const [reqCat, claimCat, submissionsCat, helpCat, reqArchive, claimArchive, helpArchive] = await Promise.all([
+    getTicketCategory(), getClaimTicketCategory(), getSubmissionsTicketCategory(), getHelpTicketCategory(),
     getRequestArchiveCategory(), getClaimArchiveCategory(), getHelpArchiveCategory(),
   ]);
-  return { reqCat, claimCat, helpCat, reqArchive, claimArchive, helpArchive };
+  return { reqCat, claimCat, submissionsCat, helpCat, reqArchive, claimArchive, helpArchive };
 }
 
 // Every category id we know about, tried in turn until one resolves to a
@@ -45,6 +45,7 @@ async function resolveGuild(client, cats) {
 function classifyChannel(channel, cats) {
   if (channel.parentId === cats.reqCat) return { type: 'request', status: 'active' };
   if (channel.parentId === cats.claimCat) return { type: 'claim', status: 'active' };
+  if (channel.parentId === cats.submissionsCat) return { type: 'claim', status: 'active' };
   if (channel.parentId === cats.helpCat) return { type: 'help', status: 'active' };
   if (channel.parentId === cats.reqArchive) return { type: 'request', status: 'archived' };
   if (channel.parentId === cats.claimArchive) return { type: 'claim', status: 'archived' };
@@ -71,6 +72,7 @@ async function listTicketChannels(client, cats) {
   return [
     ...collect(cats.reqCat, 'request', 'active'),
     ...collect(cats.claimCat, 'claim', 'active'),
+    ...collect(cats.submissionsCat, 'claim', 'active'),
     ...collect(cats.helpCat, 'help', 'active'),
     ...collect(cats.reqArchive, 'request', 'archived'),
     ...collect(cats.claimArchive, 'claim', 'archived'),

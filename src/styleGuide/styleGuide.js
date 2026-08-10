@@ -336,6 +336,7 @@ function buildStyleGuideHtml({ savedSection, failure, addTopicFailure, username 
       { label: rv['MODAL.bountyRequest.name.label'], placeholder: rv['MODAL.bountyRequest.name.placeholder'], note: rv['MODAL.bountyRequest.name.description'] },
       { label: rv['MODAL.bountyRequest.description.label'], placeholder: rv['MODAL.bountyRequest.description.placeholder'], note: rv['MODAL.bountyRequest.description.description'] },
       { label: rv['MODAL.bountyRequest.reward.label'], placeholder: rv['MODAL.bountyRequest.reward.placeholder'], note: rv['MODAL.bountyRequest.reward.description'] },
+      { label: rv['MODAL.bountyRequest.groupType.label'], placeholder: 'Solo Only / Premade Allowed', note: rv['MODAL.bountyRequest.groupType.description'] },
     ]) + `<p class="btn-caption">Modal title bar: <b>${esc(rv['MODAL.bountyRequest.title'])}</b></p>`,
     staticUnitValues('requesting-form'),
     failure,
@@ -369,7 +370,7 @@ function buildStyleGuideHtml({ savedSection, failure, addTopicFailure, username 
     cardStateTable([
       { state: 'Pending', title: `${rv['CARD.request.titlePrefix']} *{name}*`, color: 'Ocean' },
       { state: 'Approved', title: `${rv['CARD.request.approvedTitlePrefix']} *{name}*`, color: 'Turquoise' },
-    ]) + `<p class="btn-caption">Fields shown: <b>${esc(rv['CARD.request.fieldRequester'])}</b>, <b>${esc(rv['CARD.request.fieldReward'])}</b>.</p>`,
+    ]) + `<p class="btn-caption">Fields shown: <b>${esc(rv['CARD.request.fieldRequester'])}</b>, <b>${esc(rv['CARD.request.fieldReward'])}</b>, <b>${esc(rv['CARD.request.fieldGroupType'])}</b>.</p>`,
     staticUnitValues('requesting-card'),
     failure,
   );

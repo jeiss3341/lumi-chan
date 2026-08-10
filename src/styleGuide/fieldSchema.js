@@ -63,6 +63,8 @@ const FIELD_SCHEMA = [
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.reward.label', kind: 'modalFieldLabel', label: 'Reward field — label' },
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.reward.description', kind: 'modalFieldHelp', label: 'Reward field — helper text' },
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.reward.placeholder', kind: 'modalPlaceholder', label: 'Reward field — placeholder' },
+  { unit: 'requesting-form', path: 'MODAL.bountyRequest.groupType.label', kind: 'modalFieldLabel', label: 'Group Type field — label' },
+  { unit: 'requesting-form', path: 'MODAL.bountyRequest.groupType.description', kind: 'modalFieldHelp', label: 'Group Type field — helper text' },
 
   { unit: 'requesting-preview-buttons', path: 'TICKET.submitButton', kind: 'buttonLabel', label: 'Submit — label' },
   { unit: 'requesting-preview-buttons', path: 'TICKET.submitEmoji', kind: 'emojiField', label: 'Submit — emoji' },
@@ -78,6 +80,7 @@ const FIELD_SCHEMA = [
   { unit: 'requesting-card', path: 'CARD.request.approvedTitlePrefix', kind: 'cardTitlePrefix', label: 'Card title (approved)' },
   { unit: 'requesting-card', path: 'CARD.request.fieldRequester', kind: 'embedFieldName', label: 'Card field name — requester' },
   { unit: 'requesting-card', path: 'CARD.request.fieldReward', kind: 'embedFieldName', label: 'Card field name — reward' },
+  { unit: 'requesting-card', path: 'CARD.request.fieldGroupType', kind: 'embedFieldName', label: 'Card field name — group type' },
 
   { unit: 'requesting-messages', path: 'REPLIES.missingRequestStaff', kind: 'messageContent', label: 'Message — no staff configured' },
   { unit: 'requesting-messages', path: 'REPLIES.requestPreview', kind: 'messageContent', label: 'Message — preview shown' },

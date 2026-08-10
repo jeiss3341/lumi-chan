@@ -108,6 +108,8 @@ const {
   getBoardChannel,
   setClaimTicketCategory,
   getClaimTicketCategory,
+  setSubmissionsTicketCategory,
+  getSubmissionsTicketCategory,
   setClaimStaffRole,
   getClaimStaffRole,
   setClaimStaffUser,
@@ -638,10 +640,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // /deployclaimbounty  →  save the CLAIM pipeline's own category + staff
-    // (entirely separate from the request pipeline's), then post the claim panel.
+    // /deployclaimbounty  →  save the CLAIM pipeline's own categories + staff
+    // (entirely separate from the request pipeline's), then post the claim
+    // panel. Two active categories (Claim / Submissions) share one board and
+    // one archive category — which category a given bounty's claim opens in
+    // is decided per-bounty by staff at approval time (Claim Type field).
     if (interaction.isChatInputCommand() && interaction.commandName === 'deployclaimbounty') {
-      const category = interaction.options.getChannel('category');
+      const claimCategory = interaction.options.getChannel('claim_category');
+      const submissionsCategory = interaction.options.getChannel('submissions_category');
       const board = interaction.options.getChannel('board');
       const archiveCategory = interaction.options.getChannel('archive_category');
       const staffRole = interaction.options.getRole('staff_role');
@@ -655,7 +661,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      await setClaimTicketCategory(category.id);
+      await setClaimTicketCategory(claimCategory.id);
+      await setSubmissionsTicketCategory(submissionsCategory.id);
       await setClaimBoardChannel(board.id);
       await setClaimArchiveCategory(archiveCategory.id);
       if (staffRole) await setClaimStaffRole(staffRole.id); else await clearSetting('claim_staff_role');
@@ -666,7 +673,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const reviewers = describeReviewers(staffRole, staffUser);
 
       await interaction.reply({
-        content: `🏁 Claim board deployed. Claims open under **${category.name}**, reviewed by **${reviewers}**, finalized claims post to ${board}, and approved tickets move to **${archiveCategory.name}**.`,
+        content: `🏁 Claim board deployed. Claims open under **${claimCategory.name}** or **${submissionsCategory.name}** (set per-bounty by staff at approval), reviewed by **${reviewers}**, finalized claims post to ${board}, and approved tickets move to **${archiveCategory.name}**.`,
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -888,6 +895,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           reward: data.amountRaw,
           requesterId: interaction.user.id,
           donatorName,
+          groupType: data.groupType,
         });
 
         const channel = await createTicket({
@@ -1002,15 +1010,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const description = interaction.fields.getTextInputValue('bounty_description');
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
       const donatorRaw = interaction.fields.getTextInputValue('bounty_donator');
+      const [groupType] = interaction.fields.getStringSelectValues('bounty_group_type');
 
       // Stash for the Submit button (that click won't have the form data).
       // createdAt is what the sweeper above uses to drop abandoned previews.
-      pendingBounties.set(interaction.user.id, { name, description, amountRaw, donatorRaw, createdAt: Date.now() });
+      pendingBounties.set(interaction.user.id, { name, description, amountRaw, donatorRaw, groupType, createdAt: Date.now() });
 
       const embed = buildBountyEmbed({
         name,
         description,
         amountRaw,
+        groupType,
         user: interaction.user,
         status: 'pending',
       });
@@ -1117,6 +1127,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const [tier] = interaction.fields.getStringSelectValues('bounty_tier');
       const [prizeType] = interaction.fields.getStringSelectValues('bounty_reward_type');
+      const [claimType] = interaction.fields.getStringSelectValues('bounty_claim_type');
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
 
       const step1 = pendingApprovals.get(bountyId);
@@ -1152,7 +1163,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      await updateBounty(bountyId, { name, description, reward: amountRaw, donatorName, prizeType, tier });
+      // groupType is re-supplied unchanged — staff don't set that here, it's
+      // fixed by the requester at request time.
+      await updateBounty(bountyId, { name, description, reward: amountRaw, donatorName, prizeType, tier, groupType: bounty.group_type, claimType });
 
       // Guarded on 'pending' — the admin site can change a bounty's status
       // too (src/styleGuide/bountyRoutes.js), so if it was denied/cancelled
@@ -1174,6 +1187,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         name,
         description,
         amountRaw,
+        groupType: bounty.group_type,
         user: requester ?? interaction.user,
         status: 'approved',
       });
@@ -1290,7 +1304,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       try {
         const { staffRoleId, staffUserId } = await getClaimStaff();
-        const categoryId = await getClaimTicketCategory();
+        // Which of the two active categories this opens in — set by staff on
+        // the bounty at approval time (see approve_modal_step2_submit above);
+        // defaults to the Claim category for bounties approved before this
+        // existed, or if it was somehow left unset.
+        const categoryId = bounty.claim_type === 'submissions'
+          ? await getSubmissionsTicketCategory()
+          : await getClaimTicketCategory();
 
         const channel = await createClaimTicket({
           guild: interaction.guild,

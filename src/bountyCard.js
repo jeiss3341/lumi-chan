@@ -10,11 +10,17 @@ function formatAmount(raw) {
   return text || '—';
 }
 
+const GROUP_TYPE_LABELS = { solo: 'Solo Only', premade: 'Premade Allowed' };
+
+function formatGroupType(raw) {
+  return GROUP_TYPE_LABELS[raw] ?? '—';
+}
+
 // Builds the bounty card. Pass a different `status` to recolor AND retitle
 // it as it moves through the flow: 'pending' ("Bounty Request", blurple) →
 // 'approved' ("Bounty Approved", green). Denied tickets just close, so
 // there's no 'denied' title — the pending one is a safe fallback.
-function buildBountyEmbed({ name, description, amountRaw, user, status = 'pending' }) {
+function buildBountyEmbed({ name, description, amountRaw, groupType, user, status = 'pending' }) {
   const titlePrefix =
     status === 'approved' ? resolveText('CARD.request.approvedTitlePrefix') : resolveText('CARD.request.titlePrefix');
   return new EmbedBuilder()
@@ -25,6 +31,7 @@ function buildBountyEmbed({ name, description, amountRaw, user, status = 'pendin
     .addFields(
       { name: resolveText('CARD.request.fieldRequester'), value: `<@${user.id}>`, inline: true },
       { name: resolveText('CARD.request.fieldReward'), value: formatAmount(amountRaw), inline: true },
+      { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(groupType), inline: true },
     )
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER })
@@ -52,4 +59,4 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
     .setTimestamp();
 }
 
-module.exports = { buildBountyEmbed, buildClaimEmbed, formatAmount };
+module.exports = { buildBountyEmbed, buildClaimEmbed, formatAmount, formatGroupType };
