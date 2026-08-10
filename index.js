@@ -352,6 +352,15 @@ async function closeOrArchiveTicket(channel, archiveCategoryId) {
   closeChannelSoon(channel);
 }
 
+// True if this channel is already sitting in the given archive category —
+// guards deny_bounty/deny_claim below, whose buttons (unlike Close Ticket's,
+// see confirm_close_help_ticket above) never get removed after being
+// pressed. Without this, a second press just re-archives an already-archived
+// ticket, stacking another "closed-" onto its name each time.
+function isAlreadyArchived(channel, archiveCategoryId) {
+  return Boolean(archiveCategoryId) && channel.parentId === archiveCategoryId;
+}
+
 // Shared by /deployrequestbounty and /deployclaimbounty's confirmation replies.
 function describeReviewers(staffRole, staffUser) {
   return [staffRole?.name, staffUser ? `@${staffUser.username}` : null].filter(Boolean).join(' and ');
@@ -967,12 +976,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('deny_bounty')) {
       if (!(await requireStaff(interaction, getRequestStaff, 'deny bounties'))) return;
 
+      const denyArchiveCategoryId = await getRequestArchiveCategory();
+      if (isAlreadyArchived(interaction.channel, denyArchiveCategoryId)) {
+        await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
       const bountyId = customIdArg(interaction);
       if (bountyId) {
         await denyBounty(bountyId, interaction.user.id).catch(console.error);
       }
 
-      const denyArchiveCategoryId = await getRequestArchiveCategory();
       await interaction.reply({
         content: denyArchiveCategoryId
           ? `⛔ **Denied** by ${interaction.user}. Archiving this ticket…`
@@ -1414,6 +1428,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!(await requireStaff(interaction, getClaimStaff, 'deny claims'))) return;
 
       const claimDenyArchiveCategoryId = await getClaimArchiveCategory();
+      if (isAlreadyArchived(interaction.channel, claimDenyArchiveCategoryId)) {
+        await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
       await interaction.reply({
         content: claimDenyArchiveCategoryId
           ? `⛔ **Claim denied** by ${interaction.user}. Archiving this ticket…`
