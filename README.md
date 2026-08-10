@@ -152,7 +152,10 @@ src/
    each variable is for.
 
 5. **Register the slash commands** (re-run this any time a command or its
-   options change — everything else in `text.js` just needs a restart):
+   options change — everything else in `text.js` just needs a restart).
+   Commands are global, so they show up in every server the bot's invited
+   to automatically — no per-server setup — but Discord can take up to
+   ~1 hour to propagate a change:
 
    ```bash
    node deploy-commands.js
