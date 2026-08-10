@@ -1344,6 +1344,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('include_requester')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'include the requester'))) return;
 
+      // Archived tickets shouldn't still be actionable — the button stays on
+      // the message forever (nothing removes it), so a stale click here used
+      // to reach the permission-grant call below for no reason. Short-circuit
+      // before that, and before the embed-parsing/lookup work above it too.
+      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+        await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
       const requesterId = interaction.message.embeds[0]
         ? extractMentionId(interaction.message.embeds[0], resolveText('CARD.claim.fieldOriginalRequester'))
         : null;
@@ -1353,16 +1362,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // Explicit `type: Member` bypasses discord.js's automatic user/role
-      // resolution, which requires the target to already be in the client's
-      // user cache (the bot only requests the Guilds intent, so a requester
-      // who hasn't been fetched recently isn't cached) — without it, this
-      // throws DiscordjsTypeError[InvalidType] for any uncached requester.
-      await interaction.channel.permissionOverwrites.create(
-        requesterId,
-        { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
-        { type: OverwriteType.Member },
-      );
+      try {
+        // Explicit `type: Member` bypasses discord.js's automatic user/role
+        // resolution, which requires the target to already be in the client's
+        // user cache (the bot only requests the Guilds intent, so a requester
+        // who hasn't been fetched recently isn't cached) — without it, this
+        // throws DiscordjsTypeError[InvalidType] for any uncached requester.
+        await interaction.channel.permissionOverwrites.create(
+          requesterId,
+          { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
+          { type: OverwriteType.Member },
+        );
+      } catch (err) {
+        // Discord rejects the grant (code 10009 "Unknown Overwrite" is the
+        // common case — the id isn't a real member of this guild, e.g. bad
+        // test data or someone who's since left) — surface that plainly
+        // instead of falling through to the generic top-level error handler.
+        console.error('Failed to include requester:', err);
+        await interaction.reply({
+          content: `⚠️ Couldn't add <@${requesterId}> — Discord rejected it (they may not be a member of this server).`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
 
       await interaction.reply({
         content: `👥 <@${requesterId}> has been added to this ticket by ${interaction.user}.`,
