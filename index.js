@@ -13,6 +13,7 @@ const {
   ButtonStyle,
   AttachmentBuilder,
   Options,
+  OverwriteType,
 } = require('discord.js');
 const { buildPanel, buildClaimPanel, buildTicketPanel, buildQandAPanel } = require('./src/panel');
 const { buildQandAMenu, buildQandAAnswer } = require('./src/qanda');
@@ -1314,11 +1315,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      await interaction.channel.permissionOverwrites.create(requesterId, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true,
-      });
+      // Explicit `type: Member` bypasses discord.js's automatic user/role
+      // resolution, which requires the target to already be in the client's
+      // user cache (the bot only requests the Guilds intent, so a requester
+      // who hasn't been fetched recently isn't cached) — without it, this
+      // throws DiscordjsTypeError[InvalidType] for any uncached requester.
+      await interaction.channel.permissionOverwrites.create(
+        requesterId,
+        { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
+        { type: OverwriteType.Member },
+      );
 
       await interaction.reply({
         content: `👥 <@${requesterId}> has been added to this ticket by ${interaction.user}.`,
