@@ -204,15 +204,23 @@ const commands = [
 
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 
-(async () => {
-  try {
-    console.log('Clearing old guild-scoped commands (avoids dupes now that commands are global)...');
-    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
+// Guarded so this file can also be `require()`'d (for `commands`/`clientId`,
+// e.g. a one-off script instantly registering guild-scoped commands to a
+// brand-new server while the global rollout above is still propagating)
+// without re-triggering the clear-and-reregister-global flow below.
+if (require.main === module) {
+  (async () => {
+    try {
+      console.log('Clearing old guild-scoped commands (avoids dupes now that commands are global)...');
+      await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
 
-    console.log('Registering global commands...');
-    await rest.put(Routes.applicationCommands(clientId), { body: commands });
-    console.log('Done. Global commands can take up to ~1 hour to show up in every server — guild-scoped ones just cleared instantly, so there may be a gap where commands are briefly missing in the old server.');
-  } catch (err) {
-    console.error(err);
-  }
-})();
+      console.log('Registering global commands...');
+      await rest.put(Routes.applicationCommands(clientId), { body: commands });
+      console.log('Done. Global commands can take up to ~1 hour to show up in every server — guild-scoped ones just cleared instantly, so there may be a gap where commands are briefly missing in the old server.');
+    } catch (err) {
+      console.error(err);
+    }
+  })();
+}
+
+module.exports = { commands, clientId };
