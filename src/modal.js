@@ -13,7 +13,7 @@ const { resolveText } = require('./styleGuide/liveText');
 // which gives you the header + subtext you saw in the screenshot.
 //
 // Max 5 top-level components per modal. We use all 5 (preferred name, name,
-// description, reward, group type).
+// group type, description, reward).
 function buildBountyModal() {
   const modal = new ModalBuilder().setCustomId('bounty_modal').setTitle(resolveText('MODAL.bountyRequest.title'));
 
@@ -42,31 +42,7 @@ function buildBountyModal() {
     .setDescription(resolveText('MODAL.bountyRequest.name.description'))
     .setTextInputComponent(nameInput);
 
-  // 3) Description — paragraph, all the flavor they want
-  const descInput = new TextInputBuilder()
-    .setCustomId('bounty_description')
-    .setStyle(TextInputStyle.Paragraph)
-    .setPlaceholder(resolveText('MODAL.bountyRequest.description.placeholder'))
-    .setMaxLength(1000)
-    .setRequired(true);
-  const descLabel = new LabelBuilder()
-    .setLabel(resolveText('MODAL.bountyRequest.description.label'))
-    .setDescription(resolveText('MODAL.bountyRequest.description.description'))
-    .setTextInputComponent(descInput);
-
-  // 4) Reward — free text, since it isn't always cash (in-game currency, etc.)
-  const amountInput = new TextInputBuilder()
-    .setCustomId('bounty_amount')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder(resolveText('MODAL.bountyRequest.reward.placeholder'))
-    .setMaxLength(50)
-    .setRequired(true);
-  const amountLabel = new LabelBuilder()
-    .setLabel(resolveText('MODAL.bountyRequest.reward.label'))
-    .setDescription(resolveText('MODAL.bountyRequest.reward.description'))
-    .setTextInputComponent(amountInput);
-
-  // 5) Group Type — can this be completed alone, or does it allow a premade
+  // 3) Group Type — can this be completed alone, or does it allow a premade
   // group? Shown on the bounty card so claimants know before attempting it.
   const groupTypeSelect = new StringSelectMenuBuilder()
     .setCustomId('bounty_group_type')
@@ -81,7 +57,31 @@ function buildBountyModal() {
     .setDescription(resolveText('MODAL.bountyRequest.groupType.description'))
     .setStringSelectMenuComponent(groupTypeSelect);
 
-  modal.addLabelComponents(donatorLabel, nameLabel, descLabel, amountLabel, groupTypeLabel);
+  // 4) Description — paragraph, all the flavor they want
+  const descInput = new TextInputBuilder()
+    .setCustomId('bounty_description')
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder(resolveText('MODAL.bountyRequest.description.placeholder'))
+    .setMaxLength(1000)
+    .setRequired(true);
+  const descLabel = new LabelBuilder()
+    .setLabel(resolveText('MODAL.bountyRequest.description.label'))
+    .setDescription(resolveText('MODAL.bountyRequest.description.description'))
+    .setTextInputComponent(descInput);
+
+  // 5) Reward — free text, since it isn't always cash (in-game currency, etc.)
+  const amountInput = new TextInputBuilder()
+    .setCustomId('bounty_amount')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder(resolveText('MODAL.bountyRequest.reward.placeholder'))
+    .setMaxLength(50)
+    .setRequired(true);
+  const amountLabel = new LabelBuilder()
+    .setLabel(resolveText('MODAL.bountyRequest.reward.label'))
+    .setDescription(resolveText('MODAL.bountyRequest.reward.description'))
+    .setTextInputComponent(amountInput);
+
+  modal.addLabelComponents(donatorLabel, nameLabel, groupTypeLabel, descLabel, amountLabel);
   return modal;
 }
 

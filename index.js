@@ -344,10 +344,14 @@ function closeChannelSoon(channel, delayMs = 4000) {
 // ticketRoutes.js) possible at all — deleted ones leave nothing to show.
 // No delay needed here (unlike closeChannelSoon) since archiving doesn't
 // erase the closing message — it's still readable in the archived channel.
-async function closeOrArchiveTicket(channel, archiveCategoryId) {
+// `newName`, if given, replaces the default "closed-<old name>" — used by
+// deny_claim below to build a clean "denied-claim-<bounty>" /
+// "denied-submission-<bounty>" name from the bounty's own data instead of
+// stacking onto the ticket's existing "claim-<bounty>-<claimant>" name.
+async function closeOrArchiveTicket(channel, archiveCategoryId, newName) {
   if (archiveCategoryId) {
     await channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
-    await channel.setName(toChannelName('closed', channel.name)).catch(console.error);
+    await channel.setName(newName ?? toChannelName('closed', channel.name)).catch(console.error);
     await alphabetizeCategory(channel.parent).catch(console.error);
     return;
   }
@@ -1425,11 +1429,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // lockPermissions adopts the archive category's own overwrites, so it
       // drops out of everyone's sight except whoever that category is scoped
       // to. Renamed to reflect it's done, then that category gets
-      // re-alphabetized so it stays easy to scan by name.
+      // re-alphabetized so it stays easy to scan by name. Prefix is "claim"
+      // or "submission" (not "declared") to match deny_claim's "denied-claim"
+      // / "denied-submission" — sorts the two types together either way.
       const archiveCategoryId = await getClaimArchiveCategory();
       if (archiveCategoryId) {
+        const approvedPrefix = updated.claim_type === 'submissions' ? 'submission' : 'claim';
         await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
-        await interaction.channel.setName(toChannelName('declared', updated.name)).catch(console.error);
+        await interaction.channel.setName(toChannelName(approvedPrefix, updated.name)).catch(console.error);
         await alphabetizeCategory(interaction.channel.parent);
         notes.push('archived');
       }
@@ -1453,12 +1460,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Built fresh from the bounty's own name/claim_type (like approve_claim
+      // does), not stacked onto the ticket's existing "claim-<bounty>-
+      // <claimant>" name — gives "denied-claim-<bounty>" /
+      // "denied-submission-<bounty>" instead of doubling up "claim-claim-...".
+      const bounty = await getBountyById(customIdArg(interaction));
+      const deniedPrefix = bounty?.claim_type === 'submissions' ? 'denied-submission' : 'denied-claim';
+      const deniedName = bounty ? toChannelName(deniedPrefix, bounty.name) : undefined;
+
       await interaction.reply({
         content: claimDenyArchiveCategoryId
           ? `⛔ **Claim denied** by ${interaction.user}. Archiving this ticket…`
           : `⛔ **Claim denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
       });
-      await closeOrArchiveTicket(interaction.channel, claimDenyArchiveCategoryId);
+      await closeOrArchiveTicket(interaction.channel, claimDenyArchiveCategoryId, deniedName);
       return;
     }
   } catch (err) {

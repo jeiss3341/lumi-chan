@@ -86,19 +86,24 @@ function userLabel(id, tags) {
 }
 
 // Both filter bars link with both query params so switching one doesn't
-// drop whichever value the other is currently set to.
+// drop whichever value the other is currently set to — except `group=all`
+// is left out of the URL entirely, since that's the default anyway.
+function groupParam(activeGroup) {
+  return activeGroup === 'all' ? '' : `&group=${esc(activeGroup)}`;
+}
+
 function filterBar(activeStatus, activeGroup) {
   return `<div class="filter-bar">${STATUS_FILTERS.map((s) => {
     const label = s === 'all' ? 'All' : (STATUS_LABELS[s] ?? s);
     const cls = s === activeStatus ? 'filter-link active' : 'filter-link';
-    return `<a class="${cls}" href="/bounties?status=${esc(s)}&group=${esc(activeGroup)}">${esc(label)}</a>`;
+    return `<a class="${cls}" href="/bounties?status=${esc(s)}${groupParam(activeGroup)}">${esc(label)}</a>`;
   }).join('')}</div>`;
 }
 
 function groupFilterBar(activeGroup, activeStatus) {
   return `<div class="filter-bar">${GROUP_FILTERS.map((g) => {
     const cls = g === activeGroup ? 'filter-link active' : 'filter-link';
-    return `<a class="${cls}" href="/bounties?status=${esc(activeStatus)}&group=${esc(g)}">${esc(GROUP_FILTER_LABELS[g])}</a>`;
+    return `<a class="${cls}" href="/bounties?status=${esc(activeStatus)}${groupParam(g)}">${esc(GROUP_FILTER_LABELS[g])}</a>`;
   }).join('')}</div>`;
 }
 
@@ -125,7 +130,9 @@ ${BASE_STYLES}
     font-weight: 600; font-size: 14px; text-align: center;
   }
   .toast.warn { background: var(--warn-bg); color: var(--warn); }
-  .filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin: 24px 0; }
+  .filter-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 24px 0; }
+  .filter-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-divider { width: 1px; height: 22px; background: var(--line); }
   .filter-link {
     padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); font-size: 13.5px;
     font-weight: 600; color: var(--ink-soft); text-decoration: none; background: var(--paper-raised);
@@ -244,8 +251,11 @@ function buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, user
   </header>
   ${toast}
   <a class="new-btn" href="/bounties/new" style="margin-top:24px;">+ New Bounty</a>
-  ${filterBar(filterStatus, filterGroup)}
-  ${groupFilterBar(filterGroup, filterStatus)}
+  <div class="filter-row">
+    ${filterBar(filterStatus, filterGroup)}
+    <span class="filter-divider"></span>
+    ${groupFilterBar(filterGroup, filterStatus)}
+  </div>
   <div class="bounty-list">${rows}</div>`;
 
   return pageShell({ title: 'Bounties', active: 'bounties', username, body });
