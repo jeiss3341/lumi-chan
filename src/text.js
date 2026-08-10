@@ -212,6 +212,15 @@ module.exports = {
         label: 'Preferred Name',
         description: "Who to credit — leave blank to use the requester's current Discord nickname",
       },
+      // Shown instead of the singular version above when the bounty's
+      // Group Type is Premade Allowed — same field (bounty_donator), just a
+      // label/hint reminding staff this is where the whole team's names go,
+      // gathered by talking it over with the requester in the ticket, not
+      // just the one requester's own name.
+      donatorPremade: {
+        label: 'Preferred Name(s)',
+        description: 'Whole premade team — list each preferred name if someone doesn\'t want their Discord nickname shown',
+      },
       name: {
         label: 'Name of Bounty',
         description: 'Edit if needed — this is what ships to the board',

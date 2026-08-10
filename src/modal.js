@@ -106,15 +106,22 @@ function buildApproveModalStep1(bounty) {
     .setCustomId(`approve_modal_step1:${bounty.id}`)
     .setTitle(`${TEXT.MODAL.approveEdit.title} (1/2)`);
 
+  // Premade Allowed gets the plural label/hint — reminding staff this is
+  // where the whole team's preferred names go (gathered by talking it over
+  // with the requester in the ticket), not just the one requester's own
+  // name. Same field either way (bounty_donator) — just the copy differs.
+  const donatorCopy = bounty.group_type === 'premade'
+    ? TEXT.MODAL.approveEdit.donatorPremade
+    : TEXT.MODAL.approveEdit.donator;
   const donatorInput = new TextInputBuilder()
     .setCustomId('bounty_donator')
     .setStyle(TextInputStyle.Short)
     .setValue(bounty.donator_name ?? '')
-    .setMaxLength(50)
+    .setMaxLength(100)
     .setRequired(false);
   const donatorLabel = new LabelBuilder()
-    .setLabel(TEXT.MODAL.approveEdit.donator.label)
-    .setDescription(TEXT.MODAL.approveEdit.donator.description)
+    .setLabel(donatorCopy.label)
+    .setDescription(donatorCopy.description)
     .setTextInputComponent(donatorInput);
 
   const nameInput = new TextInputBuilder()

@@ -371,16 +371,32 @@ function closeChannelSoon(channel, delayMs = 4000) {
 // erase the closing message — it's still readable in the archived channel.
 // `newName`, if given, replaces the default "closed-<old name>" — used by
 // deny_claim below to build a clean "denied-claim-<bounty>" /
-// "denied-submission-<bounty>" name from the bounty's own data instead of
+// "submission-lost-<bounty>" name from the bounty's own data instead of
 // stacking onto the ticket's existing "claim-<bounty>-<claimant>" name.
+// Returns true if the channel actually ended up archived (or, with no
+// archive category configured, scheduled to close) — false if the move
+// itself failed. Callers must check this and tell staff plainly when it's
+// false, rather than claiming "archiving…" regardless — the previous
+// silent .catch(console.error) meant a stale/misconfigured
+// archiveCategoryId (e.g. one belonging to a different guild than this
+// channel — Discord can't move a channel across guilds, and won't say why)
+// failed with nobody finding out except a server log nobody's watching.
+// The channel itself is never lost either way — a failed move just leaves
+// it exactly where it was.
 async function closeOrArchiveTicket(channel, archiveCategoryId, newName) {
   if (archiveCategoryId) {
-    await channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
+    try {
+      await channel.setParent(archiveCategoryId, { lockPermissions: true });
+    } catch (err) {
+      console.error('Failed to move ticket into its archive category:', err);
+      return false;
+    }
     await channel.setName(newName ?? toChannelName('closed', channel.name)).catch(console.error);
     await alphabetizeCategory(channel.parent).catch(console.error);
-    return;
+    return true;
   }
   closeChannelSoon(channel);
+  return true;
 }
 
 // Shared tail of the approve flow, called once at the end of step 2 (both
@@ -391,6 +407,12 @@ async function closeOrArchiveTicket(channel, archiveCategoryId, newName) {
 // `boardGetter`'s channel, and archives the ticket. 'submissions'-type
 // bounties point this at the submissions board instead of the regular one.
 async function finalizeApproval({ interaction, bountyId, approved, boardGetter, boardComponents, ticketChannelId, ticketMessageId }) {
+  // Deferred immediately — everything below is several sequential Discord
+  // API calls (comfortably past the 3-second ack window), and the final
+  // message needs to report whether archiving actually succeeded, not just
+  // promise that it will (see closeOrArchiveTicket).
+  await interaction.deferReply();
+
   const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
   const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
   if (ticketMessage) await ticketMessage.edit({ embeds: [approved], components: [] }).catch(() => null);
@@ -407,12 +429,14 @@ async function finalizeApproval({ interaction, bountyId, approved, boardGetter, 
   }
 
   const editApproveArchiveCategoryId = await getRequestArchiveCategory();
-  await interaction.reply({
-    content: editApproveArchiveCategoryId
-      ? `✅ **Approved** by ${interaction.user}${boardNote}. Archiving this ticket…`
-      : `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
-  });
-  await closeOrArchiveTicket(interaction.channel, editApproveArchiveCategoryId);
+  const archived = await closeOrArchiveTicket(interaction.channel, editApproveArchiveCategoryId);
+  const archiveNote = !editApproveArchiveCategoryId
+    ? ' Closing this ticket in a few seconds…'
+    : archived
+      ? ' Archiving this ticket…'
+      : ' ⚠️ Could not move this ticket into its archive category — check it\'s still configured correctly (`/deployrequestbounty`). Nothing was lost, it just stayed here.';
+
+  await interaction.editReply({ content: `✅ **Approved** by ${interaction.user}${boardNote}.${archiveNote}` });
 }
 
 // [🏆 Close Bounty] — the only button that lives on a public board post
@@ -430,6 +454,25 @@ function closeSubmissionBountyRow(bountyId) {
         .setStyle(ButtonStyle.Success),
       'TICKET.closeSubmissionBountyEmoji',
     ),
+  );
+}
+
+// [Yes, Close It] [Cancel] — the ephemeral (staff-only) "are you sure?"
+// shown after Close Bounty is pressed, before anything actually happens.
+// Same idea as helpTicketCloseConfirm (src/ticket.js) for a support ticket
+// — this one's on a public board post rather than a private channel, so an
+// accidental press is more consequential (it finalizes a bounty in front
+// of everyone), which is exactly why it gets this step at all.
+function closeSubmissionBountyConfirmRow(bountyId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`confirm_close_submission_bounty:${bountyId}`)
+      .setLabel('Yes, Close It')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId('cancel_close_submission_bounty')
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary),
   );
 }
 
@@ -473,12 +516,21 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
       const submissionsCategoryId = await getSubmissionsTicketCategory();
       const previousLeaderMember = await interaction.guild.members.fetch(updated.previous_leader_id).catch(() => null);
 
+      // Tracked (not just .catch(console.error)'d away) so the reopened
+      // ticket's own note can say plainly if the category move itself
+      // failed — its buttons still work right where it is either way.
+      let reopenedOk = false;
       if (submissionsCategoryId) {
-        await oldChannel.setParent(submissionsCategoryId, { lockPermissions: true }).catch(console.error);
-        await oldChannel
-          .setName(toChannelName('claim', bounty.name, previousLeaderMember?.displayName ?? updated.previous_leader_id))
-          .catch(console.error);
-        await alphabetizeCategory(oldChannel.parent).catch(console.error);
+        try {
+          await oldChannel.setParent(submissionsCategoryId, { lockPermissions: true });
+          await oldChannel
+            .setName(toChannelName('claim', bounty.name, previousLeaderMember?.displayName ?? updated.previous_leader_id))
+            .catch(console.error);
+          await alphabetizeCategory(oldChannel.parent).catch(console.error);
+          reopenedOk = true;
+        } catch (err) {
+          console.error('Failed to move displaced submission back to the active category:', err);
+        }
       }
 
       const reopenedEmbed = EmbedBuilder.from(oldMessage.embeds[0])
@@ -487,18 +539,23 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
       await oldMessage
         .edit({ embeds: [reopenedEmbed], components: [claimReviewButtons(bounty.id, bounty.group_type)] })
         .catch(console.error);
+
+      const moveWarning = submissionsCategoryId && !reopenedOk
+        ? ' ⚠️ Could not move this ticket back to the active Submissions category — check it\'s still configured correctly (`/deployclaimbounty`). The buttons above still work right here either way.'
+        : '';
       await oldChannel
         .send({
-          content: resolveText('TICKET.submissionSurpassedNote').replace('%s', `<@${claimantId}>`),
+          content: resolveText('TICKET.submissionSurpassedNote').replace('%s', `<@${claimantId}>`) + moveWarning,
         })
         .catch(console.error);
 
-      notes.push(`reopened <@${updated.previous_leader_id}>'s submission for review`);
+      notes.push(`reopened <@${updated.previous_leader_id}>'s submission for review${reopenedOk ? '' : ' (category move failed, see warning there)'}`);
     }
   }
 
-  // Archive this (now-leading) ticket — same "declared-submission" naming
-  // and category move approve_claim already uses for a regular claim.
+  // Archive this (now-leading) ticket — 'submission-won' since, as of right
+  // now, this is the submission that's currently winning (same category
+  // move approve_claim uses for a regular claim, just its own naming).
   const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
   const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
   if (ticketMessage) {
@@ -510,10 +567,15 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
 
   const archiveCategoryId = await getClaimArchiveCategory();
   if (ticketChannel && archiveCategoryId) {
-    await ticketChannel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
-    await ticketChannel.setName(toChannelName('declared-submission', bounty.name)).catch(console.error);
-    await alphabetizeCategory(ticketChannel.parent).catch(console.error);
-    notes.push('archived');
+    try {
+      await ticketChannel.setParent(archiveCategoryId, { lockPermissions: true });
+      await ticketChannel.setName(toChannelName('submission-won', bounty.name)).catch(console.error);
+      await alphabetizeCategory(ticketChannel.parent).catch(console.error);
+      notes.push('archived');
+    } catch (err) {
+      console.error('Failed to archive promoted submission ticket:', err);
+      notes.push('⚠️ could not be archived — check the archive category is still configured correctly');
+    }
   }
 
   // Edit the live submissions-board post to show the new leader.
@@ -1015,14 +1077,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await originalMessage.edit({ embeds, components: [] }).catch(console.error);
       }
 
+      // Deferred (not .update()) so the archive result is known before the
+      // message gets its final content — same reasoning as finalizeApproval.
+      await interaction.deferUpdate();
+
       const helpArchiveCategoryId = await getHelpArchiveCategory();
-      await interaction.update({
-        content: helpArchiveCategoryId
-          ? `🔒 **Ticket closed** by ${interaction.user}. Archiving this channel…`
-          : `🔒 **Ticket closed** by ${interaction.user}. Closing this channel in a few seconds…`,
+      const archived = await closeOrArchiveTicket(interaction.channel, helpArchiveCategoryId);
+      const archiveNote = !helpArchiveCategoryId
+        ? 'Closing this channel in a few seconds…'
+        : archived
+          ? 'Archiving this channel…'
+          : '⚠️ Could not move this channel into its archive category — check it\'s still configured correctly (`/deployticket`). Nothing was lost, it just stayed here.';
+
+      await interaction.editReply({
+        content: `🔒 **Ticket closed** by ${interaction.user}. ${archiveNote}`,
         components: [],
       });
-      await closeOrArchiveTicket(interaction.channel, helpArchiveCategoryId);
       return;
     }
 
@@ -1156,12 +1226,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const oldTicketArchiveCategoryId = await getRequestArchiveCategory();
+        const archived = await closeOrArchiveTicket(interaction.channel, oldTicketArchiveCategoryId);
+        const archiveNote = !oldTicketArchiveCategoryId
+          ? 'Closing this ticket in a few seconds…'
+          : archived
+            ? 'Archiving this ticket…'
+            : '⚠️ Could not move this ticket into its archive category — check it\'s still configured correctly (`/deployrequestbounty`). Nothing was lost, it just stayed here.';
         await interaction.followUp({
-          content: oldTicketArchiveCategoryId
-            ? `✅ **Approved** by ${interaction.user}${boardNote}. Archiving this ticket…`
-            : `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,
+          content: `✅ **Approved** by ${interaction.user}${boardNote}. ${archiveNote}`,
         });
-        await closeOrArchiveTicket(interaction.channel, oldTicketArchiveCategoryId);
         return;
       }
 
@@ -1185,12 +1258,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await denyBounty(bountyId, interaction.user.id).catch(console.error);
       }
 
-      await interaction.reply({
-        content: denyArchiveCategoryId
-          ? `⛔ **Denied** by ${interaction.user}. Archiving this ticket…`
-          : `⛔ **Denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
-      });
-      await closeOrArchiveTicket(interaction.channel, denyArchiveCategoryId);
+      // Deferred so the archive result is known before the message goes out
+      // — same reasoning as finalizeApproval.
+      await interaction.deferReply();
+      const archived = await closeOrArchiveTicket(interaction.channel, denyArchiveCategoryId);
+      const archiveNote = !denyArchiveCategoryId
+        ? 'Closing this ticket in a few seconds…'
+        : archived
+          ? 'Archiving this ticket…'
+          : '⚠️ Could not move this ticket into its archive category — check it\'s still configured correctly (`/deployrequestbounty`). Nothing was lost, it just stayed here.';
+      await interaction.editReply({ content: `⛔ **Denied** by ${interaction.user}. ${archiveNote}` });
       return;
     }
 
@@ -1775,15 +1852,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // lockPermissions adopts the archive category's own overwrites, so it
       // drops out of everyone's sight except whoever that category is scoped
       // to. Renamed to reflect it's done, then that category gets
-      // re-alphabetized so it stays easy to scan by name. Mirrors
-      // deny_claim's "denied-claim"/"denied-submission" naming.
+      // re-alphabetized so it stays easy to scan by name. Always
+      // 'declared-claim' here — a submissions-type claim never reaches this
+      // point at all (see the early branch above that hands it off to
+      // promoteSubmissionLeader instead), so there's no "submission" case
+      // to name for.
       const archiveCategoryId = await getClaimArchiveCategory();
       if (archiveCategoryId) {
-        const approvedPrefix = updated.claim_type === 'submissions' ? 'declared-submission' : 'declared-claim';
-        await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
-        await interaction.channel.setName(toChannelName(approvedPrefix, updated.name)).catch(console.error);
-        await alphabetizeCategory(interaction.channel.parent);
-        notes.push('archived');
+        const approvedPrefix = 'declared-claim';
+        try {
+          await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true });
+          await interaction.channel.setName(toChannelName(approvedPrefix, updated.name)).catch(console.error);
+          await alphabetizeCategory(interaction.channel.parent);
+          notes.push('archived');
+        } catch (err) {
+          console.error('Failed to archive approved claim ticket:', err);
+          notes.push('⚠️ could not be archived — check the archive category is still configured correctly');
+        }
       }
 
       const boardNote = notes.length ? ` and ${notes.join(' and ')}` : '';
@@ -1829,14 +1914,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // "🏆 Close Bounty" on a submissions board post  →  staff only. Declares
-    // the current leader the winner: same status flip claimBounty() already
-    // does for a one-shot claim (approved → claimed), then finalizes the
-    // board post in place and logs the result to the claim board, same as a
-    // regular claim does. This button lives on the board post itself, not a
-    // ticket, so `interaction` here is the click on that exact message —
-    // .update() edits it directly, same as approve_claim/deny_claim do for
-    // the message their own buttons live on.
+    // "🏆 Close Bounty" on a submissions board post  →  staff only. Shows a
+    // confirmation first rather than finalizing immediately — this is a
+    // public board post, so an accidental press would declare a winner in
+    // front of everyone with no undo. See confirm_close_submission_bounty
+    // below for what actually happens once confirmed.
     if (interaction.isButton() && interaction.customId.startsWith('close_submission_bounty')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'close a submissions bounty'))) return;
 
@@ -1852,14 +1934,48 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      await interaction.reply({
+        content: `Close **${bounty.name}** and declare <@${bounty.leader_id}> the winner? This posts publicly and can't be undone from here.`,
+        components: [closeSubmissionBountyConfirmRow(bountyId)],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // "Yes, Close It"  →  only reachable from close_submission_bounty's own
+    // ephemeral reply (Discord scopes that to the staff member who
+    // triggered it), so no separate staff check — same reasoning as
+    // approve_modal_step2/3's own Continue buttons. Re-checks the bounty is
+    // still open in case it changed since the prompt was shown (e.g.
+    // someone else already closed it), then does the actual close: declares
+    // the current leader the winner, edits the board post in place (fetched
+    // explicitly by id, since this interaction lives on the ephemeral
+    // confirmation, not the board post itself), and logs it to the claim board.
+    if (interaction.isButton() && interaction.customId.startsWith('confirm_close_submission_bounty')) {
+      const bountyId = customIdArg(interaction);
+      const bounty = await getBountyById(bountyId);
+
+      if (!bounty || bounty.status !== 'approved' || !bounty.leader_id) {
+        await interaction.update({
+          content: '⚠️ This bounty changed since you confirmed — nothing was closed. Check its current state and try again if needed.',
+          components: [],
+        });
+        return;
+      }
+
       const updated = await claimBounty(bountyId, bounty.leader_id);
       if (!updated) {
-        await interaction.reply({ content: resolveText('REPLIES.claimFinalizeFailed'), flags: MessageFlags.Ephemeral });
+        await interaction.update({ content: resolveText('REPLIES.claimFinalizeFailed'), components: [] });
         return;
       }
 
       const closedEmbed = buildLeaderboardEmbed(updated, { closed: true });
-      await interaction.update({ embeds: [closedEmbed], components: [] });
+
+      if (updated.board_channel_id && updated.board_message_id) {
+        const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);
+        const boardMsg = boardChannel ? await boardChannel.messages.fetch(updated.board_message_id).catch(() => null) : null;
+        if (boardMsg) await boardMsg.edit({ embeds: [closedEmbed], components: [] }).catch(console.error);
+      }
 
       let claimBoardNote = '';
       const claimBoardChannelId = await getClaimBoardChannel();
@@ -1871,9 +1987,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      await interaction.followUp({
+      await interaction.update({
         content: `🏆 **Bounty closed** by ${interaction.user} — winner: <@${updated.leader_id}>${claimBoardNote}.`,
+        components: [],
       });
+      return;
+    }
+
+    // "Cancel"  →  drops the confirmation, nothing happens.
+    if (interaction.isButton() && interaction.customId === 'cancel_close_submission_bounty') {
+      await interaction.update({ content: 'Cancelled — nothing was closed.', components: [] });
       return;
     }
 
@@ -1890,10 +2013,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       // Built fresh from the bounty's own name/claim_type (like approve_claim
       // does), not stacked onto the ticket's existing "claim-<bounty>-
-      // <claimant>" name — gives "denied-claim-<bounty>" /
-      // "denied-submission-<bounty>" instead of doubling up "claim-claim-...".
+      // <claimant>" name — gives "denied-claim-<bounty>" / "submission-lost-
+      // <bounty>" instead of doubling up "claim-claim-...". A denied
+      // submission (fresh, or a reopened one staff decided not to reinstate)
+      // reads as 'submission-lost' rather than 'denied-submission' — this is
+      // the didn't-win outcome, same idea as promoteSubmissionLeader's own
+      // 'submission-won' for the opposite case.
       const bounty = await getBountyById(customIdArg(interaction));
-      const deniedPrefix = bounty?.claim_type === 'submissions' ? 'denied-submission' : 'denied-claim';
+      const deniedPrefix = bounty?.claim_type === 'submissions' ? 'submission-lost' : 'denied-claim';
       const deniedName = bounty ? toChannelName(deniedPrefix, bounty.name) : undefined;
 
       // Recolor and strip the buttons from the original ticket message —
@@ -1907,12 +2034,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         : null;
       await interaction.update({ embeds: deniedEmbed ? [deniedEmbed] : [], components: [] });
 
-      await closeOrArchiveTicket(interaction.channel, claimDenyArchiveCategoryId, deniedName);
+      const archived = await closeOrArchiveTicket(interaction.channel, claimDenyArchiveCategoryId, deniedName);
+      const archiveNote = !claimDenyArchiveCategoryId
+        ? 'Closing this ticket in a few seconds…'
+        : archived
+          ? 'Archiving this ticket…'
+          : '⚠️ Could not move this ticket into its archive category — check it\'s still configured correctly (`/deployclaimbounty`). Nothing was lost, it just stayed here.';
 
       await interaction.followUp({
-        content: claimDenyArchiveCategoryId
-          ? `⛔ **Claim denied** by ${interaction.user}. Archiving this ticket…`
-          : `⛔ **Claim denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
+        content: `⛔ **Claim denied** by ${interaction.user}. ${archiveNote}`,
       });
       return;
     }
