@@ -12,6 +12,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   AttachmentBuilder,
+  Options,
 } = require('discord.js');
 const { buildPanel, buildClaimPanel, buildTicketPanel, buildQandAPanel } = require('./src/panel');
 const { buildQandAMenu, buildQandAAnswer } = require('./src/qanda');
@@ -44,7 +45,33 @@ const { COLORS, BANNER_URL } = TEXT.VISUALS;
 // therefore only show full content for the bot's OWN messages (embeds,
 // prompts) — a real user's replies show up as an empty row (name/avatar/
 // timestamp, no text). Accepted as-is rather than risk the bot going down.
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+//
+// The message sweeper matters more than it looks: discord.js's DEFAULT
+// sweeper config only ever sweeps threads, never messages — so every
+// message stays cached for the life of the process. The admin Tickets page
+// (src/styleGuide/ticketRoutes.js) fetches up to 100 messages each time an
+// admin opens a ticket, and without this those would accumulate until the
+// next deploy. 30min lifetime, swept every 10min; nothing here needs an
+// old message to still be in cache (the page always re-fetches).
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+  sweepers: {
+    ...Options.DefaultSweeperSettings,
+    messages: { interval: 600, lifetime: 1800 },
+  },
+});
+
+// Node terminates the process on an unhandled promise rejection, which for
+// an always-on bot means a hard restart (and, on Railway, a crash loop if
+// whatever failed is still failing). These two handlers turn "die silently"
+// into "log it and keep serving" — a dropped Postgres query or a Discord
+// hiccup shouldn't take the whole bot down with it.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection (kept running):', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (kept running):', err);
+});
 
 // Public style-guide + bounty admin pages — the bounty pages
 // (src/styleGuide/bountyRoutes.js) fetch channels/messages through `client`
@@ -53,8 +80,16 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 // startServer() runs. Also has to wait on loadOverrides(), so the very
 // first request after a cold start doesn't render defaults-only before any
 // saved edits are in the cache.
+//
+// If loadOverrides() fails (Postgres briefly unreachable mid-deploy is the
+// realistic case), still start the HTTP server — it'll serve text.js's
+// defaults instead of saved edits, which beats not starting at all.
 (async () => {
-  await loadOverrides();
+  try {
+    await loadOverrides();
+  } catch (err) {
+    console.error('Failed to load content overrides — serving text.js defaults instead:', err);
+  }
   startServer(client);
 })();
 
@@ -92,8 +127,8 @@ const {
   getBountyById,
   updateBounty,
   findTitleConflict,
-  approveBounty,
   denyBounty,
+  setBountyStatus,
   getBounties,
   getClaimableBounties,
   setBoardMessage,
@@ -113,12 +148,37 @@ function extractMentionId(embed, fieldName) {
 // requester pressing Submit on the ephemeral preview. Keyed by user ID.
 // This only needs to live for the few seconds in between; if the bot restarts
 // in that window, the ephemeral preview is already gone anyway.
+//
+// Entries are only deleted when the requester actually presses Submit or
+// Close — anyone who opens the form and then walks away used to leave one
+// behind permanently, so this grew without bound. The sweeper below drops
+// abandoned entries. 15 minutes because that's how long Discord keeps an
+// interaction token alive: past that the ephemeral preview's Submit button
+// can't work anyway, so the data is already dead weight.
+const PENDING_BOUNTY_TTL_MS = 15 * 60 * 1000;
 const pendingBounties = new Map();
+
+// unref() so this timer never by itself keeps the process alive.
+setInterval(() => {
+  const cutoff = Date.now() - PENDING_BOUNTY_TTL_MS;
+  for (const [userId, data] of pendingBounties) {
+    if (data.createdAt < cutoff) pendingBounties.delete(userId);
+  }
+}, 5 * 60 * 1000).unref();
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}`);
-  await initDb();
-  console.log('Database ready.');
+
+  // initDb() creates tables and warms the settings cache. If it throws
+  // (Postgres unreachable), log it and stay connected rather than letting
+  // an unhandled rejection kill the process — Discord-side reads that don't
+  // need the DB keep working, and the next DB call retries on its own.
+  try {
+    await initDb();
+    console.log('Database ready.');
+  } catch (err) {
+    console.error('Database init failed — the bot is up, but DB-backed features will error until it recovers:', err);
+  }
 
   c.user.setPresence({
     activities: [{ name: 'boop', type: 4 }],
@@ -913,7 +973,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
 
       // Stash for the Submit button (that click won't have the form data).
-      pendingBounties.set(interaction.user.id, { name, description, amountRaw });
+      // createdAt is what the sweeper above uses to drop abandoned previews.
+      pendingBounties.set(interaction.user.id, { name, description, amountRaw, createdAt: Date.now() });
 
       const embed = buildBountyEmbed({
         name,
@@ -966,7 +1027,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await updateBounty(bountyId, { name, description, reward: amountRaw });
-      await approveBounty(bountyId, interaction.user.id);
+
+      // Guarded on 'pending' — the admin site can change a bounty's status
+      // too (src/styleGuide/bountyRoutes.js), so if it was denied/cancelled
+      // there between this ticket opening and Approve being pressed, don't
+      // silently re-approve it over that decision. Ephemeral reply leaves
+      // the ticket and its buttons intact so staff can look and retry.
+      const approvedRow = await setBountyStatus(bountyId, 'approved', interaction.user.id, 'pending');
+      if (!approvedRow) {
+        const current = await getBountyById(bountyId);
+        await interaction.reply({
+          content: `⚠️ This bounty is no longer pending — it's **${current?.status ?? 'gone'}** now (changed from the admin site, or by someone else). Nothing was approved.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
 
       const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
       const approved = buildBountyEmbed({
@@ -1234,4 +1309,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// A bad/missing token rejects here. Without a catch that's an unhandled
+// rejection (i.e. process death with a stack trace and no explanation), so
+// say plainly what's wrong instead — the admin site stays up either way.
+client.login(process.env.DISCORD_TOKEN).catch((err) => {
+  console.error('Discord login failed — check DISCORD_TOKEN. The bot will not respond until this is fixed:', err.message);
+});

@@ -323,11 +323,22 @@
   // all four are the exact same UPDATE with a different target status, and
   // the admin bounties page's free status-change control (src/styleGuide/
   // bountyRoutes.js) uses this directly to move a bounty to any of the four.
-  async function setBountyStatus(id, status, actorId) {
-    await pool.query(
-      `UPDATE bounties SET status = $2, approver_id = $3, approved_at = NOW() WHERE id = $1`,
-      [id, status, actorId],
+  //
+  // `expectedStatus` makes the write a compare-and-swap: pass the status you
+  // read a moment ago and the UPDATE only lands if it's still that, so two
+  // people acting at once (staff pressing Approve in a Discord ticket while
+  // an admin sets Denied on the web page) can't both "succeed" and leave the
+  // board post and the DB disagreeing. Returns the updated row, or null if
+  // someone else got there first — callers must handle null. Omit it for an
+  // unconditional write (every pre-existing caller, unchanged).
+  async function setBountyStatus(id, status, actorId, expectedStatus = null) {
+    const result = await pool.query(
+      `UPDATE bounties SET status = $2, approver_id = $3, approved_at = NOW()
+       WHERE id = $1 AND ($4::text IS NULL OR status = $4)
+       RETURNING *`,
+      [id, status, actorId, expectedStatus],
     );
+    return result.rows[0] ?? null;
   }
 
   // Flip a bounty to approved, recording who approved it and when.

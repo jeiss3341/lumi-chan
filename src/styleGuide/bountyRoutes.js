@@ -333,18 +333,29 @@ async function handleChangeBountyStatus(req, res, session, client, id) {
   }
 
   try {
-    // Leaving 'approved' pulls the old post off the board first — using
-    // `bounty` (the pre-change row), since that's the one that still has
-    // board_channel_id/board_message_id to look up.
+    // Commit the status change FIRST, guarded on the status we read at the
+    // top — if staff approved/denied this same bounty from a Discord ticket
+    // in the meantime, the guard fails and we bail out having touched
+    // nothing. Doing the DB write before the Discord side effects also means
+    // a failed write can't leave us having already pulled the board post.
+    const updated = await setBountyStatus(id, newStatus, session.id, bounty.status);
+    if (!updated) {
+      redirectTo(
+        res,
+        bountyEditRedirect(id, `Someone else changed this bounty while you were looking at it — it's no longer ${bounty.status}. Nothing was changed; check the current status and try again.`, true),
+        303,
+      );
+      return;
+    }
+
+    // Only now touch Discord. Leaving 'approved' pulls the old post off the
+    // board — using `bounty` (the pre-change row), since that's the one that
+    // still has board_channel_id/board_message_id to look up.
+    let warnText = '';
     if (bounty.status === 'approved' && newStatus !== 'approved') {
       await removeBoardPost(client, bounty);
     }
-
-    await setBountyStatus(id, newStatus, session.id);
-
-    let warnText = '';
     if (newStatus === 'approved') {
-      const updated = await getBountyById(id);
       const result = await syncApprovedBoardPost(client, updated);
       if (!result.ok) warnText = ` Couldn't post to the board: ${result.reason}`;
     }
