@@ -31,11 +31,12 @@ async function fetchCategories() {
 // real channel — there's no stored GUILD_ID (this bot only ever runs in
 // one guild), so the guild is derived from whichever configured category
 // actually exists. Falls back to "first guild the bot is in" if nothing's
-// configured yet at all.
+// configured yet at all. Checks the cache first (already kept fresh by the
+// Guilds intent) so this almost never has to make a real REST call.
 async function resolveGuild(client, cats) {
   for (const id of Object.values(cats)) {
     if (!id) continue;
-    const channel = await client.channels.fetch(id).catch(() => null);
+    const channel = client.channels.cache.get(id) ?? await client.channels.fetch(id).catch(() => null);
     if (channel?.guild) return channel.guild;
   }
   return client.guilds.cache.first() ?? null;
@@ -51,16 +52,15 @@ function classifyChannel(channel, cats) {
   return { type: 'unknown', status: 'active' };
 }
 
-async function listTicketChannels(client) {
-  const cats = await fetchCategories();
+async function listTicketChannels(client, cats) {
   const guild = await resolveGuild(client, cats);
   if (!guild) return [];
 
-  // Guaranteed-fresh channel list — the Guilds intent keeps the cache
-  // reasonably in sync already, but this is only called when an admin
-  // loads the page, so the extra round trip is cheap insurance.
-  await guild.channels.fetch();
-
+  // guild.channels.cache is kept live-fresh by the Guilds gateway intent
+  // (channel create/update/delete events land in real time) — forcing a
+  // full REST re-fetch of every channel in the guild here was redundant,
+  // and got slower on every filter/status click as the ticket archive
+  // categories grew. Read straight from the cache instead.
   const collect = (categoryId, type, status) => {
     if (!categoryId) return [];
     return [...guild.channels.cache.values()]
@@ -132,10 +132,10 @@ async function handleTicketsList(req, res, session, client) {
     const type = VALID_TYPES.includes(requestedType) ? requestedType : 'all';
     const status = VALID_STATUSES.includes(requestedStatus) ? requestedStatus : 'all';
 
-    const all = await listTicketChannels(client);
+    const cats = await fetchCategories();
+    const all = await listTicketChannels(client, cats);
     const groups = all.filter((t) => (type === 'all' || t.type === type) && (status === 'all' || t.status === status));
 
-    const cats = await fetchCategories();
     const archiveSettings = { request: cats.reqArchive, claim: cats.claimArchive, help: cats.helpArchive };
 
     const msg = url.searchParams.get('msg');
