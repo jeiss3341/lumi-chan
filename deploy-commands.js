@@ -1,16 +1,17 @@
 require('dotenv').config();
 
 const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
-const { clientId, guildId } = require('./config.json');
+const { clientId, guildIds } = require('./config.json');
 const TEXT = require('./src/text');
 
-// Global commands (as opposed to guild-scoped) show up in every server the
-// bot is invited to, automatically — no per-server registration needed as
-// the bot spreads to more servers. Trade-off: Discord caches global commands
-// and can take up to ~1 hour to propagate a change, unlike guild commands
-// (instant) — annoying while iterating, but the right call once this isn't
-// a single-server bot anymore. `guildId` is kept around only to clear out
-// the old guild-scoped commands below, so they don't sit there as dupes.
+// Guild-scoped, registered explicitly to every server in config.json's
+// guildIds — appears instantly, and there's a small known list of private
+// servers this bot is ever added to, so there's no real benefit to global
+// commands here. (Global was tried briefly; turns out Discord shows a global
+// command and a guild-scoped command with the same name as two separate
+// entries in the picker instead of deduplicating, so mixing the two just
+// produces confusing duplicates — guild-scoped only, consistently, avoids
+// that entirely.) Adding a new server = add its id here and rerun this file.
 const commands = [
   new SlashCommandBuilder()
     .setName('deployrequestbounty')
@@ -204,19 +205,19 @@ const commands = [
 
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 
-// Guarded so this file can also be `require()`'d (for `commands`/`clientId`,
-// e.g. a one-off script instantly registering guild-scoped commands to a
-// brand-new server while the global rollout above is still propagating)
-// without re-triggering the clear-and-reregister-global flow below.
+// Guarded so this file can also be `require()`'d (for `commands`/`clientId`)
+// without re-triggering registration.
 if (require.main === module) {
   (async () => {
     try {
-      console.log('Clearing old guild-scoped commands (avoids dupes now that commands are global)...');
-      await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
+      console.log('Clearing any leftover global commands (guild-scoped only, avoids duplicate entries)...');
+      await rest.put(Routes.applicationCommands(clientId), { body: [] });
 
-      console.log('Registering global commands...');
-      await rest.put(Routes.applicationCommands(clientId), { body: commands });
-      console.log('Done. Global commands can take up to ~1 hour to show up in every server — guild-scoped ones just cleared instantly, so there may be a gap where commands are briefly missing in the old server.');
+      for (const id of guildIds) {
+        console.log(`Registering guild commands for ${id}...`);
+        await rest.put(Routes.applicationGuildCommands(clientId, id), { body: commands });
+      }
+      console.log('Done. Guild commands appear instantly.');
     } catch (err) {
       console.error(err);
     }
