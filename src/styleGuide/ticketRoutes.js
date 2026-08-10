@@ -15,6 +15,12 @@ const {
 } = require('../db');
 const { buildTicketsListHtml, buildTicketDetailHtml } = require('./tickets');
 const { readBody, redirectTo } = require('./httpUtil');
+const { resolveUserLabels } = require('./discordUsers');
+
+// Matches raw Discord mention tokens as they appear in unrendered message
+// content: <@123>/<@!123> for a user, <@&123> for a role. Group 1 is '&'
+// for a role mention, undefined for a user mention; group 2 is the id.
+const MENTION_RE = /<@(&)?!?(\d+)>/g;
 
 const VALID_TYPES = ['all', 'request', 'claim', 'help'];
 const VALID_STATUSES = ['all', 'active', 'archived'];
@@ -100,6 +106,26 @@ async function fetchTicketDetail(client, channelId) {
   const fetched = await channel.messages.fetch({ limit: 100 }).catch(() => null);
   const sorted = fetched ? [...fetched.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp) : [];
 
+  // Raw mention tokens (<@id>, <@&id>) show up unresolved in .content —
+  // collect every id mentioned across all messages so tickets.js can render
+  // names instead of bare numbers.
+  const userIds = new Set();
+  const roleIds = new Set();
+  for (const m of sorted) {
+    for (const match of (m.content || '').matchAll(MENTION_RE)) {
+      (match[1] ? roleIds : userIds).add(match[2]);
+    }
+  }
+
+  const guild = channel.guild;
+  const [users, roles] = await Promise.all([
+    resolveUserLabels(client, guild, [...userIds]),
+    Promise.all([...roleIds].map(async (id) => {
+      const role = guild.roles.cache.get(id) ?? await guild.roles.fetch(id).catch(() => null);
+      return [id, role ? role.name : null];
+    })).then((entries) => Object.fromEntries(entries.filter(([, name]) => name))),
+  ]);
+
   return {
     ticket: {
       id: channel.id,
@@ -108,6 +134,7 @@ async function fetchTicketDetail(client, channelId) {
       status,
       discordLink: `https://discord.com/channels/${channel.guild.id}/${channel.id}`,
     },
+    mentions: { users, roles },
     // Without the (privileged, deliberately-not-requested — see index.js)
     // Message Content intent, Discord blanks out .content for anything a
     // real user sent, leaving nothing to show for that message at all — so

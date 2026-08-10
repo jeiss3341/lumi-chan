@@ -11,6 +11,12 @@
 // closed tickets from before archiving was set up were deleted and have no
 // record here at all.
 const { esc, BASE_STYLES, topBar, fmtDate } = require('./styleGuide');
+const { labelText } = require('./discordUsers');
+
+// Same token shape as ticketRoutes.js's MENTION_RE — kept in sync there and
+// here rather than shared, since one's matching raw Discord content and the
+// other's building display HTML from the ids it already found.
+const MENTION_RE = /<@(&)?!?(\d+)>/g;
 
 const TYPE_LABELS = { request: '🏖️ Request', claim: '🏁 Claim', help: '💬 Help' };
 const TYPE_FILTERS = ['all', 'request', 'claim', 'help'];
@@ -101,6 +107,7 @@ ${BASE_STYLES}
   .chat-msg .who { font-weight: 700; font-size: 13.5px; }
   .chat-msg .who .when { font-weight: 400; color: var(--muted); font-size: 11.5px; margin-left: 6px; }
   .chat-msg .text { font-size: 14px; color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+  .chat-msg .text .id-hint { color: var(--muted); font-size: 11.5px; }
   .chat-msg .embed-note {
     margin-top: 6px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--paper-raised);
     font-size: 13px; color: var(--ink-soft); border-radius: 0 6px 6px 0;
@@ -197,7 +204,34 @@ function renderAttachment(a) {
     : `<div class="attach"><a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a></div>`;
 }
 
-function buildTicketDetailHtml({ ticket, messages, username, message }) {
+// Swaps raw <@id>/<@&id> mention tokens for resolved names — "Username ·
+// Nickname" for a user (falls back to a bare id if resolution failed), the
+// role's name for a role — while escaping everything else in the message
+// normally. `mentions` is the { users, roles } map ticketRoutes.js already
+// built (fetchTicketDetail), keyed by id.
+function renderMessageContent(content, mentions) {
+  if (!content) return '';
+  const { users = {}, roles = {} } = mentions || {};
+  let out = '';
+  let last = 0;
+  for (const match of content.matchAll(MENTION_RE)) {
+    out += esc(content.slice(last, match.index));
+    const [full, isRole, id] = match;
+    if (isRole) {
+      out += `@${esc(roles[id] || 'unknown-role')}`;
+    } else {
+      const label = users[id];
+      out += label
+        ? `@${esc(labelText(label))} <span class="id-hint mono">${esc(id)}</span>`
+        : `<span class="mono">@${esc(id)}</span>`;
+    }
+    last = match.index + full.length;
+  }
+  out += esc(content.slice(last));
+  return out;
+}
+
+function buildTicketDetailHtml({ ticket, messages, mentions, username, message }) {
   const toast = message ? `<div class="toast${message.warn ? ' warn' : ''}">${esc(message.text)}</div>` : '';
 
   // Messages with nothing visible (real user text, blanked out without the
@@ -209,7 +243,7 @@ function buildTicketDetailHtml({ ticket, messages, username, message }) {
         <div class="avatar">${m.avatarUrl ? `<img src="${esc(m.avatarUrl)}" alt="">` : esc((m.author || '?').slice(0, 1).toUpperCase())}</div>
         <div class="body">
           <div class="who">${esc(m.author)}<span class="when">${fmtDate(m.createdAt)}</span></div>
-          ${m.content ? `<div class="text">${esc(m.content)}</div>` : ''}
+          ${m.content ? `<div class="text">${renderMessageContent(m.content, mentions)}</div>` : ''}
           ${m.embedSummary ? `<div class="embed-note">${esc(m.embedSummary)}</div>` : ''}
           ${(m.attachments || []).map(renderAttachment).join('')}
         </div>

@@ -5,6 +5,7 @@
 // styleGuide.js/server.js.
 const { esc, BASE_STYLES, topBar, fmtDate } = require('./styleGuide');
 const { formatAmount, formatGroupType } = require('../bountyCard');
+const { labelText } = require('./discordUsers');
 
 // Player-facing name/description/reward caps mirror MODAL.bountyRequest's
 // own TextInputBuilder limits (src/modal.js) — an admin-created bounty
@@ -71,13 +72,16 @@ function statusBadge(status) {
   return `<span class="status-badge status-${esc(status)}">${esc(label)}</span>`;
 }
 
-// `tags` is a { [discordId]: displayTag } map the caller built by resolving
-// users up front (src/styleGuide/server.js) — falls back to the raw id if a
-// fetch failed (left the server, account deleted, etc.) rather than hiding it.
+// `tags` is a { [discordId]: {username, nickname} } map the caller built by
+// resolving users up front (src/styleGuide/bountyRoutes.js) — falls back to
+// the raw id if a fetch failed (left the server, account deleted, etc.)
+// rather than hiding it.
 function userLabel(id, tags) {
   if (!id) return '—';
-  const tag = tags[id];
-  return tag ? `${esc(tag)} <span class="id-hint mono">${esc(id)}</span>` : `<span class="mono">${esc(id)}</span>`;
+  const label = tags[id];
+  return label
+    ? `${esc(labelText(label))} <span class="id-hint mono">${esc(id)}</span>`
+    : `<span class="mono">${esc(id)}</span>`;
 }
 
 // Both filter bars link with both query params so switching one doesn't

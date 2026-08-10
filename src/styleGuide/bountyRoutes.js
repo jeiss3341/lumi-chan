@@ -11,6 +11,7 @@ const {
 const { buildBountyEmbed } = require('../bountyCard');
 const { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS, GROUP_TYPES, CLAIM_TYPES } = require('./bounties');
 const { readBody, redirectTo } = require('./httpUtil');
+const { resolveUserLabels } = require('./discordUsers');
 
 const VALID_PRIZE_TYPES = PRIZE_TYPES.map((t) => t.value);
 const VALID_TIERS = TIERS.map((t) => t.value);
@@ -41,16 +42,12 @@ function notFound(res) {
   res.end('Bounty not found.');
 }
 
-// Resolves a batch of Discord user ids to display names up front, so
-// bounties.js's rendering stays synchronous/pure — a fetch failure (left
+// Resolves a batch of Discord user ids to { username, nickname } up front,
+// so bounties.js's rendering stays synchronous/pure — a fetch failure (left
 // the server, deleted account) just falls back to showing the raw id.
 async function resolveUserTags(client, ids) {
-  const unique = [...new Set(ids.filter(Boolean))];
-  const entries = await Promise.all(unique.map(async (id) => {
-    const user = await client.users.fetch(id).catch(() => null);
-    return [id, user ? user.username : null];
-  }));
-  return Object.fromEntries(entries.filter(([, tag]) => tag));
+  const guild = client.guilds.cache.first() ?? null;
+  return resolveUserLabels(client, guild, ids);
 }
 
 async function buildApprovedEmbedFor(client, bounty) {
