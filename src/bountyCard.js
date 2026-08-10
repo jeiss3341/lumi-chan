@@ -59,4 +59,47 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
     .setTimestamp();
 }
 
-module.exports = { buildBountyEmbed, buildClaimEmbed, formatAmount, formatGroupType };
+// The single line describing where a submissions bounty currently stands —
+// shared by buildLeaderboardEmbed below and index.js's ticket-reopen note
+// when a leader gets displaced. No leader yet (freshly approved, nobody's
+// submitted) reads as "Open" instead. `closed` swaps "is leading"/
+// "currently has" for "won with", once staff presses Close Bounty.
+function leaderboardLine(bounty, { closed = false } = {}) {
+  if (!bounty.leader_id) return resolveText('CARD.submissions.noLeaderYet');
+
+  const mention = `<@${bounty.leader_id}>`;
+  if (bounty.submission_metric_kind === 'numeric') {
+    const verb = resolveText(closed ? 'CARD.submissions.wonVerb' : 'CARD.submissions.leadingVerb');
+    return `🏆 ${mention} ${verb} **${bounty.leader_value}** ${bounty.submission_metric_label}`;
+  }
+
+  const verb = resolveText(closed ? 'CARD.submissions.wonOtherVerb' : 'CARD.submissions.leadingOtherVerb');
+  return `🏆 ${mention} ${verb} the ${bounty.submission_metric_label}`;
+}
+
+// Builds the card for the submissions board (see /deployclaimbounty) — same
+// shell as buildBountyEmbed, but with a live "Standing" field instead of a
+// fixed Requester, since this post stays open and gets edited in place as
+// the leader changes (index.js's approve_claim, submissions branch) rather
+// than finalizing on the first approved claim. `closed` retitles it to the
+// final winner announcement, once staff presses Close Bounty.
+function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
+  const titlePrefix = closed
+    ? resolveText('CARD.submissions.closedTitlePrefix')
+    : resolveText('CARD.request.approvedTitlePrefix');
+
+  return new EmbedBuilder()
+    .setColor(closed ? COLORS.approved : COLORS.pending)
+    .setTitle(`${titlePrefix} ${bounty.name}`)
+    .setDescription(bounty.description)
+    .addFields(
+      { name: resolveText('CARD.request.fieldReward'), value: formatAmount(bounty.reward), inline: true },
+      { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(bounty.group_type), inline: true },
+      { name: resolveText('CARD.submissions.fieldStanding'), value: leaderboardLine(bounty, { closed }), inline: false },
+    )
+    .setImage(BANNER_URL)
+    .setFooter({ text: TEXT.FOOTER })
+    .setTimestamp();
+}
+
+module.exports = { buildBountyEmbed, buildClaimEmbed, buildLeaderboardEmbed, leaderboardLine, formatAmount, formatGroupType };

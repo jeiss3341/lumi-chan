@@ -136,6 +136,16 @@ const commands = [
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true),
     )
+    // Separate from `board` above — submissions-type bounties stay live and
+    // get edited in place to show the current leader, rather than logging a
+    // one-time finalized claim like `board` does.
+    .addChannelOption((option) =>
+      option
+        .setName('submissions_board')
+        .setDescription(TEXT.COMMANDS.deployClaimBounty.submissionsBoard)
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true),
+    )
     .addChannelOption((option) =>
       option
         .setName('archive_category')

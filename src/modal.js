@@ -210,6 +210,71 @@ function buildApproveModalStep2(bounty) {
   return modal;
 }
 
+// Step 3 — only shown when step 2's Claim Type was Submissions (index.js
+// branches on that after step 2 submits). Defines the bounty's leaderboard
+// once, up front: what's being tracked, and how to describe it. Never
+// re-asked on individual claims — see setLeader/setSubmissionMetric in
+// src/db.js. Not numbered "(3/3)" like step 1/2 are "(1/2)"/"(2/2)" since a
+// 'claim'-type bounty never reaches this step at all — those two fractions
+// stay accurate for that path; this one gets its own distinct title instead.
+function buildApproveModalStep3(bounty) {
+  const modal = new ModalBuilder()
+    .setCustomId(`approve_modal_step3_submit:${bounty.id}`)
+    .setTitle(`${TEXT.MODAL.approveEdit.title} (Submissions Setup)`.slice(0, 45));
+
+  const kindSelect = new StringSelectMenuBuilder()
+    .setCustomId('submission_metric_kind')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'Numeric (e.g. kills, score)', value: 'numeric' },
+      { label: 'Other (staff judgment call, e.g. best clip)', value: 'text' },
+    );
+  const kindLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.submissionMetricKind.label)
+    .setDescription(TEXT.MODAL.approveEdit.submissionMetricKind.description)
+    .setStringSelectMenuComponent(kindSelect);
+
+  const metricLabelInput = new TextInputBuilder()
+    .setCustomId('submission_metric_label')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('kills')
+    .setMaxLength(50)
+    .setRequired(true);
+  const metricLabelLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.submissionMetricLabel.label)
+    .setDescription(TEXT.MODAL.approveEdit.submissionMetricLabel.description)
+    .setTextInputComponent(metricLabelInput);
+
+  modal.addLabelComponents(kindLabel, metricLabelLabel);
+  return modal;
+}
+
+// Shown when staff presses Approve Claim on a numeric-metric submissions
+// ticket — collects the value for THIS claimant before they can be promoted
+// to leader (see index.js promoteSubmissionLeader). Never shown for a
+// text-metric bounty — there's nothing to enter, staff's Approve click is
+// the judgment call there.
+function buildSubmissionValueModal(bounty) {
+  const modal = new ModalBuilder()
+    .setCustomId(`submission_value_modal_submit:${bounty.id}`)
+    .setTitle(`Value (${bounty.submission_metric_label})`.slice(0, 45));
+
+  const valueInput = new TextInputBuilder()
+    .setCustomId('submission_value')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('e.g. 50')
+    .setMaxLength(20)
+    .setRequired(true);
+  const valueLabel = new LabelBuilder()
+    .setLabel(`Value (${bounty.submission_metric_label})`.slice(0, 45))
+    .setDescription(`What are they leading with, in ${bounty.submission_metric_label}?`.slice(0, 100))
+    .setTextInputComponent(valueInput);
+
+  modal.addLabelComponents(valueLabel);
+  return modal;
+}
+
 // Shown after a claimant picks a bounty from the claim-board dropdown.
 // Collects the proof: written notes, plus an actual screenshot/clip upload —
 // no channel is created until this is submitted.
@@ -279,4 +344,12 @@ function buildTicketDetailsModal(source) {
   return modal;
 }
 
-module.exports = { buildBountyModal, buildApproveModalStep1, buildApproveModalStep2, buildClaimProofModal, buildTicketDetailsModal };
+module.exports = {
+  buildBountyModal,
+  buildApproveModalStep1,
+  buildApproveModalStep2,
+  buildApproveModalStep3,
+  buildSubmissionValueModal,
+  buildClaimProofModal,
+  buildTicketDetailsModal,
+};

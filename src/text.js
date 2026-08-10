@@ -155,6 +155,18 @@ module.exports = {
     // that same event overwrites the original request-board post so both
     // surfaces agree once a bounty is no longer available.
     claimedTitlePrefix: '🏁 Bounty Claimed:',
+    // src/bountyCard.js → buildLeaderboardEmbed(). The card posted to the
+    // submissions board (see /deployclaimbounty) — stays live, edited in
+    // place as the current leader changes, until staff presses Close Bounty.
+    submissions: {
+      closedTitlePrefix: '🏆 Bounty Closed:',
+      fieldStanding: 'Standing',
+      noLeaderYet: 'Open — no submissions yet.',
+      leadingVerb: 'is leading with', // numeric metric, still open
+      wonVerb: 'won with', // numeric metric, closed
+      leadingOtherVerb: 'currently has', // non-numeric metric, still open
+      wonOtherVerb: 'won with', // non-numeric metric, closed
+    },
   },
 
   MODAL: {
@@ -220,6 +232,17 @@ module.exports = {
         label: 'Claim Type',
         description: 'Which claim-ticket category this opens under later — staff only',
       },
+      // Only shown as a 3rd modal step when Claim Type above is Submissions —
+      // defines the bounty's leaderboard once, up front, so it's never asked
+      // again on individual claims.
+      submissionMetricKind: {
+        label: 'Tracked By',
+        description: 'Numeric (score/kills — staff enters a value each time) or Other (staff\'s judgment call, e.g. best clip)',
+      },
+      submissionMetricLabel: {
+        label: 'Label',
+        description: 'e.g. "kills" for a numeric bounty, or "best clip" for a judgment-call one',
+      },
     },
     // src/modal.js → buildClaimProofModal(). The claimant's proof form.
     // titlePrefix is followed by the bounty's name, e.g. "Claim: The Phantom Thief".
@@ -283,6 +306,17 @@ module.exports = {
     addPremadeButton: 'Add Premade',
     addPremadeEmoji: '🤝',
     addPremadePlaceholder: 'Search for teammates to add…',
+    // index.js → closeSubmissionBountyRow(). The one button on a
+    // submissions bounty's live board post — declares the current leader
+    // the winner and finalizes it, same as approve_claim does for a normal
+    // one-shot claim.
+    closeSubmissionBountyButton: 'Close Bounty',
+    closeSubmissionBountyEmoji: '🏆',
+    // index.js → promoteSubmissionLeader(). Posted in a displaced leader's
+    // ticket when someone else takes the lead — %s is replaced with a
+    // mention of whoever surpassed them.
+    submissionSurpassedNote:
+      '⚠️ This submission was surpassed by %s and has been reopened for another look — **Approve** to reinstate as leader, or **Deny** to close it out.',
     // src/ticket.js → createHelpTicket(). The one button inside a general
     // support ticket — no approve/deny here, just closing it once resolved.
     closeHelpButton: 'Close Ticket',
@@ -519,6 +553,7 @@ module.exports = {
       claimCategory: 'The category new CLAIM-type bounty claim tickets will be created under.',
       submissionsCategory: 'The category new SUBMISSIONS-type bounty claim tickets will be created under.',
       board: 'The public channel where finalized (approved) claims are posted.',
+      submissionsBoard: 'Public channel for SUBMISSIONS-type bounties — stays live, edited to show the current leader.',
       archiveCategory: 'Category approved claim tickets get MOVED to (make this private/staff-only).',
       staffUser: 'A specific person who can review claims and gets pinged. (Set a role and/or a person.)',
       staffRole: 'A role that can review claims and gets pinged. (Set a role and/or a person.)',
