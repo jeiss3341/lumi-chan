@@ -10,7 +10,16 @@ const { formatAmount } = require('../bountyCard');
 // own TextInputBuilder limits (src/modal.js) — an admin-created bounty
 // should be boxed in by the same Discord constraints a player's would be,
 // since it renders through the same buildBountyEmbed().
-const LIMITS = { name: 100, description: 1000, reward: 50 };
+const LIMITS = { name: 100, description: 1000, reward: 50, donator: 100 };
+
+// Matches the Discord approve modal's Reward Type options (src/modal.js) and
+// the DB's prize_type values — kept in one place so the two never drift.
+const PRIZE_TYPES = [
+  { value: 'cash', label: 'Money' },
+  { value: 'NP', label: 'NP Code' },
+  { value: 'Item', label: 'Merch/Items' },
+  { value: 'Other', label: 'Other' },
+];
 
 const STATUS_LABELS = {
   pending: '⏳ Pending',
@@ -214,6 +223,22 @@ function fieldRow({ name, label, hint, value, error, multiline }) {
     </label>`;
 }
 
+// Same shared row layout as fieldRow, but a <select> with a blank "not set"
+// option — used for Reward Type, which (unlike name/description/reward)
+// isn't required here even though it's required on the Discord approve modal.
+function selectRow({ name, label, hint, value, options, error }) {
+  const opts = options.map((o) => `<option value="${esc(o.value)}"${o.value === value ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+  return `
+    <label class="frow${error ? ' has-error' : ''}">
+      <span class="flabel">${esc(label)}${hint ? `<br><span class="fhint">${esc(hint)}</span>` : ''}</span>
+      <select name="${esc(name)}" class="fselect">
+        <option value=""${value ? '' : ' selected'}>— Not set —</option>
+        ${opts}
+      </select>
+      ${error ? `<span class="field-error">⚠️ ${esc(error)}</span>` : ''}
+    </label>`;
+}
+
 function buildBountyNewHtml({ username, errors = {}, values = {} }) {
   const body = `
   <header class="masthead">
@@ -226,6 +251,8 @@ function buildBountyNewHtml({ username, errors = {}, values = {} }) {
       ${fieldRow({ name: 'name', label: 'Name', value: values.name, error: errors.name, hint: `Max ${LIMITS.name} characters.` })}
       ${fieldRow({ name: 'description', label: 'Description', value: values.description, error: errors.description, multiline: true, hint: `Max ${LIMITS.description} characters.` })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: values.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters — free text, e.g. "$10" or "250 NP".` })}
+      ${fieldRow({ name: 'donator_name', label: 'Donator', value: values.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters. Leave blank to use your own name.` })}
+      ${selectRow({ name: 'prize_type', label: 'Reward Type', value: values.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward above.' })}
       <div class="save-row">
         <button type="submit" name="initialStatus" value="pending" class="btn">Create as Pending</button>
         <button type="submit" name="initialStatus" value="approved" class="btn btn-primary">Create &amp; Post to Board</button>
@@ -269,6 +296,7 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
   <div class="detail-card">
     <div class="detail-meta">
       <div><div class="m-label">Requester</div><div class="m-value">${userLabel(bounty.requester_id, tags)}</div></div>
+      <div><div class="m-label">Donator</div><div class="m-value">${esc(bounty.donator_name || '—')}</div></div>
       <div><div class="m-label">Claimer</div><div class="m-value">${userLabel(bounty.claimer_id, tags)}</div></div>
       <div><div class="m-label">Created</div><div class="m-value">${fmtDate(bounty.created_at)}</div></div>
       <div><div class="m-label">Decided</div><div class="m-value">${fmtDate(bounty.approved_at)}</div></div>
@@ -280,6 +308,8 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       ${fieldRow({ name: 'name', label: 'Name', value: v.name, error: errors.name, hint: `Max ${LIMITS.name} characters.` })}
       ${fieldRow({ name: 'description', label: 'Description', value: v.description, error: errors.description, multiline: true, hint: `Max ${LIMITS.description} characters.` })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: v.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters.` })}
+      ${fieldRow({ name: 'donator_name', label: 'Donator', value: v.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters.` })}
+      ${selectRow({ name: 'prize_type', label: 'Reward Type', value: v.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward above.' })}
       <div class="save-row">
         <button type="submit" class="btn btn-primary">Save Changes</button>
       </div>
@@ -293,4 +323,4 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
   return pageShell({ title: bounty.name, active: 'bounties', username, body });
 }
 
-module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS };
+module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES };

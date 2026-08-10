@@ -4,6 +4,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
   FileUploadBuilder,
+  StringSelectMenuBuilder,
 } = require('discord.js');
 const TEXT = require('./text');
 const { resolveText } = require('./styleGuide/liveText');
@@ -11,7 +12,7 @@ const { resolveText } = require('./styleGuide/liveText');
 // The bounty request form. Modern modals wrap every input in a LabelBuilder,
 // which gives you the header + subtext you saw in the screenshot.
 //
-// Max 5 top-level components per modal. We use 4 (name, description, type, amount).
+// Max 5 top-level components per modal. We use 4 (name, description, reward, preferred name).
 function buildBountyModal() {
   const modal = new ModalBuilder().setCustomId('bounty_modal').setTitle(resolveText('MODAL.bountyRequest.title'));
 
@@ -51,7 +52,20 @@ function buildBountyModal() {
     .setDescription(resolveText('MODAL.bountyRequest.reward.description'))
     .setTextInputComponent(amountInput);
 
-  modal.addLabelComponents(nameLabel, descLabel, amountLabel);
+  // 5) Preferred Name — optional. Who to credit for the prize; falls back to
+  // the requester's Discord nickname if left blank (see index.js ticket_submit).
+  const donatorInput = new TextInputBuilder()
+    .setCustomId('bounty_donator')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder(resolveText('MODAL.bountyRequest.donator.placeholder'))
+    .setMaxLength(50)
+    .setRequired(false);
+  const donatorLabel = new LabelBuilder()
+    .setLabel(resolveText('MODAL.bountyRequest.donator.label'))
+    .setDescription(resolveText('MODAL.bountyRequest.donator.description'))
+    .setTextInputComponent(donatorInput);
+
+  modal.addLabelComponents(nameLabel, descLabel, amountLabel, donatorLabel);
   return modal;
 }
 
@@ -98,7 +112,25 @@ function buildApproveEditModal(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.reward.description)
     .setTextInputComponent(amountInput);
 
-  modal.addLabelComponents(nameLabel, descLabel, amountLabel);
+  // Reward Type — staff only, never shown to players. Classifies the free-text
+  // reward above as cash/NP/item/other; pre-selects the bounty's current value
+  // if it already has one (e.g. re-approving after a status revert).
+  const rewardTypeSelect = new StringSelectMenuBuilder()
+    .setCustomId('bounty_reward_type')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'Money', value: 'cash', default: bounty.prize_type === 'cash' },
+      { label: 'NP Code', value: 'NP', default: bounty.prize_type === 'NP' },
+      { label: 'Merch/Items', value: 'Item', default: bounty.prize_type === 'Item' },
+      { label: 'Other', value: 'Other', default: bounty.prize_type === 'Other' },
+    );
+  const rewardTypeLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.rewardType.label)
+    .setDescription(TEXT.MODAL.approveEdit.rewardType.description)
+    .setStringSelectMenuComponent(rewardTypeSelect);
+
+  modal.addLabelComponents(nameLabel, descLabel, amountLabel, rewardTypeLabel);
   return modal;
 }
 

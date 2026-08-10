@@ -176,6 +176,11 @@ module.exports = {
         description: 'Whatever the reward is — cash, in-game currency, anything',
         placeholder: '$10, 250 NP, 5 gems, etc.',
       },
+      donator: {
+        label: 'Preferred Name',
+        description: "How you'd like to be credited — leave blank to use your Discord nickname",
+        placeholder: 'e.g. Squortle',
+      },
     },
     // src/modal.js → buildApproveEditModal(). Staff's edit-before-approve
     // form — pre-filled with the bounty's current values, so no placeholders.
@@ -192,6 +197,10 @@ module.exports = {
       reward: {
         label: 'Reward',
         description: 'Whatever the reward is — cash, in-game currency, anything',
+      },
+      rewardType: {
+        label: 'Reward Type',
+        description: 'Money, NP Code, Merch/Items, or Other — staff only, never shown to players',
       },
     },
     // src/modal.js → buildClaimProofModal(). The claimant's proof form.

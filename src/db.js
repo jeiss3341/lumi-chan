@@ -82,6 +82,13 @@
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS board_channel_id TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS board_message_id TEXT;`);
 
+    // donator_name: who to credit for the prize — optional, set at request
+    // time (falls back to the requester's Discord nickname if left blank).
+    // prize_type: cash/NP/Item/Other — staff-only, set during approval, never
+    // collected from the player. Both added after bounties already existed.
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS donator_name TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS prize_type TEXT;`);
+
     // reward used to be NUMERIC (dollars-only) — it's free text now, since
     // rewards can be anything ("250 NP", "5 gems", not just cash). Safe to
     // rerun every boot: casting TEXT to TEXT is a no-op once already migrated.
@@ -276,12 +283,12 @@
 
   // Insert a new bounty as 'pending' when the ticket is created. Returns its id
   // so we can bake it into the Approve/Deny buttons.
-  async function createBounty({ name, description, reward, requesterId }) {
+  async function createBounty({ name, description, reward, requesterId, donatorName }) {
     const result = await pool.query(
-      `INSERT INTO bounties (name, description, reward, requester_id, status)
-      VALUES ($1, $2, $3, $4, 'pending')
+      `INSERT INTO bounties (name, description, reward, requester_id, donator_name, status)
+      VALUES ($1, $2, $3, $4, $5, 'pending')
       RETURNING id`,
-      [name, description, reward, requesterId],
+      [name, description, reward, requesterId, donatorName ?? null],
     );
     return result.rows[0].id;
   }
@@ -294,10 +301,10 @@
 
   // Overwrites the editable fields, e.g. after staff tweaks them in the
   // approve/edit modal. Status/approver are handled separately by approveBounty.
-  async function updateBounty(id, { name, description, reward }) {
+  async function updateBounty(id, { name, description, reward, donatorName, prizeType }) {
     await pool.query(
-      `UPDATE bounties SET name = $2, description = $3, reward = $4 WHERE id = $1`,
-      [id, name, description, reward],
+      `UPDATE bounties SET name = $2, description = $3, reward = $4, donator_name = $5, prize_type = $6 WHERE id = $1`,
+      [id, name, description, reward, donatorName ?? null, prizeType ?? null],
     );
   }
 

@@ -858,11 +858,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const categoryId = await getTicketCategory();
 
         // Record the bounty as 'pending' so it has a DB id for the buttons.
+        // Preferred Name is optional — falls back to the requester's current
+        // server nickname if they left it blank.
+        const donatorName = data.donatorRaw?.trim() || interaction.member.displayName;
         const bountyId = await createBounty({
           name: data.name,
           description: data.description,
           reward: data.amountRaw,
           requesterId: interaction.user.id,
+          donatorName,
         });
 
         const channel = await createTicket({
@@ -971,10 +975,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const name = interaction.fields.getTextInputValue('bounty_name');
       const description = interaction.fields.getTextInputValue('bounty_description');
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
+      const donatorRaw = interaction.fields.getTextInputValue('bounty_donator');
 
       // Stash for the Submit button (that click won't have the form data).
       // createdAt is what the sweeper above uses to drop abandoned previews.
-      pendingBounties.set(interaction.user.id, { name, description, amountRaw, createdAt: Date.now() });
+      pendingBounties.set(interaction.user.id, { name, description, amountRaw, donatorRaw, createdAt: Date.now() });
 
       const embed = buildBountyEmbed({
         name,
@@ -1003,6 +1008,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const name = interaction.fields.getTextInputValue('bounty_name');
       const description = interaction.fields.getTextInputValue('bounty_description');
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
+      const [prizeType] = interaction.fields.getStringSelectValues('bounty_reward_type');
 
       const bounty = await getBountyById(bountyId);
       if (!bounty) {
@@ -1026,7 +1032,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      await updateBounty(bountyId, { name, description, reward: amountRaw });
+      // donatorName is re-supplied unchanged — staff don't edit that field here.
+      await updateBounty(bountyId, {
+        name,
+        description,
+        reward: amountRaw,
+        donatorName: bounty.donator_name,
+        prizeType,
+      });
 
       // Guarded on 'pending' — the admin site can change a bounty's status
       // too (src/styleGuide/bountyRoutes.js), so if it was denied/cancelled

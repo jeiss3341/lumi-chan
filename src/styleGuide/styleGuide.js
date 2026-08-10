@@ -335,6 +335,7 @@ function buildStyleGuideHtml({ savedSection, failure, addTopicFailure, username 
       { label: rv['MODAL.bountyRequest.name.label'], placeholder: rv['MODAL.bountyRequest.name.placeholder'], note: rv['MODAL.bountyRequest.name.description'] },
       { label: rv['MODAL.bountyRequest.description.label'], placeholder: rv['MODAL.bountyRequest.description.placeholder'], note: rv['MODAL.bountyRequest.description.description'] },
       { label: rv['MODAL.bountyRequest.reward.label'], placeholder: rv['MODAL.bountyRequest.reward.placeholder'], note: rv['MODAL.bountyRequest.reward.description'] },
+      { label: rv['MODAL.bountyRequest.donator.label'], placeholder: rv['MODAL.bountyRequest.donator.placeholder'], note: rv['MODAL.bountyRequest.donator.description'] },
     ]) + `<p class="btn-caption">Modal title bar: <b>${esc(rv['MODAL.bountyRequest.title'])}</b></p>`,
     staticUnitValues('requesting-form'),
     failure,
