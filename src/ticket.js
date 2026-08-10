@@ -7,7 +7,7 @@ const {
   EmbedBuilder,
 } = require('discord.js');
 const TEXT = require('./text');
-const { resolveText } = require('./styleGuide/liveText');
+const { resolveText, applyEmoji } = require('./styleGuide/liveText');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // Turns parts like ('pending', 'jeiss', 'Catching 6789!') into a Discord-safe
@@ -73,16 +73,20 @@ async function alphabetizeCategory(category, compare = byName) {
 // [Submit] [Close] shown on the EPHEMERAL preview, before any channel exists.
 function previewButtons() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('ticket_submit')
-      .setLabel(resolveText('TICKET.submitButton'))
-      .setStyle(ButtonStyle.Success)
-      .setEmoji(resolveText('TICKET.submitEmoji')),
-    new ButtonBuilder()
-      .setCustomId('ticket_cancel')
-      .setLabel(resolveText('TICKET.closeButton'))
-      .setStyle(ButtonStyle.Danger)
-      .setEmoji(resolveText('TICKET.closeEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId('ticket_submit')
+        .setLabel(resolveText('TICKET.submitButton'))
+        .setStyle(ButtonStyle.Success),
+      'TICKET.submitEmoji',
+    ),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId('ticket_cancel')
+        .setLabel(resolveText('TICKET.closeButton'))
+        .setStyle(ButtonStyle.Danger),
+      'TICKET.closeEmoji',
+    ),
   );
 }
 
@@ -91,16 +95,20 @@ function previewButtons() {
 // right row gets updated on approve/deny — and this survives bot restarts.
 function staffReviewButtons(bountyId) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`approve_bounty:${bountyId}`)
-      .setLabel(resolveText('TICKET.approveBountyButton'))
-      .setStyle(ButtonStyle.Success)
-      .setEmoji(resolveText('TICKET.approveBountyEmoji')),
-    new ButtonBuilder()
-      .setCustomId(`deny_bounty:${bountyId}`)
-      .setLabel(resolveText('TICKET.denyBountyButton'))
-      .setStyle(ButtonStyle.Danger)
-      .setEmoji(resolveText('TICKET.denyBountyEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId(`approve_bounty:${bountyId}`)
+        .setLabel(resolveText('TICKET.approveBountyButton'))
+        .setStyle(ButtonStyle.Success),
+      'TICKET.approveBountyEmoji',
+    ),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId(`deny_bounty:${bountyId}`)
+        .setLabel(resolveText('TICKET.denyBountyButton'))
+        .setStyle(ButtonStyle.Danger),
+      'TICKET.denyBountyEmoji',
+    ),
   );
 }
 
@@ -109,21 +117,27 @@ function staffReviewButtons(bountyId) {
 // can tell "approve a request" and "approve a claim" apart.
 function claimReviewButtons(bountyId) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`approve_claim:${bountyId}`)
-      .setLabel(resolveText('TICKET.approveClaimButton'))
-      .setStyle(ButtonStyle.Success)
-      .setEmoji(resolveText('TICKET.approveClaimEmoji')),
-    new ButtonBuilder()
-      .setCustomId(`deny_claim:${bountyId}`)
-      .setLabel(resolveText('TICKET.denyClaimButton'))
-      .setStyle(ButtonStyle.Danger)
-      .setEmoji(resolveText('TICKET.denyClaimEmoji')),
-    new ButtonBuilder()
-      .setCustomId(`include_requester:${bountyId}`)
-      .setLabel(resolveText('TICKET.includeRequesterButton'))
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji(resolveText('TICKET.includeRequesterEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId(`approve_claim:${bountyId}`)
+        .setLabel(resolveText('TICKET.approveClaimButton'))
+        .setStyle(ButtonStyle.Success),
+      'TICKET.approveClaimEmoji',
+    ),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId(`deny_claim:${bountyId}`)
+        .setLabel(resolveText('TICKET.denyClaimButton'))
+        .setStyle(ButtonStyle.Danger),
+      'TICKET.denyClaimEmoji',
+    ),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId(`include_requester:${bountyId}`)
+        .setLabel(resolveText('TICKET.includeRequesterButton'))
+        .setStyle(ButtonStyle.Secondary),
+      'TICKET.includeRequesterEmoji',
+    ),
   );
 }
 
@@ -134,11 +148,13 @@ function claimReviewButtons(bountyId) {
 // below — so a second press on an already-closed ticket can't happen.
 function helpTicketButtons() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('close_help_ticket')
-      .setLabel(resolveText('TICKET.closeHelpButton'))
-      .setStyle(ButtonStyle.Danger)
-      .setEmoji(resolveText('TICKET.closeHelpEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId('close_help_ticket')
+        .setLabel(resolveText('TICKET.closeHelpButton'))
+        .setStyle(ButtonStyle.Danger),
+      'TICKET.closeHelpEmoji',
+    ),
   );
 }
 

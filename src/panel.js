@@ -1,6 +1,6 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const TEXT = require('./text');
-const { resolveText, resolveLines } = require('./styleGuide/liveText');
+const { resolveText, resolveLines, applyEmoji } = require('./styleGuide/liveText');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // The panel that lives (permanently) in the read-only bounty channel.
@@ -14,11 +14,13 @@ function buildPanel() {
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('request_bounty')
-      .setLabel(resolveText('PANEL.request.buttonLabel'))
-      .setStyle(ButtonStyle.Success)
-      .setEmoji(resolveText('PANEL.request.buttonEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId('request_bounty')
+        .setLabel(resolveText('PANEL.request.buttonLabel'))
+        .setStyle(ButtonStyle.Success),
+      'PANEL.request.buttonEmoji',
+    ),
   );
 
   return { embeds: [embed], components: [row] };
@@ -35,11 +37,13 @@ function buildClaimPanel() {
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('claim_bounty')
-      .setLabel(resolveText('PANEL.claim.buttonLabel'))
-      .setStyle(ButtonStyle.Primary)
-      .setEmoji(resolveText('PANEL.claim.buttonEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId('claim_bounty')
+        .setLabel(resolveText('PANEL.claim.buttonLabel'))
+        .setStyle(ButtonStyle.Primary),
+      'PANEL.claim.buttonEmoji',
+    ),
   );
 
   return { embeds: [embed], components: [row] };
@@ -57,11 +61,13 @@ function buildTicketPanel() {
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('open_help_ticket')
-      .setLabel(resolveText('PANEL.ticket.buttonLabel'))
-      .setStyle(ButtonStyle.Primary)
-      .setEmoji(resolveText('PANEL.ticket.buttonEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId('open_help_ticket')
+        .setLabel(resolveText('PANEL.ticket.buttonLabel'))
+        .setStyle(ButtonStyle.Primary),
+      'PANEL.ticket.buttonEmoji',
+    ),
   );
 
   return { embeds: [embed], components: [row] };
@@ -79,11 +85,13 @@ function buildQandAPanel() {
     .setFooter({ text: TEXT.FOOTER });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('open_qanda')
-      .setLabel(resolveText('PANEL.qanda.buttonLabel'))
-      .setStyle(ButtonStyle.Primary)
-      .setEmoji(resolveText('PANEL.qanda.buttonEmoji')),
+    applyEmoji(
+      new ButtonBuilder()
+        .setCustomId('open_qanda')
+        .setLabel(resolveText('PANEL.qanda.buttonLabel'))
+        .setStyle(ButtonStyle.Primary),
+      'PANEL.qanda.buttonEmoji',
+    ),
   );
 
   return { embeds: [embed], components: [row] };
