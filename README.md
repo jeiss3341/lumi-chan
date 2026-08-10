@@ -41,10 +41,14 @@ server run side by side, sharing one Postgres database.
   under later) are all staff-only, never shown to players. Approved
   bounties post to the public board automatically.
 - **Approve / Deny** a claim. Approving marks it claimed, removes it from
-  the request board, posts it to a separate claim board, and moves the
-  ticket into an archive category (or closes it, if none is configured).
-  Staff can also **Include Requester** to loop the original requester into
-  a claim ticket.
+  the request board, posts it to a separate claim board, and archives the
+  ticket as `declared-claim-<name>` / `declared-submission-<name>`; denying
+  archives it as `denied-claim-<name>` / `denied-submission-<name>` instead
+  (or closes it, if no archive category is configured). Either button
+  removes both from the ticket, so a denied claim can't later be approved
+  or vice versa. Staff can also **Include Requester** to loop the original
+  requester in, and — on Premade Allowed bounties — **Add Premade** to
+  grant a whole group access via a native Discord member search.
 - **Close** a general support ticket, with a confirmation step first.
 - **`/deployrequestbounty`** — posts the request board; sets its ticket
   category, public board channel, and staff (role and/or person).
@@ -70,12 +74,14 @@ sections:
   sends, organized by player action, each with a live preview above its
   own edit form. Saved edits are layered over the code's defaults in
   Postgres and take effect immediately — no redeploy, no restart.
-- **Bounties** — view every bounty (filterable by status), create one
-  directly (skipping the normal ticket flow — useful for sponsor
-  bounties), edit its fields (name, description, reward, donator, tier,
-  reward type, group type, claim type), and freely change its status
-  (pending/approved/denied/cancelled, any to any) with an inline
-  confirmation. Editing or approving a bounty that's already posted
+- **Bounties** — view every bounty (filterable by status, and separately by
+  Solo Only/Premade Allowed), create one directly (skipping the normal
+  ticket flow — useful for sponsor bounties), edit its fields (name,
+  description, reward, donator, tier, reward type, group type, claim
+  type), and freely change its status among pending/approved/denied/
+  cancelled from any current status, including claimed, with an inline
+  confirmation. ("Claimed" can't be a target — only the real Discord claim
+  flow sets it.) Editing or approving a bounty that's already posted
   updates its live Discord message to match.
 - **Tickets** — every request/claim/help ticket, active or archived, read
   live from Discord. Click into one to read its message log (including
