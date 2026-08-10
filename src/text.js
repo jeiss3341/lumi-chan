@@ -200,12 +200,15 @@ module.exports = {
       titlePrefix: 'Claim:',
       notes: {
         label: 'Proof / Notes',
-        description: 'What did you do, and how can staff verify it?',
-        placeholder: 'Describe how you completed this and how it can be verified.',
+        description: 'What did you do, and how can staff verify it? Links welcome.',
+        // Discord caps uploads at 10MB unless the server hits Boost Level 2
+        // (50MB), and even that isn't much for a gameplay clip — so video
+        // proof is steered to a link here rather than the upload field.
+        placeholder: 'How you completed it and how staff can verify. Paste a video link (YouTube/Streamable) here.',
       },
       files: {
         label: 'Proof (Screenshot or Video)',
-        description: 'Optional — attach a screenshot or clip if you have one.',
+        description: 'Optional — screenshots, under 10MB each. For video, paste a link in Proof / Notes above.',
       },
     },
     // src/modal.js → buildTicketDetailsModal(). Optional subject/details for
@@ -230,9 +233,9 @@ module.exports = {
     // src/ticket.js → previewButtons(). Shown on the ephemeral preview
     // before a request ticket exists.
     submitButton: 'Submit',
-    submitEmoji: '✅',
+    submitEmoji: '📥',
     closeButton: 'Close',
-    closeEmoji: '🗑️',
+    closeEmoji: '',
     // src/ticket.js → staffReviewButtons(). Buttons inside a request ticket.
     approveBountyButton: 'Approve',
     approveBountyEmoji: '✅',
@@ -268,7 +271,7 @@ module.exports = {
 
   README: {
     // index.js → the /readme command's embed.
-    title: '🗺️ How the Bounty System Works',
+    title: '📖 How the Bounty System Works',
     description: [
       '**What players go through:**',
       '',
