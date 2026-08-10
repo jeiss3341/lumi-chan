@@ -27,6 +27,7 @@ const {
   toChannelName,
   alphabetizeCategory,
   previewButtons,
+  addPremadeSelectRow,
   helpTicketCloseConfirm,
 } = require('./src/ticket');
 const { startServer } = require('./src/styleGuide/server');
@@ -1327,6 +1328,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           bountyId: bounty.id,
           files,
           categoryId,
+          groupType: bounty.group_type,
         });
 
         const readyBanner = new EmbedBuilder().setImage(BANNER_URL);
@@ -1389,6 +1391,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         content: `👥 <@${requesterId}> has been added to this ticket by ${interaction.user}.`,
       });
+      return;
+    }
+
+    // "Add Premade" inside a premade-type claim ticket  →  staff only. Only
+    // ever shown on premade bounties (see src/ticket.js claimReviewButtons).
+    // Opens a native Discord user-search picker; granting access happens
+    // once it's submitted (add_premade_select below), not here.
+    if (interaction.isButton() && interaction.customId.startsWith('add_premade:')) {
+      if (!(await requireStaff(interaction, getClaimStaff, 'add premade teammates'))) return;
+
+      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+        await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      await interaction.reply({
+        content: 'Search for the teammates to add:',
+        components: [addPremadeSelectRow(customIdArg(interaction))],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // Teammate picker submitted  →  grant each selected person the same
+    // access Include Requester gives, one overwrite per person. A failure on
+    // one (e.g. someone who's left the server since the picker loaded)
+    // doesn't block the rest. Result is posted to the channel (not just the
+    // ephemeral picker) so the claimant and other staff can see who was added.
+    if (interaction.isUserSelectMenu() && interaction.customId.startsWith('add_premade_select')) {
+      await interaction.deferUpdate();
+
+      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+        await interaction.editReply({ content: '⚠️ This ticket is already archived.', components: [] });
+        return;
+      }
+
+      const added = [];
+      const failed = [];
+      for (const [userId] of interaction.users) {
+        try {
+          await interaction.channel.permissionOverwrites.create(
+            userId,
+            { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
+            { type: OverwriteType.Member },
+          );
+          added.push(userId);
+        } catch (err) {
+          console.error('Failed to add premade teammate:', err);
+          failed.push(userId);
+        }
+      }
+
+      const failedNote = failed.length ? ` Couldn't add ${failed.map((id) => `<@${id}>`).join(', ')} — Discord rejected it.` : '';
+      await interaction.editReply({ content: added.length ? 'Done.' : `⚠️ Nothing added.${failedNote}`, components: [] });
+
+      if (added.length) {
+        await interaction.channel.send({
+          content: `👥 Added ${added.map((id) => `<@${id}>`).join(', ')} to this ticket by ${interaction.user}.${failedNote}`,
+        });
+      }
       return;
     }
 

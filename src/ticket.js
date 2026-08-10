@@ -5,6 +5,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  UserSelectMenuBuilder,
 } = require('discord.js');
 const TEXT = require('./text');
 const { resolveText, applyEmoji } = require('./styleGuide/liveText');
@@ -115,8 +116,11 @@ function staffReviewButtons(bountyId) {
 // [Approve Claim] [Deny Claim] shown inside a claim ticket. Same idea as
 // staffReviewButtons above, just a distinct customId prefix so the handler
 // can tell "approve a request" and "approve a claim" apart.
-function claimReviewButtons(bountyId) {
-  return new ActionRowBuilder().addComponents(
+// `groupType` is the bounty's own group_type ('solo' | 'premade' | null) —
+// "Add Premade" only shows up for bounties that actually allow a premade
+// group, since adding teammates to a solo-only claim doesn't make sense.
+function claimReviewButtons(bountyId, groupType) {
+  const buttons = [
     applyEmoji(
       new ButtonBuilder()
         .setCustomId(`approve_claim:${bountyId}`)
@@ -138,6 +142,33 @@ function claimReviewButtons(bountyId) {
         .setStyle(ButtonStyle.Secondary),
       'TICKET.includeRequesterEmoji',
     ),
+  ];
+
+  if (groupType === 'premade') {
+    buttons.push(
+      applyEmoji(
+        new ButtonBuilder()
+          .setCustomId(`add_premade:${bountyId}`)
+          .setLabel(resolveText('TICKET.addPremadeButton'))
+          .setStyle(ButtonStyle.Secondary),
+        'TICKET.addPremadeEmoji',
+      ),
+    );
+  }
+
+  return new ActionRowBuilder().addComponents(...buttons);
+}
+
+// Shown after "Add Premade" is pressed — a native Discord user-search picker
+// (type-to-filter server members, up to 10 at once). Granting access happens
+// when this is submitted (see index.js add_premade_select), not here.
+function addPremadeSelectRow(bountyId) {
+  return new ActionRowBuilder().addComponents(
+    new UserSelectMenuBuilder()
+      .setCustomId(`add_premade_select:${bountyId}`)
+      .setPlaceholder(resolveText('TICKET.addPremadePlaceholder'))
+      .setMinValues(1)
+      .setMaxValues(10),
   );
 }
 
@@ -286,7 +317,7 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, s
 // so the category can be grouped by bounty, oldest attempt first within each
 // group, without having to reverse-parse the channel name. Throws
 // 'NO_CATEGORY' if that category was never set.
-async function createClaimTicket({ guild, member, botId, embed, title, staffRoleId, staffUserId, bountyId, files, categoryId }) {
+async function createClaimTicket({ guild, member, botId, embed, title, staffRoleId, staffUserId, bountyId, files, categoryId, groupType }) {
   const channelName = toChannelName('claim', title, member.displayName);
   const channel = await createReviewChannel({
     guild,
@@ -305,7 +336,7 @@ async function createClaimTicket({ guild, member, botId, embed, title, staffRole
       ? `${mentions.join(' ')} — a bounty claim from ${member} needs review.`
       : resolveText('TICKET.noClaimStaffConfigured'),
     embeds: [embed],
-    components: [claimReviewButtons(bountyId)],
+    components: [claimReviewButtons(bountyId, groupType)],
     allowedMentions: {
       roles: staffRoleId ? [staffRoleId] : [],
       users: staffUserId ? [staffUserId] : [],
@@ -365,5 +396,6 @@ module.exports = {
   previewButtons,
   staffReviewButtons,
   claimReviewButtons,
+  addPremadeSelectRow,
   helpTicketCloseConfirm,
 };

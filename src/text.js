@@ -277,6 +277,12 @@ module.exports = {
     // in case they want to weigh in before it's approved.
     includeRequesterButton: 'Include Requester',
     includeRequesterEmoji: '👥',
+    // Only shown on premade-type claims — opens a native Discord user-search
+    // picker (src/ticket.js → addPremadeSelectRow) so staff can grant the
+    // claimant's teammates access to the ticket too.
+    addPremadeButton: 'Add Premade',
+    addPremadeEmoji: '🧑‍🤝‍🧑',
+    addPremadePlaceholder: 'Search for teammates to add…',
     // src/ticket.js → createHelpTicket(). The one button inside a general
     // support ticket — no approve/deny here, just closing it once resolved.
     closeHelpButton: 'Close Ticket',

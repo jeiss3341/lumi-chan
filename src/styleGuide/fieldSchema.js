@@ -113,6 +113,9 @@ const FIELD_SCHEMA = [
   { unit: 'claiming-staff-buttons', path: 'TICKET.denyClaimEmoji', kind: 'emojiField', label: 'Deny Claim — emoji' },
   { unit: 'claiming-staff-buttons', path: 'TICKET.includeRequesterButton', kind: 'buttonLabel', label: 'Include Requester — label' },
   { unit: 'claiming-staff-buttons', path: 'TICKET.includeRequesterEmoji', kind: 'emojiField', label: 'Include Requester — emoji' },
+  { unit: 'claiming-staff-buttons', path: 'TICKET.addPremadeButton', kind: 'buttonLabel', label: 'Add Premade — label' },
+  { unit: 'claiming-staff-buttons', path: 'TICKET.addPremadeEmoji', kind: 'emojiField', label: 'Add Premade — emoji' },
+  { unit: 'claiming-staff-buttons', path: 'TICKET.addPremadePlaceholder', kind: 'selectPlaceholder', label: 'Add Premade — search placeholder' },
 
   { unit: 'claiming-card', path: 'CARD.claim.titlePrefix', kind: 'cardTitlePrefix', label: 'Card title (pending)' },
   { unit: 'claiming-card', path: 'CARD.claimedTitlePrefix', kind: 'cardTitlePrefix', label: 'Card title (approved)' },

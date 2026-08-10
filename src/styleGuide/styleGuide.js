@@ -452,7 +452,9 @@ function buildStyleGuideHtml({ savedSection, failure, addTopicFailure, username 
       ${button(cv['TICKET.approveClaimButton'], cv['TICKET.approveClaimEmoji'], 'approveClaim')}
       ${button(cv['TICKET.denyClaimButton'], cv['TICKET.denyClaimEmoji'], 'denyClaim')}
       ${button(cv['TICKET.includeRequesterButton'], cv['TICKET.includeRequesterEmoji'], 'includeRequester')}
-    </div>`,
+      ${button(cv['TICKET.addPremadeButton'], cv['TICKET.addPremadeEmoji'], 'addPremade')}
+    </div>
+    <p class="btn-caption">"${esc(cv['TICKET.addPremadeButton'])}" only shows up on premade-type claims. Its search placeholder: <b>${esc(cv['TICKET.addPremadePlaceholder'])}</b></p>`,
     staticUnitValues('claiming-staff-buttons'),
     failure,
   );
