@@ -138,7 +138,7 @@ async function handleBountiesList(req, res, session, client) {
 
     const allBounties = await getBounties(filterStatus);
     const bounties = filterGroup === 'all' ? allBounties : allBounties.filter((b) => b.group_type === filterGroup);
-    const tags = await resolveUserTags(client, bounties.flatMap((b) => [b.requester_id, b.claimer_id]));
+    const tags = await resolveUserTags(client, bounties.flatMap((b) => [b.requester_id, b.claimer_id, b.leader_id]));
 
     const msg = url.searchParams.get('msg');
     const message = msg ? { text: msg, warn: url.searchParams.get('warn') === '1' } : undefined;
@@ -236,7 +236,7 @@ async function handleEditBountyPage(req, res, session, client, id, failure) {
     return;
   }
 
-  const tags = await resolveUserTags(client, [bounty.requester_id, bounty.claimer_id]);
+  const tags = await resolveUserTags(client, [bounty.requester_id, bounty.claimer_id, bounty.leader_id]);
   const boardLink = await boardMessageLink(client, bounty);
 
   const url = new URL(req.url, 'http://localhost');

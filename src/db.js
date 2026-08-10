@@ -107,6 +107,27 @@
     // rerun every boot: casting TEXT to TEXT is a no-op once already migrated.
     await pool.query(`ALTER TABLE bounties ALTER COLUMN reward TYPE TEXT USING reward::TEXT;`);
 
+    // Submission-type bounties (claim_type = 'submissions') stay open and
+    // track a current "leader" instead of finalizing on the first approved
+    // claim — see setLeader/setSubmissionMetric below. submission_metric_*
+    // is set once, at the original bounty's approval; leader_* tracks
+    // whoever's currently ahead, including which archived ticket
+    // (channel+message) represents them, so a later claim that displaces
+    // them knows exactly what to reopen. All null/unused for claim_type =
+    // 'claim' bounties.
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submission_metric_kind TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submission_metric_label TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_id TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_value TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_ticket_channel_id TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_ticket_message_id TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_set_at TIMESTAMPTZ;`);
+    // Comma-separated Discord ids of the leader's premade teammates (Add
+    // Premade on their claim ticket), if any — carried here so the
+    // submissions board post and the eventual Close Bounty card can show
+    // them too, not just the ticket itself. Null for a solo claim.
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_teammates TEXT;`);
+
     // Warm the settings cache so the first interaction after boot doesn't have
     // to fall back to the DB for each setting it reads.
     await loadSettings();
@@ -250,6 +271,19 @@
 
   function setClaimBoardChannel(channelId) {
     return setSetting('claim_board_channel', channelId);
+  }
+
+  // A third public channel, specifically for submission-type bounties — this
+  // is where an approved submissions bounty's card lives (instead of the
+  // regular request board) and gets edited in place as the current leader
+  // changes, since unlike a normal claim it doesn't finalize on the first
+  // approval.
+  function getSubmissionsBoardChannel() {
+    return getSetting('submissions_board_channel');
+  }
+
+  function setSubmissionsBoardChannel(channelId) {
+    return setSetting('submissions_board_channel', channelId);
   }
 
   // And the category a claim ticket channel gets MOVED to once its claim is
@@ -439,6 +473,45 @@
     return result.rows[0] ?? null;
   }
 
+  // One-time write, from the new approve-modal step 3 (submissions bounties
+  // only) — defines what this bounty's leaderboard is tracking. Never
+  // touched again after this.
+  async function setSubmissionMetric(id, { kind, label }) {
+    await pool.query(
+      `UPDATE bounties SET submission_metric_kind = $2, submission_metric_label = $3 WHERE id = $1`,
+      [id, kind, label],
+    );
+  }
+
+  // Promotes a submission claim to current leader. Guarded on 'approved' —
+  // same reasoning as claimBounty above (someone else finalizing/closing the
+  // bounty in between shouldn't get silently overwritten). Returns the
+  // updated row PLUS previous_leader_id/previous_leader_ticket_channel_id/
+  // previous_leader_ticket_message_id (whoever/whatever this just displaced,
+  // read from the same statement's initial snapshot via the `old` CTE below
+  // — a subquery inside RETURNING would instead see the row post-update,
+  // which is the wrong thing here), or null if the guard failed.
+  async function setLeader(id, { leaderId, value, ticketChannelId, ticketMessageId, teammates }) {
+    const result = await pool.query(
+      `WITH old AS (
+         SELECT leader_id, leader_ticket_channel_id, leader_ticket_message_id
+         FROM bounties WHERE id = $1
+       ),
+       updated AS (
+         UPDATE bounties SET leader_id = $2, leader_value = $3, leader_ticket_channel_id = $4,
+           leader_ticket_message_id = $5, leader_teammates = $6, leader_set_at = NOW()
+         WHERE id = $1 AND status = 'approved'
+         RETURNING *
+       )
+       SELECT updated.*, old.leader_id AS previous_leader_id,
+         old.leader_ticket_channel_id AS previous_leader_ticket_channel_id,
+         old.leader_ticket_message_id AS previous_leader_ticket_message_id
+       FROM updated, old`,
+      [id, leaderId, value ?? null, ticketChannelId, ticketMessageId, teammates?.length ? teammates.join(',') : null],
+    );
+    return result.rows[0] ?? null;
+  }
+
   // Bounties filtered by status ('approved' | 'pending' | 'denied'), or all of
   // them. Newest action first. Powers /allbounties.
   async function getBounties(status) {
@@ -481,6 +554,8 @@
     setClaimStaffUser,
     getClaimBoardChannel,
     setClaimBoardChannel,
+    getSubmissionsBoardChannel,
+    setSubmissionsBoardChannel,
     getClaimArchiveCategory,
     setClaimArchiveCategory,
     getHelpTicketCategory,
@@ -504,4 +579,6 @@
     getClaimableBounties,
     setBoardMessage,
     claimBounty,
+    setSubmissionMetric,
+    setLeader,
   };

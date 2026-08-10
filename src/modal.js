@@ -96,20 +96,32 @@ function buildBountyModal() {
 // description, reward, reward type, tier). A modal submission can't directly
 // open another modal, so index.js bridges the two with an intermediate
 // "Continue" button — see approve_modal_step1 / approve_modal_step2 there.
+// Tier and Claim Type live here (not step 2, where they used to) so that by
+// the time step 2 is built, we already know whether this is a Submissions
+// bounty — its leaderboard setup folds straight into step 2 instead of a
+// separate step 3, keeping the whole approve flow to 2 pages regardless of
+// claim type. 5 fields, right at Discord's per-modal cap.
 function buildApproveModalStep1(bounty) {
   const modal = new ModalBuilder()
     .setCustomId(`approve_modal_step1:${bounty.id}`)
     .setTitle(`${TEXT.MODAL.approveEdit.title} (1/2)`);
 
+  // Premade Allowed gets the plural label/hint — reminding staff this is
+  // where the whole team's preferred names go (gathered by talking it over
+  // with the requester in the ticket), not just the one requester's own
+  // name. Same field either way (bounty_donator) — just the copy differs.
+  const donatorCopy = bounty.group_type === 'premade'
+    ? TEXT.MODAL.approveEdit.donatorPremade
+    : TEXT.MODAL.approveEdit.donator;
   const donatorInput = new TextInputBuilder()
     .setCustomId('bounty_donator')
     .setStyle(TextInputStyle.Short)
     .setValue(bounty.donator_name ?? '')
-    .setMaxLength(50)
+    .setMaxLength(100)
     .setRequired(false);
   const donatorLabel = new LabelBuilder()
-    .setLabel(TEXT.MODAL.approveEdit.donator.label)
-    .setDescription(TEXT.MODAL.approveEdit.donator.description)
+    .setLabel(donatorCopy.label)
+    .setDescription(donatorCopy.description)
     .setTextInputComponent(donatorInput);
 
   const nameInput = new TextInputBuilder()
@@ -134,17 +146,6 @@ function buildApproveModalStep1(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.description.description)
     .setTextInputComponent(descInput);
 
-  modal.addLabelComponents(donatorLabel, nameLabel, descLabel);
-  return modal;
-}
-
-// Step 2 — shown after the "Continue" button following step 1's submit.
-// Tier and Reward Type are staff-only, never shown to players.
-function buildApproveModalStep2(bounty) {
-  const modal = new ModalBuilder()
-    .setCustomId(`approve_modal_step2_submit:${bounty.id}`)
-    .setTitle(`${TEXT.MODAL.approveEdit.title} (2/2)`);
-
   const tierSelect = new StringSelectMenuBuilder()
     .setCustomId('bounty_tier')
     .setMinValues(1)
@@ -161,6 +162,37 @@ function buildApproveModalStep2(bounty) {
     .setLabel(TEXT.MODAL.approveEdit.tier.label)
     .setDescription(TEXT.MODAL.approveEdit.tier.description)
     .setStringSelectMenuComponent(tierSelect);
+
+  // Claim Type — decides which of /deployclaimbounty's two active categories
+  // (Claim vs Submissions) this bounty's claim ticket opens under later (see
+  // index.js claim_proof_modal), and whether step 2 asks for a leaderboard
+  // setup too. Defaults to Claim if unset.
+  const claimTypeSelect = new StringSelectMenuBuilder()
+    .setCustomId('bounty_claim_type')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'Claim', value: 'claim', default: !bounty.claim_type || bounty.claim_type === 'claim' },
+      { label: 'Submissions', value: 'submissions', default: bounty.claim_type === 'submissions' },
+    );
+  const claimTypeLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.claimType.label)
+    .setDescription(TEXT.MODAL.approveEdit.claimType.description)
+    .setStringSelectMenuComponent(claimTypeSelect);
+
+  modal.addLabelComponents(donatorLabel, nameLabel, descLabel, tierLabel, claimTypeLabel);
+  return modal;
+}
+
+// Step 2 — shown after the "Continue" button following step 1's submit.
+// Reward Type/Reward always; if step 1's Claim Type was Submissions, also
+// collects the leaderboard setup (numeric/text metric + label) in this same
+// modal — `claimType` is step 1's already-submitted value, known by the
+// time this is built, so there's no need for a conditional 3rd page.
+function buildApproveModalStep2(bounty, claimType) {
+  const modal = new ModalBuilder()
+    .setCustomId(`approve_modal_step2_submit:${bounty.id}`)
+    .setTitle(`${TEXT.MODAL.approveEdit.title} (2/2)`);
 
   // Reward Type — pre-selects the bounty's current value if it already has
   // one (e.g. re-approving after a status revert).
@@ -179,22 +211,6 @@ function buildApproveModalStep2(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.rewardType.description)
     .setStringSelectMenuComponent(rewardTypeSelect);
 
-  // Claim Type — decides which of /deployclaimbounty's two active categories
-  // (Claim vs Submissions) this bounty's claim ticket opens under later (see
-  // index.js claim_proof_modal). Defaults to Claim if unset.
-  const claimTypeSelect = new StringSelectMenuBuilder()
-    .setCustomId('bounty_claim_type')
-    .setMinValues(1)
-    .setMaxValues(1)
-    .addOptions(
-      { label: 'Claim', value: 'claim', default: !bounty.claim_type || bounty.claim_type === 'claim' },
-      { label: 'Submissions', value: 'submissions', default: bounty.claim_type === 'submissions' },
-    );
-  const claimTypeLabel = new LabelBuilder()
-    .setLabel(TEXT.MODAL.approveEdit.claimType.label)
-    .setDescription(TEXT.MODAL.approveEdit.claimType.description)
-    .setStringSelectMenuComponent(claimTypeSelect);
-
   const amountInput = new TextInputBuilder()
     .setCustomId('bounty_amount')
     .setStyle(TextInputStyle.Short)
@@ -206,7 +222,62 @@ function buildApproveModalStep2(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.reward.description)
     .setTextInputComponent(amountInput);
 
-  modal.addLabelComponents(tierLabel, rewardTypeLabel, claimTypeLabel, amountLabel);
+  const components = [rewardTypeLabel, amountLabel];
+
+  if (claimType === 'submissions') {
+    const kindSelect = new StringSelectMenuBuilder()
+      .setCustomId('submission_metric_kind')
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addOptions(
+        { label: 'Numeric (e.g. kills, score)', value: 'numeric' },
+        { label: 'Other (staff judgment call, e.g. best clip)', value: 'text' },
+      );
+    const kindLabel = new LabelBuilder()
+      .setLabel(TEXT.MODAL.approveEdit.submissionMetricKind.label)
+      .setDescription(TEXT.MODAL.approveEdit.submissionMetricKind.description)
+      .setStringSelectMenuComponent(kindSelect);
+
+    const metricLabelInput = new TextInputBuilder()
+      .setCustomId('submission_metric_label')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('kills')
+      .setMaxLength(50)
+      .setRequired(true);
+    const metricLabelLabel = new LabelBuilder()
+      .setLabel(TEXT.MODAL.approveEdit.submissionMetricLabel.label)
+      .setDescription(TEXT.MODAL.approveEdit.submissionMetricLabel.description)
+      .setTextInputComponent(metricLabelInput);
+
+    components.push(kindLabel, metricLabelLabel);
+  }
+
+  modal.addLabelComponents(...components);
+  return modal;
+}
+
+// Shown when staff presses Approve Claim on a numeric-metric submissions
+// ticket — collects the value for THIS claimant before they can be promoted
+// to leader (see index.js promoteSubmissionLeader). Never shown for a
+// text-metric bounty — there's nothing to enter, staff's Approve click is
+// the judgment call there.
+function buildSubmissionValueModal(bounty) {
+  const modal = new ModalBuilder()
+    .setCustomId(`submission_value_modal_submit:${bounty.id}`)
+    .setTitle(`Value (${bounty.submission_metric_label})`.slice(0, 45));
+
+  const valueInput = new TextInputBuilder()
+    .setCustomId('submission_value')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('e.g. 50')
+    .setMaxLength(20)
+    .setRequired(true);
+  const valueLabel = new LabelBuilder()
+    .setLabel(`Value (${bounty.submission_metric_label})`.slice(0, 45))
+    .setDescription(`What are they leading with, in ${bounty.submission_metric_label}?`.slice(0, 100))
+    .setTextInputComponent(valueInput);
+
+  modal.addLabelComponents(valueLabel);
   return modal;
 }
 
@@ -279,4 +350,11 @@ function buildTicketDetailsModal(source) {
   return modal;
 }
 
-module.exports = { buildBountyModal, buildApproveModalStep1, buildApproveModalStep2, buildClaimProofModal, buildTicketDetailsModal };
+module.exports = {
+  buildBountyModal,
+  buildApproveModalStep1,
+  buildApproveModalStep2,
+  buildSubmissionValueModal,
+  buildClaimProofModal,
+  buildTicketDetailsModal,
+};

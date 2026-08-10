@@ -149,12 +149,28 @@ module.exports = {
       fieldClaimant: 'Claimant',
       fieldReward: 'Reward',
       fieldOriginalRequester: 'Original Requester',
+      // Only added to the card once Add Premade actually adds someone (see
+      // index.js add_premade_select) — not part of buildClaimEmbed's usual
+      // fields, so a solo claim never shows an empty one.
+      fieldTeammates: 'Teammates',
     },
     // Shared "it's done" title, used once a claim is finalized — on the
     // claim ticket/board card itself (index.js → approve_claim), AND when
     // that same event overwrites the original request-board post so both
     // surfaces agree once a bounty is no longer available.
     claimedTitlePrefix: '🏁 Bounty Claimed:',
+    // src/bountyCard.js → buildLeaderboardEmbed(). The card posted to the
+    // submissions board (see /deployclaimbounty) — stays live, edited in
+    // place as the current leader changes, until staff presses Close Bounty.
+    submissions: {
+      closedTitlePrefix: '🏆 Bounty Closed:',
+      fieldStanding: 'Standing',
+      noLeaderYet: 'Open — no submissions yet.',
+      leadingVerb: 'is leading with', // numeric metric, still open
+      wonVerb: 'won with', // numeric metric, closed
+      leadingOtherVerb: 'currently has', // non-numeric metric, still open
+      wonOtherVerb: 'won with', // non-numeric metric, closed
+    },
   },
 
   MODAL: {
@@ -196,6 +212,15 @@ module.exports = {
         label: 'Preferred Name',
         description: "Who to credit — leave blank to use the requester's current Discord nickname",
       },
+      // Shown instead of the singular version above when the bounty's
+      // Group Type is Premade Allowed — same field (bounty_donator), just a
+      // label/hint reminding staff this is where the whole team's names go,
+      // gathered by talking it over with the requester in the ticket, not
+      // just the one requester's own name.
+      donatorPremade: {
+        label: 'Preferred Name(s)',
+        description: 'Whole premade team — list each preferred name if someone doesn\'t want their Discord nickname shown',
+      },
       name: {
         label: 'Name of Bounty',
         description: 'Edit if needed — this is what ships to the board',
@@ -219,6 +244,17 @@ module.exports = {
       claimType: {
         label: 'Claim Type',
         description: 'Which claim-ticket category this opens under later — staff only',
+      },
+      // Only shown as a 3rd modal step when Claim Type above is Submissions —
+      // defines the bounty's leaderboard once, up front, so it's never asked
+      // again on individual claims.
+      submissionMetricKind: {
+        label: 'Tracked By',
+        description: 'Numeric (enter a value each time, e.g. kills) or Other (staff judgment call, e.g. best clip)',
+      },
+      submissionMetricLabel: {
+        label: 'Label',
+        description: 'e.g. "kills" for a numeric bounty, or "best clip" for a judgment-call one',
       },
     },
     // src/modal.js → buildClaimProofModal(). The claimant's proof form.
@@ -283,6 +319,17 @@ module.exports = {
     addPremadeButton: 'Add Premade',
     addPremadeEmoji: '🤝',
     addPremadePlaceholder: 'Search for teammates to add…',
+    // index.js → closeSubmissionBountyRow(). The one button on a
+    // submissions bounty's live board post — declares the current leader
+    // the winner and finalizes it, same as approve_claim does for a normal
+    // one-shot claim.
+    closeSubmissionBountyButton: 'Close Bounty',
+    closeSubmissionBountyEmoji: '🏆',
+    // index.js → promoteSubmissionLeader(). Posted in a displaced leader's
+    // ticket when someone else takes the lead — %s is replaced with a
+    // mention of whoever surpassed them.
+    submissionSurpassedNote:
+      '⚠️ This submission was surpassed by %s and has been reopened for another look — **Approve** to reinstate as leader, or **Deny** to close it out.',
     // src/ticket.js → createHelpTicket(). The one button inside a general
     // support ticket — no approve/deny here, just closing it once resolved.
     closeHelpButton: 'Close Ticket',
@@ -306,40 +353,45 @@ module.exports = {
     // index.js → the /readme command's embed.
     title: '📖 How the Bounty System Works',
     description: [
-      '**What players go through:**',
+      '**What players do:**',
       '',
       '💰 **Requesting a Bounty**',
-      '> 1. The **requester** presses **Request Bounty** on the request board and fills out a short form: an optional preferred name (falls back to their Discord nickname), name, description, reward, and whether it\'s Solo Only or Premade Allowed.',
-      '> 2. They get an ephemeral preview of the bounty card. **Submit** opens a private ticket under the configured category and pings staff. **Close** cancels — nothing is created.',
-      '> 3. Inside the ticket, staff **Approve** or **Deny** (closes the ticket). Approving opens a two-step edit form — Discord caps a single popup at 5 fields, so step 1 (preferred name, name, description) is followed by a **Continue** button into step 2 (tier, reward type, claim type, reward). Tier (Boot/Shrimp/Crab/Pearl/Blue NP/Treasure Chest), reward type (Money/NP Code/Merch-Items/Other), and claim type (Claim/Submissions — which ticket category this bounty\'s claim opens under) are staff-only — players never see them. Nothing is saved until step 2 is submitted.',
-      '> 4. Approved bounties post to the public board and remain until claimed. Titles must be unique among approved/claimed bounties — a duplicate name blocks approval.',
+      '> 1. Press **Request Bounty** on the request board and fill out a short form: an optional preferred name (falls back to your Discord nickname), name, description, reward, and whether it\'s Solo Only or Premade Allowed.',
+      '> 2. You get an ephemeral preview of the bounty card. **Submit** opens a private ticket and pings staff. **Close** cancels — nothing is created.',
+      '> 3. Staff review it (see below). Once approved, it posts to the public board.',
       '',
       '🏁 **Claiming a Bounty**',
-      '> 1. The **claimant** presses **Claim Bounty** on the claim board and picks an approved bounty from a searchable dropdown (paginated past 25 options).',
-      '> 2. They submit proof — notes plus up to 3 optional screenshots/clips — which immediately opens a private claim ticket. There is no preview step here, unlike requesting.',
-      '> 3. Staff **Approve Claim** (marks it claimed, posts it to the claim board, archives as declared-claim-/declared-submission-) or **Deny Claim** (archives as denied-claim-/denied-submission-; bounty stays claimable). Both remove themselves once pressed, so a denied claim can\'t later be approved.',
-      '> 4. Staff can press **Include Requester** for the original requester, and — on Premade Allowed bounties — **Add Premade** to add a group via a native member search.',
+      '> 1. Press **Claim Bounty** on the claim board and pick an approved bounty from a searchable dropdown (paginated past 25 options).',
+      '> 2. Submit proof — notes plus up to 3 optional screenshots/clips — which immediately opens a private claim ticket. No preview step here, unlike requesting.',
+      '> 3. Staff review it. For a normal bounty, an approved claim finishes it for good — it comes off the board.',
+      '',
+      '🏆 **Submitting to a Leaderboard Bounty**',
+      '> Some bounties (score chases, best-clip contests) aren\'t first-come-first-served — they stay open on their own **submissions board**, always showing whoever\'s currently best. Claiming one works exactly like above (proof + private ticket), but:',
+      '> • If staff approve your submission and you\'re currently the best, you become the **leader** — shown live on the submissions board.',
+      '> • If someone later submits something better, they take your spot — your ticket reopens automatically so staff (and you) can take another look. You can try again.',
+      '> • The bounty stays open until staff press **Close Bounty**, declaring whoever\'s leading at that moment the winner.',
       '',
       '💬 **Getting Help**',
       '> 1. **Ask a Question** replies with a topic dropdown and instant answers.',
       '> 2. **Talk to Staff** opens an optional subject/details form, then creates a private ticket. Staff close it with **Close Ticket** once resolved.',
       '',
-      '**For staff:**',
-      '> • **Approve** / **Deny** → reviews a request; approved posts to the board, denied just closes.',
-      '> • **Approve Claim** / **Deny Claim** → finalizes a claim (updates the board, archives the ticket) or closes it, leaving the bounty claimable.',
-      '> • **Include Requester** → gives the original requester access to the claim ticket too.',
-      '> • **Add Premade** *(Premade Allowed only)* → adds a group via a searchable member picker.',
-      '> • **Close Ticket** → closes a general support ticket.',
-      '> • `/allbounties` → review bounty history:',
-      '>   — **status** *(required)*: which bounties to show — Approved, Pending, Claimed, Denied, or All.',
-      '>   — **order**: sort newest first, oldest first, or A–Z.',
-      '>   — **filter**: set to *By Status* to also group the results into sections.',
-      '>   — **export**: set to *Yes* to get a spreadsheet instead of the on-screen list.',
-      '> • `/deployrequestbounty` → sets up and posts the request board (where players submit bounty ideas).',
-      '> • `/deployclaimbounty` → sets up and posts the claim board — two categories (Claim, Submissions), a shared board channel and archive category. A bounty\'s claim type (set at approval) decides which category its claim opens under.',
-      '> • `/deployticket` → sets up and posts the support board (general help tickets).',
-      '> • `/deployqanda` → posts the Q&A board.',
-      '> • **Admin site** → [lumi-chan-production.up.railway.app](https://lumi-chan-production.up.railway.app/) — view/edit every bounty, browse active and archived tickets (with message logs), and edit all the bot\'s board/button/message text from a browser (Discord/Google login required, admin/dev only).',
+      '**What staff have to do:**',
+      '',
+      '📋 **Reviewing a Request**',
+      '> • **Approve** opens a 2-step edit form: step 1 (preferred name, name, description, tier, claim type) → **Continue** → step 2 (reward type, reward — and, if Claim Type is Submissions, what the leaderboard tracks: a number like kills/score, or a judgment call like best clip). Nothing is saved until the last step is submitted.',
+      '> • **Deny** just closes the ticket.',
+      '> • Titles must be unique among approved/claimed bounties — a duplicate name blocks approval.',
+      '',
+      '🏁 **Reviewing a Claim**',
+      '> • **Approve Claim** on a normal bounty finalizes it for good — posts to the claim board, archives the ticket, removes it from the board.',
+      '> • **Approve Claim** on a Submissions bounty instead promotes that claimant to leader (asks for a numeric value first, if that\'s what it tracks) — the submissions board updates live, and whoever they just beat gets their ticket reopened automatically for another look.',
+      '> • **Deny Claim** archives the ticket without changing the bounty — it (or, for Submissions, the leaderboard spot) stays open to try again.',
+      '> • **Include Requester** gives the original requester access to the claim ticket too; **Add Premade** *(Premade Allowed only)* adds a group via a searchable member picker.',
+      '> • **🏆 Close Bounty**, on a Submissions bounty\'s live board post, ends it for good — declares whoever\'s currently leading the winner and logs it to the claim board, same as a normal approved claim.',
+      '',
+      '🛠️ **Ongoing Tools**',
+      '> • `/allbounties` → review bounty history: **status** *(required)* — Approved/Pending/Claimed/Denied/All; **order** — newest/oldest/A–Z; **filter** — *By Status* to group results; **export** — *Yes* for a spreadsheet instead of the on-screen list.',
+      '> • **Admin site** → [lumi-chan-production.up.railway.app](https://lumi-chan-production.up.railway.app/) — view/edit every bounty (including live leaderboard standings on Submissions ones), browse active and archived tickets with message logs, and edit all the bot\'s board/button/message text from a browser (Discord/Google login required, admin/dev only).',
     ],
   },
 
@@ -519,6 +571,7 @@ module.exports = {
       claimCategory: 'The category new CLAIM-type bounty claim tickets will be created under.',
       submissionsCategory: 'The category new SUBMISSIONS-type bounty claim tickets will be created under.',
       board: 'The public channel where finalized (approved) claims are posted.',
+      submissionsBoard: 'Public channel for SUBMISSIONS-type bounties — stays live, edited to show the current leader.',
       archiveCategory: 'Category approved claim tickets get MOVED to (make this private/staff-only).',
       staffUser: 'A specific person who can review claims and gets pinged. (Set a role and/or a person.)',
       staffRole: 'A role that can review claims and gets pinged. (Set a role and/or a person.)',
