@@ -522,7 +522,7 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
     const boardMsg = boardChannel ? await boardChannel.messages.fetch(updated.board_message_id).catch(() => null) : null;
     if (boardMsg) {
       await boardMsg.edit({ embeds: [buildLeaderboardEmbed(updated)] }).catch(console.error);
-      notes.push('the submissions board updated');
+      notes.push(`${boardChannel} updated`);
     }
   }
 
@@ -1843,14 +1843,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const closedEmbed = buildLeaderboardEmbed(updated, { closed: true });
       await interaction.update({ embeds: [closedEmbed], components: [] });
 
+      let claimBoardNote = '';
       const claimBoardChannelId = await getClaimBoardChannel();
       if (claimBoardChannelId) {
         const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
-        if (claimBoard) await claimBoard.send({ embeds: [closedEmbed] }).catch(console.error);
+        if (claimBoard) {
+          await claimBoard.send({ embeds: [closedEmbed] }).catch(console.error);
+          claimBoardNote = ` and logged to ${claimBoard}`;
+        }
       }
 
       await interaction.followUp({
-        content: `🏆 **Bounty closed** by ${interaction.user} — winner: <@${updated.leader_id}>.`,
+        content: `🏆 **Bounty closed** by ${interaction.user} — winner: <@${updated.leader_id}>${claimBoardNote}.`,
       });
       return;
     }
