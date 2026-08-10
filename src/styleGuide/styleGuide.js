@@ -897,4 +897,21 @@ ${BASE_STYLES}
 </html>`;
 }
 
-module.exports = { buildStyleGuideHtml, buildLoginPageHtml, BASE_STYLES, topBar, esc };
+// Admin pages (bounties, tickets) and exports all show timestamps in both
+// Pacific and Eastern regardless of the server's own timezone (Railway
+// defaults to UTC) - PT first, then ET, since that's the order the team asked for.
+const DATE_TZ_OPTS = { dateStyle: 'medium', timeZone: 'America/New_York' };
+const TIME_TZ_OPTS = { hour: 'numeric', minute: '2-digit', hour12: true };
+
+function fmtDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  const date = d.toLocaleDateString('en-US', DATE_TZ_OPTS);
+  // Clock time is correctly DST-adjusted per zone; the "PST"/"EST" suffixes
+  // are fixed labels per request rather than Intl's DST-aware PDT/EDT.
+  const pt = d.toLocaleTimeString('en-US', { ...TIME_TZ_OPTS, timeZone: 'America/Los_Angeles' });
+  const et = d.toLocaleTimeString('en-US', { ...TIME_TZ_OPTS, timeZone: 'America/New_York' });
+  return `${date}, ${pt} PST · ${et} EST`;
+}
+
+module.exports = { buildStyleGuideHtml, buildLoginPageHtml, BASE_STYLES, topBar, esc, fmtDate };

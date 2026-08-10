@@ -1,5 +1,6 @@
 const ExcelJS = require('exceljs');
 const TEXT = require('./text');
+const { fmtDate } = require('./styleGuide/styleGuide');
 const { COLORS } = TEXT.VISUALS;
 
 // ── palette ──────────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ async function buildBountiesWorkbook({ entries, label, order, generatedBy }) {
   // ── subtitle band (export metadata) ──────────────────────────────────────
   sheet.mergeCells(r, 1, r, colCount);
   const subtitle = sheet.getCell(r, 1);
-  const when = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+  const when = fmtDate(new Date());
   subtitle.value = `Exported ${when}${generatedBy ? ` by ${generatedBy}` : ''}  •  ${entries.length} total  •  sorted ${order}`;
   subtitle.font = { name: 'Calibri', italic: true, size: 11, color: { argb: NAVY } };
   subtitle.alignment = { horizontal: 'center', vertical: 'middle' };

@@ -3,7 +3,7 @@
 // reads/writes, resolving Discord usernames, syncing the live board post).
 // This file only turns already-resolved data into HTML, same split as
 // styleGuide.js/server.js.
-const { esc, BASE_STYLES, topBar } = require('./styleGuide');
+const { esc, BASE_STYLES, topBar, fmtDate } = require('./styleGuide');
 const { formatAmount, formatGroupType } = require('../bountyCard');
 
 // Player-facing name/description/reward caps mirror MODAL.bountyRequest's
@@ -69,11 +69,6 @@ const STATUS_ORDER = ['pending', 'approved', 'denied', 'cancelled'];
 function statusBadge(status) {
   const label = STATUS_LABELS[status] ?? status;
   return `<span class="status-badge status-${esc(status)}">${esc(label)}</span>`;
-}
-
-function fmtDate(value) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 // `tags` is a { [discordId]: displayTag } map the caller built by resolving

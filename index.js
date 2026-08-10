@@ -438,7 +438,8 @@ async function sendBountyExport(interaction, status, order, groupByStatus) {
     }),
   );
 
-  const formatDate = (d) => (d ? new Date(d).toLocaleDateString('en-US', { dateStyle: 'medium' }) : '');
+  const formatDate = (d) =>
+    d ? new Date(d).toLocaleDateString('en-US', { dateStyle: 'medium', timeZone: 'America/New_York' }) : '';
 
   const entries = rows.map((b) => ({
     name: b.name,

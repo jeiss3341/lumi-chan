@@ -10,7 +10,7 @@
 // configured archive category on close (index.js closeOrArchiveTicket) —
 // closed tickets from before archiving was set up were deleted and have no
 // record here at all.
-const { esc, BASE_STYLES, topBar } = require('./styleGuide');
+const { esc, BASE_STYLES, topBar, fmtDate } = require('./styleGuide');
 
 const TYPE_LABELS = { request: '🏖️ Request', claim: '🏁 Claim', help: '💬 Help' };
 const TYPE_FILTERS = ['all', 'request', 'claim', 'help'];
@@ -22,11 +22,6 @@ function typeBadge(type) {
 
 function statusBadge(status) {
   return `<span class="status-badge status-${esc(status)}">${status === 'active' ? '🟢 Active' : '📦 Archived'}</span>`;
-}
-
-function fmtDate(value) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function pageShell({ title, username, body }) {
