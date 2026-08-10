@@ -16,8 +16,9 @@ server run side by side, sharing one Postgres database.
 ### For players, in Discord
 
 - **Request a bounty** — press a button on the public board, fill out a
-  short form (name, description, reward), preview the card, and submit it.
-  Submitting opens a private ticket where staff review it.
+  short form (an optional preferred name — falls back to your Discord
+  nickname — plus name, description, and reward), preview the card, and
+  submit it. Submitting opens a private ticket where staff review it.
 - **Claim a bounty** — press a button on the claim board, pick an approved
   bounty from a searchable dropdown (paginated past Discord's 25-option
   limit), and submit proof (notes plus up to 3 screenshots/clips, or a
@@ -30,7 +31,12 @@ server run side by side, sharing one Postgres database.
 ### For staff, in Discord
 
 - **Approve / Deny** a bounty request, editing the wording/reward first if
-  needed. Approved bounties post to the public board automatically.
+  needed. Approving opens a two-step form — Discord caps a modal at 5
+  fields, so step 1 (preferred name, name, description) leads into step 2
+  (tier, reward type, reward) via a Continue button. Tier
+  (None/Bronze/Silver/Gold) and reward type (Money/NP Code/Merch-Items/
+  Other) are staff-only, never shown to players. Approved bounties post to
+  the public board automatically.
 - **Approve / Deny** a claim. Approving marks it claimed, removes it from
   the request board, posts it to a separate claim board, and moves the
   ticket into an archive category (or closes it, if none is configured).
@@ -60,7 +66,8 @@ sections:
   Postgres and take effect immediately — no redeploy, no restart.
 - **Bounties** — view every bounty (filterable by status), create one
   directly (skipping the normal ticket flow — useful for sponsor
-  bounties), edit its fields, and freely change its status
+  bounties), edit its fields (name, description, reward, donator, tier,
+  reward type), and freely change its status
   (pending/approved/denied/cancelled, any to any) with an inline
   confirmation. Editing or approving a bounty that's already posted
   updates its live Discord message to match.

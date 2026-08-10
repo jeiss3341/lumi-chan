@@ -83,7 +83,7 @@ function buildBountyModal() {
 function buildApproveModalStep1(bounty) {
   const modal = new ModalBuilder()
     .setCustomId(`approve_modal_step1:${bounty.id}`)
-    .setTitle(TEXT.MODAL.approveEdit.title);
+    .setTitle(`${TEXT.MODAL.approveEdit.title} (1/2)`);
 
   const donatorInput = new TextInputBuilder()
     .setCustomId('bounty_donator')

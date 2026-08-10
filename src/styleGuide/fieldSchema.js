@@ -51,6 +51,9 @@ const FIELD_SCHEMA = [
   { unit: 'requesting-board', path: 'PANEL.request.buttonEmoji', kind: 'emojiField', label: 'Button emoji' },
 
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.title', kind: 'modalTitle', label: 'Form title (modal title bar)' },
+  { unit: 'requesting-form', path: 'MODAL.bountyRequest.donator.label', kind: 'modalFieldLabel', label: 'Preferred Name field — label' },
+  { unit: 'requesting-form', path: 'MODAL.bountyRequest.donator.description', kind: 'modalFieldHelp', label: 'Preferred Name field — helper text' },
+  { unit: 'requesting-form', path: 'MODAL.bountyRequest.donator.placeholder', kind: 'modalPlaceholder', label: 'Preferred Name field — placeholder' },
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.name.label', kind: 'modalFieldLabel', label: 'Name field — label' },
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.name.description', kind: 'modalFieldHelp', label: 'Name field — helper text' },
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.name.placeholder', kind: 'modalPlaceholder', label: 'Name field — placeholder' },
@@ -60,9 +63,6 @@ const FIELD_SCHEMA = [
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.reward.label', kind: 'modalFieldLabel', label: 'Reward field — label' },
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.reward.description', kind: 'modalFieldHelp', label: 'Reward field — helper text' },
   { unit: 'requesting-form', path: 'MODAL.bountyRequest.reward.placeholder', kind: 'modalPlaceholder', label: 'Reward field — placeholder' },
-  { unit: 'requesting-form', path: 'MODAL.bountyRequest.donator.label', kind: 'modalFieldLabel', label: 'Preferred Name field — label' },
-  { unit: 'requesting-form', path: 'MODAL.bountyRequest.donator.description', kind: 'modalFieldHelp', label: 'Preferred Name field — helper text' },
-  { unit: 'requesting-form', path: 'MODAL.bountyRequest.donator.placeholder', kind: 'modalPlaceholder', label: 'Preferred Name field — placeholder' },
 
   { unit: 'requesting-preview-buttons', path: 'TICKET.submitButton', kind: 'buttonLabel', label: 'Submit — label' },
   { unit: 'requesting-preview-buttons', path: 'TICKET.submitEmoji', kind: 'emojiField', label: 'Submit — emoji' },

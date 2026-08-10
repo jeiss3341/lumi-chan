@@ -21,6 +21,14 @@ const PRIZE_TYPES = [
   { value: 'Other', label: 'Other' },
 ];
 
+// Same idea for Tier, matching the DB's tier values.
+const TIERS = [
+  { value: 'None', label: 'None' },
+  { value: 'Bronze', label: 'Bronze' },
+  { value: 'Silver', label: 'Silver' },
+  { value: 'Gold', label: 'Gold' },
+];
+
 const STATUS_LABELS = {
   pending: '⏳ Pending',
   approved: '✅ Approved',
@@ -248,11 +256,12 @@ function buildBountyNewHtml({ username, errors = {}, values = {} }) {
   </header>
   <div class="detail-card">
     <form method="POST" action="/bounties/new">
+      ${fieldRow({ name: 'donator_name', label: 'Donator', value: values.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters. Leave blank to use your own name.` })}
       ${fieldRow({ name: 'name', label: 'Name', value: values.name, error: errors.name, hint: `Max ${LIMITS.name} characters.` })}
       ${fieldRow({ name: 'description', label: 'Description', value: values.description, error: errors.description, multiline: true, hint: `Max ${LIMITS.description} characters.` })}
+      ${selectRow({ name: 'tier', label: 'Tier', value: values.tier, error: errors.tier, options: TIERS, hint: 'Optional.' })}
+      ${selectRow({ name: 'prize_type', label: 'Reward Type', value: values.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward below.' })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: values.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters — free text, e.g. "$10" or "250 NP".` })}
-      ${fieldRow({ name: 'donator_name', label: 'Donator', value: values.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters. Leave blank to use your own name.` })}
-      ${selectRow({ name: 'prize_type', label: 'Reward Type', value: values.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward above.' })}
       <div class="save-row">
         <button type="submit" name="initialStatus" value="pending" class="btn">Create as Pending</button>
         <button type="submit" name="initialStatus" value="approved" class="btn btn-primary">Create &amp; Post to Board</button>
@@ -297,6 +306,7 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
     <div class="detail-meta">
       <div><div class="m-label">Requester</div><div class="m-value">${userLabel(bounty.requester_id, tags)}</div></div>
       <div><div class="m-label">Donator</div><div class="m-value">${esc(bounty.donator_name || '—')}</div></div>
+      <div><div class="m-label">Tier</div><div class="m-value">${esc(bounty.tier || '—')}</div></div>
       <div><div class="m-label">Claimer</div><div class="m-value">${userLabel(bounty.claimer_id, tags)}</div></div>
       <div><div class="m-label">Created</div><div class="m-value">${fmtDate(bounty.created_at)}</div></div>
       <div><div class="m-label">Decided</div><div class="m-value">${fmtDate(bounty.approved_at)}</div></div>
@@ -305,11 +315,12 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
     </div>
 
     <form method="POST" action="/bounties/${bounty.id}/edit">
+      ${fieldRow({ name: 'donator_name', label: 'Donator', value: v.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters.` })}
       ${fieldRow({ name: 'name', label: 'Name', value: v.name, error: errors.name, hint: `Max ${LIMITS.name} characters.` })}
       ${fieldRow({ name: 'description', label: 'Description', value: v.description, error: errors.description, multiline: true, hint: `Max ${LIMITS.description} characters.` })}
+      ${selectRow({ name: 'tier', label: 'Tier', value: v.tier, error: errors.tier, options: TIERS, hint: 'Optional.' })}
+      ${selectRow({ name: 'prize_type', label: 'Reward Type', value: v.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward below.' })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: v.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters.` })}
-      ${fieldRow({ name: 'donator_name', label: 'Donator', value: v.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters.` })}
-      ${selectRow({ name: 'prize_type', label: 'Reward Type', value: v.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward above.' })}
       <div class="save-row">
         <button type="submit" class="btn btn-primary">Save Changes</button>
       </div>
@@ -323,4 +334,4 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
   return pageShell({ title: bounty.name, active: 'bounties', username, body });
 }
 
-module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES };
+module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS };

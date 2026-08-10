@@ -9,10 +9,11 @@ const {
   approveBounty, setBountyStatus, setBoardMessage, getBoardChannel,
 } = require('../db');
 const { buildBountyEmbed } = require('../bountyCard');
-const { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES } = require('./bounties');
+const { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS } = require('./bounties');
 const { readBody, redirectTo } = require('./httpUtil');
 
 const VALID_PRIZE_TYPES = PRIZE_TYPES.map((t) => t.value);
+const VALID_TIERS = TIERS.map((t) => t.value);
 
 const VALID_STATUSES = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled'];
 
@@ -104,7 +105,7 @@ async function boardMessageLink(client, bounty) {
   return `https://discord.com/channels/${channel.guild.id}/${bounty.board_channel_id}/${bounty.board_message_id}`;
 }
 
-function validateFields({ name, description, reward, donatorName, prizeType }) {
+function validateFields({ name, description, reward, donatorName, prizeType, tier }) {
   const errors = {};
   if (!name) errors.name = 'Cannot be blank.';
   else if (name.length > LIMITS.name) errors.name = `Too long — ${name.length} characters, max is ${LIMITS.name}.`;
@@ -115,6 +116,7 @@ function validateFields({ name, description, reward, donatorName, prizeType }) {
   if (reward.length > LIMITS.reward) errors.reward = `Too long — ${reward.length} characters, max is ${LIMITS.reward}.`;
   if (donatorName.length > LIMITS.donator) errors.donator_name = `Too long — ${donatorName.length} characters, max is ${LIMITS.donator}.`;
   if (prizeType && !VALID_PRIZE_TYPES.includes(prizeType)) errors.prize_type = 'Not a valid reward type.';
+  if (tier && !VALID_TIERS.includes(tier)) errors.tier = 'Not a valid tier.';
   return errors;
 }
 
@@ -174,11 +176,13 @@ async function handleCreateBounty(req, res, session, client) {
   const donatorName = (params.get('donator_name') || '').trim() || session.username;
   const prizeTypeRaw = params.get('prize_type') || '';
   const prizeType = VALID_PRIZE_TYPES.includes(prizeTypeRaw) ? prizeTypeRaw : '';
+  const tierRaw = params.get('tier') || '';
+  const tier = VALID_TIERS.includes(tierRaw) ? tierRaw : '';
   const initialStatus = params.get('initialStatus') === 'approved' ? 'approved' : 'pending';
 
-  const errors = validateFields({ name, description, reward, donatorName, prizeType });
+  const errors = validateFields({ name, description, reward, donatorName, prizeType, tier });
   if (Object.keys(errors).length) {
-    handleNewBountyPage(res, session, { errors, values: { name, description, reward, donator_name: donatorName, prize_type: prizeType } });
+    handleNewBountyPage(res, session, { errors, values: { name, description, reward, donator_name: donatorName, prize_type: prizeType, tier } });
     return;
   }
 
@@ -187,7 +191,7 @@ async function handleCreateBounty(req, res, session, client) {
     if (conflict) {
       handleNewBountyPage(res, session, {
         errors: { name: `"${conflict.name}" is already approved or claimed — pick a different name.` },
-        values: { name, description, reward, donator_name: donatorName, prize_type: prizeType },
+        values: { name, description, reward, donator_name: donatorName, prize_type: prizeType, tier },
       });
       return;
     }
@@ -197,7 +201,7 @@ async function handleCreateBounty(req, res, session, client) {
     // requester_id is NOT NULL and there's no real player behind an
     // admin-created bounty, so it's attributed to whichever admin made it.
     const id = await createBounty({ name, description, reward, requesterId: session.id, donatorName });
-    if (prizeType) await updateBounty(id, { name, description, reward, donatorName, prizeType });
+    if (prizeType || tier) await updateBounty(id, { name, description, reward, donatorName, prizeType, tier });
     let warnText = '';
     if (initialStatus === 'approved') {
       await approveBounty(id, session.id);
@@ -209,7 +213,7 @@ async function handleCreateBounty(req, res, session, client) {
     redirectTo(res, bountyEditRedirect(id, msg, Boolean(warnText)), 303);
   } catch (err) {
     console.error('Failed to create bounty:', err);
-    handleNewBountyPage(res, session, { errors: {}, values: { name, description, reward, donator_name: donatorName, prize_type: prizeType } });
+    handleNewBountyPage(res, session, { errors: {}, values: { name, description, reward, donator_name: donatorName, prize_type: prizeType, tier } });
   }
 }
 
@@ -265,10 +269,12 @@ async function handleEditBounty(req, res, session, client, id) {
   const donatorName = (params.get('donator_name') || '').trim();
   const prizeTypeRaw = params.get('prize_type') || '';
   const prizeType = VALID_PRIZE_TYPES.includes(prizeTypeRaw) ? prizeTypeRaw : '';
+  const tierRaw = params.get('tier') || '';
+  const tier = VALID_TIERS.includes(tierRaw) ? tierRaw : '';
 
-  const errors = validateFields({ name, description, reward, donatorName, prizeType });
+  const errors = validateFields({ name, description, reward, donatorName, prizeType, tier });
   if (Object.keys(errors).length) {
-    await handleEditBountyPage(req, res, session, client, id, { errors, values: { name, description, reward, donator_name: donatorName, prize_type: prizeType } });
+    await handleEditBountyPage(req, res, session, client, id, { errors, values: { name, description, reward, donator_name: donatorName, prize_type: prizeType, tier } });
     return;
   }
 
@@ -277,14 +283,14 @@ async function handleEditBounty(req, res, session, client, id) {
     if (conflict) {
       await handleEditBountyPage(req, res, session, client, id, {
         errors: { name: `"${conflict.name}" is already approved or claimed — pick a different name.` },
-        values: { name, description, reward, donator_name: donatorName, prize_type: prizeType },
+        values: { name, description, reward, donator_name: donatorName, prize_type: prizeType, tier },
       });
       return;
     }
   }
 
   try {
-    await updateBounty(id, { name, description, reward, donatorName: donatorName || null, prizeType: prizeType || null });
+    await updateBounty(id, { name, description, reward, donatorName: donatorName || null, prizeType: prizeType || null, tier: tier || null });
     let warnText = '';
     if (bounty.status === 'approved') {
       const updated = await getBountyById(id);
@@ -296,7 +302,7 @@ async function handleEditBounty(req, res, session, client, id) {
     console.error('Failed to save bounty edit:', err);
     await handleEditBountyPage(req, res, session, client, id, {
       errors: {},
-      values: { name, description, reward, donator_name: donatorName, prize_type: prizeType },
+      values: { name, description, reward, donator_name: donatorName, prize_type: prizeType, tier },
       message: { text: 'Something went wrong saving — try again.', warn: true },
     });
   }
