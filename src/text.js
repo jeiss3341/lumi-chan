@@ -149,6 +149,10 @@ module.exports = {
       fieldClaimant: 'Claimant',
       fieldReward: 'Reward',
       fieldOriginalRequester: 'Original Requester',
+      // Only added to the card once Add Premade actually adds someone (see
+      // index.js add_premade_select) — not part of buildClaimEmbed's usual
+      // fields, so a solo claim never shows an empty one.
+      fieldTeammates: 'Teammates',
     },
     // Shared "it's done" title, used once a claim is finalized — on the
     // claim ticket/board card itself (index.js → approve_claim), AND when

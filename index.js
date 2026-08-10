@@ -1610,7 +1610,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await interaction.reply({
         content: 'Search for the teammates to add:',
-        components: [addPremadeSelectRow(customIdArg(interaction))],
+        components: [addPremadeSelectRow(customIdArg(interaction), interaction.message.id)],
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -1620,7 +1620,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // access Include Requester gives, one overwrite per person. A failure on
     // one (e.g. someone who's left the server since the picker loaded)
     // doesn't block the rest. Result is posted to the channel (not just the
-    // ephemeral picker) so the claimant and other staff can see who was added.
+    // ephemeral picker) so the claimant and other staff can see who was added
+    // — and added to the ticket's own claim card as a Teammates field, so
+    // they're visible on the card itself (and carry through to the finalized
+    // claim board post once approved, since approve_claim rebuilds from
+    // whatever this message's embed looks like at that point).
     if (interaction.isUserSelectMenu() && interaction.customId.startsWith('add_premade_select')) {
       await interaction.deferUpdate();
 
@@ -1652,6 +1656,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.channel.send({
           content: `👥 Added ${added.map((id) => `<@${id}>`).join(', ')} to this ticket by ${interaction.user}.${failedNote}`,
         });
+
+        const ticketMessageId = interaction.customId.split(':')[2];
+        const ticketMessage = ticketMessageId ? await interaction.channel.messages.fetch(ticketMessageId).catch(() => null) : null;
+        if (ticketMessage?.embeds[0]) {
+          const teammatesFieldName = resolveText('CARD.claim.fieldTeammates');
+          const updatedEmbed = EmbedBuilder.from(ticketMessage.embeds[0]);
+          const fields = updatedEmbed.data.fields ?? [];
+          const existing = fields.find((f) => f.name === teammatesFieldName);
+          const existingIds = existing ? existing.value.match(/\d+/g) ?? [] : [];
+          const allIds = [...new Set([...existingIds, ...added])];
+          const teammatesField = { name: teammatesFieldName, value: allIds.map((id) => `<@${id}>`).join(', '), inline: true };
+          updatedEmbed.setFields(existing ? fields.map((f) => (f === existing ? teammatesField : f)) : [...fields, teammatesField]);
+          await ticketMessage.edit({ embeds: [updatedEmbed] }).catch(console.error);
+        }
       }
       return;
     }

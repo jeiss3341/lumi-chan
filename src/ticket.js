@@ -162,10 +162,15 @@ function claimReviewButtons(bountyId, groupType) {
 // Shown after "Add Premade" is pressed — a native Discord user-search picker
 // (type-to-filter server members, up to 10 at once). Granting access happens
 // when this is submitted (see index.js add_premade_select), not here.
-function addPremadeSelectRow(bountyId) {
+// ticketMessageId is baked into the customId (same idea as
+// helpTicketCloseConfirm's messageId below) so the select's submit handler
+// knows which message to add a Teammates field to — this select lives on
+// its own fresh ephemeral reply, not the ticket message itself, so
+// interaction.message there won't be it.
+function addPremadeSelectRow(bountyId, ticketMessageId) {
   return new ActionRowBuilder().addComponents(
     new UserSelectMenuBuilder()
-      .setCustomId(`add_premade_select:${bountyId}`)
+      .setCustomId(`add_premade_select:${bountyId}:${ticketMessageId}`)
       .setPlaceholder(resolveText('TICKET.addPremadePlaceholder'))
       .setMinValues(1)
       .setMaxValues(10),
