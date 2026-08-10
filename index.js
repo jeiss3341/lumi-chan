@@ -656,6 +656,14 @@ async function sendBountyExport(interaction, status, order, groupByStatus) {
 // forever, no matter how many times the bot restarts.
 // ─────────────────────────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Scopes this process to a single guild when ACTIVE_GUILD_ID is set. This
+  // bot's token can end up connected more than once at a time (this Railway
+  // deployment, plus a local dev run against a test server) — without this,
+  // both instances receive and act on every interaction in every guild the
+  // bot is in, doubling every panel post/ticket/reply. Unset (the default)
+  // means no filtering, same as before this existed.
+  if (process.env.ACTIVE_GUILD_ID && interaction.guildId !== process.env.ACTIVE_GUILD_ID) return;
+
   try {
     // /deployrequestbounty  →  save category + staff (role and/or person) + board channel, then post the panel
     if (interaction.isChatInputCommand() && interaction.commandName === 'deployrequestbounty') {
