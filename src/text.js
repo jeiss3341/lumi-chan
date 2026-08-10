@@ -182,10 +182,15 @@ module.exports = {
         placeholder: 'e.g. Squortle',
       },
     },
-    // src/modal.js → buildApproveEditModal(). Staff's edit-before-approve
-    // form — pre-filled with the bounty's current values, so no placeholders.
+    // src/modal.js → buildApproveModalStep1()/buildApproveModalStep2(). Staff's
+    // edit-before-approve form — pre-filled with the bounty's current values,
+    // so no placeholders. Split across two modals (see modal.js).
     approveEdit: {
       title: 'Review & Approve Bounty',
+      donator: {
+        label: 'Preferred Name',
+        description: "Who to credit — leave blank to use the requester's current Discord nickname",
+      },
       name: {
         label: 'Name of Bounty',
         description: 'Edit if needed — this is what ships to the board',
@@ -201,6 +206,10 @@ module.exports = {
       rewardType: {
         label: 'Reward Type',
         description: 'Money, NP Code, Merch/Items, or Other — staff only, never shown to players',
+      },
+      tier: {
+        label: 'Tier',
+        description: 'None, Bronze, Silver, or Gold — staff only, never shown to players',
       },
     },
     // src/modal.js → buildClaimProofModal(). The claimant's proof form.

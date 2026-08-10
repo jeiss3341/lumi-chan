@@ -16,7 +16,7 @@ const {
 } = require('discord.js');
 const { buildPanel, buildClaimPanel, buildTicketPanel, buildQandAPanel } = require('./src/panel');
 const { buildQandAMenu, buildQandAAnswer } = require('./src/qanda');
-const { buildBountyModal, buildApproveEditModal, buildClaimProofModal, buildTicketDetailsModal } = require('./src/modal');
+const { buildBountyModal, buildApproveModalStep1, buildApproveModalStep2, buildClaimProofModal, buildTicketDetailsModal } = require('./src/modal');
 const { buildBountyEmbed, buildClaimEmbed, formatAmount } = require('./src/bountyCard');
 const { buildBountiesWorkbook } = require('./src/bountyExport');
 const {
@@ -158,11 +158,22 @@ function extractMentionId(embed, fieldName) {
 const PENDING_BOUNTY_TTL_MS = 15 * 60 * 1000;
 const pendingBounties = new Map();
 
+// Same idea, for the Approve flow's step 1 → step 2 handoff (see
+// approve_modal_step1 / approve_modal_step2 below) — Discord's 5-component
+// modal cap means the 6 approve fields (preferred name, name, description,
+// reward, reward type, tier) can't fit in one modal, so step 1's values sit
+// here until step 2 is submitted. Keyed by bounty id, not user id, since
+// that's what's already threaded through every customId in this flow.
+const pendingApprovals = new Map();
+
 // unref() so this timer never by itself keeps the process alive.
 setInterval(() => {
   const cutoff = Date.now() - PENDING_BOUNTY_TTL_MS;
   for (const [userId, data] of pendingBounties) {
     if (data.createdAt < cutoff) pendingBounties.delete(userId);
+  }
+  for (const [bountyId, data] of pendingApprovals) {
+    if (data.createdAt < cutoff) pendingApprovals.delete(bountyId);
   }
 }, 5 * 60 * 1000).unref();
 
@@ -912,9 +923,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // "Approve" inside a ticket  →  staff only. Opens an editable preview of the
-    // bounty first; nothing is finalized/shipped to the board until that modal
-    // is submitted (see approve_edit_modal below).
+    // "Approve" inside a ticket  →  staff only. Opens step 1 of the editable
+    // preview; nothing is finalized/shipped to the board until step 2 is
+    // submitted (see approve_modal_step1 / approve_modal_step2 below).
     if (interaction.isButton() && interaction.customId.startsWith('approve_bounty')) {
       if (!(await requireStaff(interaction, getRequestStaff, 'approve bounties'))) return;
 
@@ -947,7 +958,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       // showModal must be the FIRST response — nothing above this sends one.
-      await interaction.showModal(buildApproveEditModal(bounty));
+      await interaction.showModal(buildApproveModalStep1(bounty));
       return;
     }
 
@@ -998,17 +1009,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // Approve/edit modal submitted  →  save whatever staff edited, THEN
-    // finalize approval, ship it to the board, and close the ticket. This is
-    // what "Approve" actually commits — the button click above only opens
-    // this modal.
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_edit_modal')) {
+    // Step 1 of the approve/edit modal submitted  →  stash the values and
+    // hand off to a "Continue" button, since a modal submission can't open
+    // another modal directly. Nothing is saved to the DB yet.
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_modal_step1')) {
       const bountyId = customIdArg(interaction);
 
+      const donatorRaw = interaction.fields.getTextInputValue('bounty_donator').trim();
       const name = interaction.fields.getTextInputValue('bounty_name');
       const description = interaction.fields.getTextInputValue('bounty_description');
-      const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
-      const [prizeType] = interaction.fields.getStringSelectValues('bounty_reward_type');
 
       const bounty = await getBountyById(bountyId);
       if (!bounty) {
@@ -1019,12 +1028,108 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Left blank — fall back to the requester's current server nickname,
+      // same rule as the player-facing request form. Falls further back to
+      // whatever was already stored if they've since left the server.
+      let donatorName = donatorRaw;
+      if (!donatorName) {
+        const requesterMember = await interaction.guild.members.fetch(bounty.requester_id).catch(() => null);
+        donatorName = requesterMember?.displayName ?? bounty.donator_name ?? null;
+      }
+
+      // interaction.message is the ticket message the Approve button lives
+      // on — step 2's modal submit won't have that context anymore (it opens
+      // from the Continue button below, on a new ephemeral message), so it's
+      // captured here and carried through pendingApprovals.
+      pendingApprovals.set(bountyId, {
+        name,
+        description,
+        donatorName,
+        ticketChannelId: interaction.channelId,
+        ticketMessageId: interaction.message.id,
+        createdAt: Date.now(),
+      });
+
+      await interaction.reply({
+        content: 'Name and description saved. Press **Continue** to set the tier, reward type, and reward.',
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`approve_modal_step2:${bountyId}`)
+              .setLabel('Continue')
+              .setStyle(ButtonStyle.Primary),
+          ),
+        ],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // "Continue" button  →  opens step 2. Only reachable from step 1's own
+    // ephemeral reply, so no separate staff check — Discord already scopes
+    // that message's buttons to the staff member who received it.
+    if (interaction.isButton() && interaction.customId.startsWith('approve_modal_step2:')) {
+      const bountyId = customIdArg(interaction);
+
+      if (!pendingApprovals.has(bountyId)) {
+        await interaction.reply({
+          content: '⚠️ This approval session expired — press **Approve** again to restart.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      const bounty = await getBountyById(bountyId);
+      if (!bounty) {
+        pendingApprovals.delete(bountyId);
+        await interaction.reply({
+          content: resolveText('REPLIES.bountyMissing'),
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      // showModal must be the FIRST response — nothing above this sends one.
+      await interaction.showModal(buildApproveModalStep2(bounty));
+      return;
+    }
+
+    // Step 2 submitted  →  this is what "Approve" actually commits: save
+    // everything from both steps, finalize approval, ship it to the board,
+    // and close the ticket.
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_modal_step2_submit')) {
+      const bountyId = customIdArg(interaction);
+
+      const [tier] = interaction.fields.getStringSelectValues('bounty_tier');
+      const [prizeType] = interaction.fields.getStringSelectValues('bounty_reward_type');
+      const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
+
+      const step1 = pendingApprovals.get(bountyId);
+      if (!step1) {
+        await interaction.reply({
+          content: '⚠️ This approval session expired — press **Approve** again to restart.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+      const { name, description, donatorName, ticketChannelId, ticketMessageId } = step1;
+
+      const bounty = await getBountyById(bountyId);
+      if (!bounty) {
+        pendingApprovals.delete(bountyId);
+        await interaction.reply({
+          content: resolveText('REPLIES.bountyMissing'),
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
       // Block approval if this title already belongs to another approved/claimed
-      // bounty — staff has to change the name and press Approve again. The
-      // ticket/buttons are untouched (this reply is ephemeral, not an update),
-      // so they can just retry.
+      // bounty — staff has to press Approve again from the start with a
+      // different name (step 1 collected the name, not this step).
       const conflict = await findTitleConflict(name, bountyId);
       if (conflict) {
+        pendingApprovals.delete(bountyId);
         await interaction.reply({
           content: resolveText('REPLIES.approveTitleTaken').replace('%s', conflict.name),
           flags: MessageFlags.Ephemeral,
@@ -1032,22 +1137,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // donatorName is re-supplied unchanged — staff don't edit that field here.
-      await updateBounty(bountyId, {
-        name,
-        description,
-        reward: amountRaw,
-        donatorName: bounty.donator_name,
-        prizeType,
-      });
+      await updateBounty(bountyId, { name, description, reward: amountRaw, donatorName, prizeType, tier });
 
       // Guarded on 'pending' — the admin site can change a bounty's status
       // too (src/styleGuide/bountyRoutes.js), so if it was denied/cancelled
       // there between this ticket opening and Approve being pressed, don't
-      // silently re-approve it over that decision. Ephemeral reply leaves
-      // the ticket and its buttons intact so staff can look and retry.
+      // silently re-approve it over that decision.
       const approvedRow = await setBountyStatus(bountyId, 'approved', interaction.user.id, 'pending');
       if (!approvedRow) {
+        pendingApprovals.delete(bountyId);
         const current = await getBountyById(bountyId);
         await interaction.reply({
           content: `⚠️ This bounty is no longer pending — it's **${current?.status ?? 'gone'}** now (changed from the admin site, or by someone else). Nothing was approved.`,
@@ -1065,9 +1163,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         status: 'approved',
       });
 
-      // This modal was opened from the ticket message's Approve button, so
-      // update() edits that same message (turns it green, drops the buttons).
-      await interaction.update({ embeds: [approved], components: [] });
+      // This modal was opened from the "Continue" button's own ephemeral
+      // message, not the ticket message — so unlike the old single-step
+      // flow, interaction.update() would edit the wrong message. Fetch and
+      // edit the actual ticket message using the id step 1 stashed instead.
+      const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
+      const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
+      if (ticketMessage) await ticketMessage.edit({ embeds: [approved], components: [] }).catch(() => null);
 
       // Post the (possibly edited) approved card to the public board, and
       // remember where it landed so a later claim can find and edit it.
@@ -1082,8 +1184,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
+      pendingApprovals.delete(bountyId);
+
       const editApproveArchiveCategoryId = await getRequestArchiveCategory();
-      await interaction.followUp({
+      await interaction.reply({
         content: editApproveArchiveCategoryId
           ? `✅ **Approved** by ${interaction.user}${boardNote}. Archiving this ticket…`
           : `✅ **Approved** by ${interaction.user}${boardNote}. Closing this ticket in a few seconds…`,

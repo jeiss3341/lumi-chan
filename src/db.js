@@ -85,9 +85,11 @@
     // donator_name: who to credit for the prize — optional, set at request
     // time (falls back to the requester's Discord nickname if left blank).
     // prize_type: cash/NP/Item/Other — staff-only, set during approval, never
-    // collected from the player. Both added after bounties already existed.
+    // collected from the player. tier: None/Bronze/Silver/Gold — same,
+    // staff-only. All three added after bounties already existed.
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS donator_name TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS prize_type TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS tier TEXT;`);
 
     // reward used to be NUMERIC (dollars-only) — it's free text now, since
     // rewards can be anything ("250 NP", "5 gems", not just cash). Safe to
@@ -301,10 +303,10 @@
 
   // Overwrites the editable fields, e.g. after staff tweaks them in the
   // approve/edit modal. Status/approver are handled separately by approveBounty.
-  async function updateBounty(id, { name, description, reward, donatorName, prizeType }) {
+  async function updateBounty(id, { name, description, reward, donatorName, prizeType, tier }) {
     await pool.query(
-      `UPDATE bounties SET name = $2, description = $3, reward = $4, donator_name = $5, prize_type = $6 WHERE id = $1`,
-      [id, name, description, reward, donatorName ?? null, prizeType ?? null],
+      `UPDATE bounties SET name = $2, description = $3, reward = $4, donator_name = $5, prize_type = $6, tier = $7 WHERE id = $1`,
+      [id, name, description, reward, donatorName ?? null, prizeType ?? null, tier ?? null],
     );
   }
 

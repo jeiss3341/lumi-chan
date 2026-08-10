@@ -12,11 +12,24 @@ const { resolveText } = require('./styleGuide/liveText');
 // The bounty request form. Modern modals wrap every input in a LabelBuilder,
 // which gives you the header + subtext you saw in the screenshot.
 //
-// Max 5 top-level components per modal. We use 4 (name, description, reward, preferred name).
+// Max 5 top-level components per modal. We use 4 (preferred name, name, description, reward).
 function buildBountyModal() {
   const modal = new ModalBuilder().setCustomId('bounty_modal').setTitle(resolveText('MODAL.bountyRequest.title'));
 
-  // 1) Name of Bounty — single line
+  // 1) Preferred Name — optional. Who to credit for the prize; falls back to
+  // the requester's Discord nickname if left blank (see index.js ticket_submit).
+  const donatorInput = new TextInputBuilder()
+    .setCustomId('bounty_donator')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder(resolveText('MODAL.bountyRequest.donator.placeholder'))
+    .setMaxLength(50)
+    .setRequired(false);
+  const donatorLabel = new LabelBuilder()
+    .setLabel(resolveText('MODAL.bountyRequest.donator.label'))
+    .setDescription(resolveText('MODAL.bountyRequest.donator.description'))
+    .setTextInputComponent(donatorInput);
+
+  // 2) Name of Bounty — single line
   const nameInput = new TextInputBuilder()
     .setCustomId('bounty_name')
     .setStyle(TextInputStyle.Short)
@@ -28,7 +41,7 @@ function buildBountyModal() {
     .setDescription(resolveText('MODAL.bountyRequest.name.description'))
     .setTextInputComponent(nameInput);
 
-  // 2) Description — paragraph, all the flavor they want
+  // 3) Description — paragraph, all the flavor they want
   const descInput = new TextInputBuilder()
     .setCustomId('bounty_description')
     .setStyle(TextInputStyle.Paragraph)
@@ -52,32 +65,36 @@ function buildBountyModal() {
     .setDescription(resolveText('MODAL.bountyRequest.reward.description'))
     .setTextInputComponent(amountInput);
 
-  // 5) Preferred Name — optional. Who to credit for the prize; falls back to
-  // the requester's Discord nickname if left blank (see index.js ticket_submit).
-  const donatorInput = new TextInputBuilder()
-    .setCustomId('bounty_donator')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder(resolveText('MODAL.bountyRequest.donator.placeholder'))
-    .setMaxLength(50)
-    .setRequired(false);
-  const donatorLabel = new LabelBuilder()
-    .setLabel(resolveText('MODAL.bountyRequest.donator.label'))
-    .setDescription(resolveText('MODAL.bountyRequest.donator.description'))
-    .setTextInputComponent(donatorInput);
-
-  modal.addLabelComponents(nameLabel, descLabel, amountLabel, donatorLabel);
+  modal.addLabelComponents(donatorLabel, nameLabel, descLabel, amountLabel);
   return modal;
 }
 
 // Shown when staff presses Approve on a ticket. Pre-filled with the bounty's
-// current values so they can tweak wording/reward before it ships to the
-// board — nothing is finalized until they submit this modal. Staff-only, so
-// (unlike the rest of this file) not part of the editable style-guide page —
-// still reads straight from TEXT.
-function buildApproveEditModal(bounty) {
+// current values so they can tweak wording before it ships to the board —
+// nothing is finalized until step 2 (buildApproveModalStep2) is submitted.
+// Staff-only, so (unlike the rest of this file) not part of the editable
+// style-guide page — still reads straight from TEXT.
+//
+// Split across two modals because Discord caps a modal at 5 top-level
+// components and this bounty now needs 6 fields total (preferred name, name,
+// description, reward, reward type, tier). A modal submission can't directly
+// open another modal, so index.js bridges the two with an intermediate
+// "Continue" button — see approve_modal_step1 / approve_modal_step2 there.
+function buildApproveModalStep1(bounty) {
   const modal = new ModalBuilder()
-    .setCustomId(`approve_edit_modal:${bounty.id}`)
+    .setCustomId(`approve_modal_step1:${bounty.id}`)
     .setTitle(TEXT.MODAL.approveEdit.title);
+
+  const donatorInput = new TextInputBuilder()
+    .setCustomId('bounty_donator')
+    .setStyle(TextInputStyle.Short)
+    .setValue(bounty.donator_name ?? '')
+    .setMaxLength(50)
+    .setRequired(false);
+  const donatorLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.donator.label)
+    .setDescription(TEXT.MODAL.approveEdit.donator.description)
+    .setTextInputComponent(donatorInput);
 
   const nameInput = new TextInputBuilder()
     .setCustomId('bounty_name')
@@ -101,20 +118,34 @@ function buildApproveEditModal(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.description.description)
     .setTextInputComponent(descInput);
 
-  const amountInput = new TextInputBuilder()
-    .setCustomId('bounty_amount')
-    .setStyle(TextInputStyle.Short)
-    .setValue(bounty.reward ?? '')
-    .setMaxLength(50)
-    .setRequired(true);
-  const amountLabel = new LabelBuilder()
-    .setLabel(TEXT.MODAL.approveEdit.reward.label)
-    .setDescription(TEXT.MODAL.approveEdit.reward.description)
-    .setTextInputComponent(amountInput);
+  modal.addLabelComponents(donatorLabel, nameLabel, descLabel);
+  return modal;
+}
 
-  // Reward Type — staff only, never shown to players. Classifies the free-text
-  // reward above as cash/NP/item/other; pre-selects the bounty's current value
-  // if it already has one (e.g. re-approving after a status revert).
+// Step 2 — shown after the "Continue" button following step 1's submit.
+// Tier and Reward Type are staff-only, never shown to players.
+function buildApproveModalStep2(bounty) {
+  const modal = new ModalBuilder()
+    .setCustomId(`approve_modal_step2_submit:${bounty.id}`)
+    .setTitle(`${TEXT.MODAL.approveEdit.title} (2/2)`);
+
+  const tierSelect = new StringSelectMenuBuilder()
+    .setCustomId('bounty_tier')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'None', value: 'None', default: !bounty.tier || bounty.tier === 'None' },
+      { label: 'Bronze', value: 'Bronze', default: bounty.tier === 'Bronze' },
+      { label: 'Silver', value: 'Silver', default: bounty.tier === 'Silver' },
+      { label: 'Gold', value: 'Gold', default: bounty.tier === 'Gold' },
+    );
+  const tierLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.tier.label)
+    .setDescription(TEXT.MODAL.approveEdit.tier.description)
+    .setStringSelectMenuComponent(tierSelect);
+
+  // Reward Type — pre-selects the bounty's current value if it already has
+  // one (e.g. re-approving after a status revert).
   const rewardTypeSelect = new StringSelectMenuBuilder()
     .setCustomId('bounty_reward_type')
     .setMinValues(1)
@@ -130,7 +161,18 @@ function buildApproveEditModal(bounty) {
     .setDescription(TEXT.MODAL.approveEdit.rewardType.description)
     .setStringSelectMenuComponent(rewardTypeSelect);
 
-  modal.addLabelComponents(nameLabel, descLabel, amountLabel, rewardTypeLabel);
+  const amountInput = new TextInputBuilder()
+    .setCustomId('bounty_amount')
+    .setStyle(TextInputStyle.Short)
+    .setValue(bounty.reward ?? '')
+    .setMaxLength(50)
+    .setRequired(true);
+  const amountLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.reward.label)
+    .setDescription(TEXT.MODAL.approveEdit.reward.description)
+    .setTextInputComponent(amountInput);
+
+  modal.addLabelComponents(tierLabel, rewardTypeLabel, amountLabel);
   return modal;
 }
 
@@ -203,4 +245,4 @@ function buildTicketDetailsModal(source) {
   return modal;
 }
 
-module.exports = { buildBountyModal, buildApproveEditModal, buildClaimProofModal, buildTicketDetailsModal };
+module.exports = { buildBountyModal, buildApproveModalStep1, buildApproveModalStep2, buildClaimProofModal, buildTicketDetailsModal };
