@@ -382,14 +382,24 @@ async function closeOrArchiveTicket(channel, archiveCategoryId, newName) {
 }
 
 // Shared tail of the approve flow, once there's nothing left to collect —
-// posts the approved card to `boardGetter`'s channel and archives the
-// request ticket. 'claim'-type bounties call this right after step 2;
+// edits the request ticket to its final approved state (content + strips
+// Approve/Deny), posts the approved card to `boardGetter`'s channel, and
+// archives the ticket. 'claim'-type bounties call this right after step 2;
 // 'submissions'-type bounties call it after the extra step 3 (leaderboard
 // setup — see approve_modal_step3_submit below), pointed at the submissions
-// board instead of the regular one. `interaction` is whichever modal-submit
-// interaction is finishing the flow — same as before this was split out,
-// its own .channel/.guild are the ticket's, regardless of which step opened it.
-async function finalizeApproval({ interaction, bountyId, approved, boardGetter, boardComponents }) {
+// board instead of the regular one.
+//
+// Deliberately the ONLY place the ticket message gets edited — a
+// submissions bounty's DB row can already say 'approved' after step 2 while
+// step 3 is still pending, and leaving the ticket (and its buttons) alone
+// until this actually runs means an abandoned step 3 is recoverable by just
+// pressing Approve again (see approve_bounty's resume check below), instead
+// of a bounty stuck approved-but-unfinished with no way back in.
+async function finalizeApproval({ interaction, bountyId, approved, boardGetter, boardComponents, ticketChannelId, ticketMessageId }) {
+  const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
+  const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
+  if (ticketMessage) await ticketMessage.edit({ embeds: [approved], components: [] }).catch(() => null);
+
   let boardNote = '';
   const boardChannelId = await boardGetter();
   if (boardChannelId) {
@@ -1152,6 +1162,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Resume path: a submissions bounty whose step 3 (leaderboard setup)
+      // never happened after an earlier Approve — status/name/description/
+      // etc. are already fully saved from that attempt, only
+      // submission_metric_kind is still unset. Skip straight back to step 3
+      // instead of restarting the whole step1→step2 flow (which would also
+      // just get rejected — setBountyStatus's own guard only allows
+      // pending→approved, and this bounty is already approved).
+      if (bounty.status === 'approved' && bounty.claim_type === 'submissions' && !bounty.submission_metric_kind) {
+        const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
+        const approved = buildBountyEmbed({
+          name: bounty.name,
+          description: bounty.description,
+          amountRaw: bounty.reward,
+          groupType: bounty.group_type,
+          user: requester ?? interaction.user,
+          status: 'approved',
+        });
+
+        pendingApprovals.set(bountyId, {
+          approved,
+          ticketChannelId: interaction.channelId,
+          ticketMessageId: interaction.message.id,
+          createdAt: Date.now(),
+        });
+
+        await interaction.reply({
+          content: "This bounty was already approved, but its leaderboard setup was never finished. Press **Continue** to finish it.",
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`approve_modal_step3:${bountyId}`)
+                .setLabel('Continue')
+                .setStyle(ButtonStyle.Primary),
+            ),
+          ],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
       // showModal must be the FIRST response — nothing above this sends one.
       await interaction.showModal(buildApproveModalStep1(bounty));
       return;
@@ -1369,23 +1419,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         status: 'approved',
       });
 
-      // This modal was opened from the "Continue" button's own ephemeral
-      // message, not the ticket message — so unlike the old single-step
-      // flow, interaction.update() would edit the wrong message. Fetch and
-      // edit the actual ticket message using the id step 1 stashed instead.
-      // Stripped of Approve/Deny either way, right here — the bounty's
-      // official record already flipped to 'approved' above, regardless of
-      // whether a submissions bounty still has one more step to go.
-      const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
-      const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
-      if (ticketMessage) await ticketMessage.edit({ embeds: [approved], components: [] }).catch(() => null);
-
       // Submissions bounties need one more step (leaderboard setup) before
-      // they're actually postable/archivable — see approve_modal_step3
-      // below. Everything up to here (DB row, ticket message) is already
-      // done regardless; only the board post + archive wait.
+      // they're actually finalized — see approve_modal_step3 below. The DB
+      // row is already fully updated/approved above either way; the ticket
+      // message itself is deliberately left untouched until finalizeApproval
+      // actually runs (see that function's own comment) — so a submissions
+      // bounty whose step 3 never happens is still sitting here with its
+      // Approve/Deny buttons live, not stuck.
       if (claimType === 'submissions') {
-        pendingApprovals.set(bountyId, { approved, createdAt: Date.now() });
+        pendingApprovals.set(bountyId, { approved, ticketChannelId, ticketMessageId, createdAt: Date.now() });
         await interaction.reply({
           content: "✅ **Approved.** Press **Continue** to set up this bounty's leaderboard (numeric or judgment-call).",
           components: [
@@ -1401,20 +1443,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      await finalizeApproval({ interaction, bountyId, approved, boardGetter: getBoardChannel });
+      await finalizeApproval({ interaction, bountyId, approved, boardGetter: getBoardChannel, ticketChannelId, ticketMessageId });
       pendingApprovals.delete(bountyId);
       return;
     }
 
     // "Continue" button following step 2, submissions-type bounties only —
     // opens step 3 (leaderboard setup). Same reasoning as approve_modal_step2
-    // above for skipping a separate staff check.
+    // above for skipping a separate staff check. Also the resume path —
+    // approve_bounty's own resume check below seeds pendingApprovals the
+    // same shape and points its own Continue button here too.
     if (interaction.isButton() && interaction.customId.startsWith('approve_modal_step3:')) {
       const bountyId = customIdArg(interaction);
 
       if (!pendingApprovals.has(bountyId)) {
         await interaction.reply({
-          content: "⚠️ This session expired — the bounty is already approved, but its leaderboard was never set up. Ask an admin to finish it from the web panel, or re-approve it (Claim Type still Submissions) to try again.",
+          content: '⚠️ This session expired — press **Approve** again to pick up where you left off.',
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -1446,7 +1490,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const step2 = pendingApprovals.get(bountyId);
       if (!step2) {
         await interaction.reply({
-          content: "⚠️ This session expired — the bounty is already approved, but its leaderboard was never set up. Ask an admin to finish it from the web panel, or re-approve it (Claim Type still Submissions) to try again.",
+          content: '⚠️ This session expired — press **Approve** again to pick up where you left off.',
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -1460,6 +1504,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         approved: step2.approved,
         boardGetter: getSubmissionsBoardChannel,
         boardComponents: [closeSubmissionBountyRow(bountyId)],
+        ticketChannelId: step2.ticketChannelId,
+        ticketMessageId: step2.ticketMessageId,
       });
       pendingApprovals.delete(bountyId);
       return;
