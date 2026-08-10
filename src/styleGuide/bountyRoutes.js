@@ -327,21 +327,20 @@ async function handleEditBounty(req, res, session, client, id) {
 }
 
 // POST /bounties/:id/status — free status change among pending/approved/
-// denied/cancelled, any to any (matches src/styleGuide/bounties.js's
-// "Change Status" control, revealed via the same inline confirm the user
-// asked for instead of a browser confirm() popup). 'claimed' is
-// deliberately not a valid target: claimer_id is only ever set by the real
-// Discord claim flow (src/db.js claimBounty), and this route has no field
-// to collect one, so setting a bounty to "claimed" here would leave that
-// column blank while the status said otherwise.
+// denied/cancelled, any to any, from ANY current status including claimed
+// (matches src/styleGuide/bounties.js's "Change Status" control, revealed
+// via the same inline confirm the user asked for instead of a browser
+// confirm() popup). 'claimed' is deliberately not a valid TARGET: claimer_id
+// is only ever set by the real Discord claim flow (src/db.js claimBounty),
+// and this route has no field to collect one, so setting a bounty to
+// "claimed" here would leave that column blank while the status said
+// otherwise. Moving a currently-claimed bounty AWAY (e.g. to undo a
+// wrongly-processed claim) is fine — claimer_id/claimed_at are just left as
+// historical leftovers, not cleared.
 async function handleChangeBountyStatus(req, res, session, client, id) {
   const bounty = await getBountyById(id);
   if (!bounty) {
     notFound(res);
-    return;
-  }
-  if (bounty.status === 'claimed') {
-    redirectTo(res, bountyEditRedirect(id, "A claimed bounty's status is locked — only the real claim flow can change it.", true), 303);
     return;
   }
 

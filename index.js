@@ -1460,6 +1460,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('approve_claim')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'approve claims'))) return;
 
+      // Guards against approving a ticket that was already denied — denying a
+      // CLAIM doesn't change the bounty's own status (it stays 'approved' so
+      // others can still claim it), so claimBounty's own status check below
+      // can't catch this the way bounty approve/deny already does.
+      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+        await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
       const bountyId = customIdArg(interaction);
       const claimantId = interaction.message.embeds[0]
         ? extractMentionId(interaction.message.embeds[0], 'Claimant')
@@ -1513,12 +1522,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // lockPermissions adopts the archive category's own overwrites, so it
       // drops out of everyone's sight except whoever that category is scoped
       // to. Renamed to reflect it's done, then that category gets
-      // re-alphabetized so it stays easy to scan by name. Prefix is "claim"
-      // or "submission" (not "declared") to match deny_claim's "denied-claim"
-      // / "denied-submission" — sorts the two types together either way.
+      // re-alphabetized so it stays easy to scan by name. Mirrors
+      // deny_claim's "denied-claim"/"denied-submission" naming.
       const archiveCategoryId = await getClaimArchiveCategory();
       if (archiveCategoryId) {
-        const approvedPrefix = updated.claim_type === 'submissions' ? 'submission' : 'claim';
+        const approvedPrefix = updated.claim_type === 'submissions' ? 'declared-submission' : 'declared-claim';
         await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true }).catch(console.error);
         await interaction.channel.setName(toChannelName(approvedPrefix, updated.name)).catch(console.error);
         await alphabetizeCategory(interaction.channel.parent);
@@ -1552,12 +1560,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const deniedPrefix = bounty?.claim_type === 'submissions' ? 'denied-submission' : 'denied-claim';
       const deniedName = bounty ? toChannelName(deniedPrefix, bounty.name) : undefined;
 
-      await interaction.reply({
+      // Recolor and strip the buttons from the original ticket message —
+      // approve_claim already does this on success; deny_claim didn't, which
+      // is why Approve Claim (and Include Requester / Add Premade) stayed
+      // clickable on an already-denied ticket. update() edits that same
+      // message since this button lives on it; the actual "denied" text goes
+      // out as a followUp right after, same as approve_claim's flow.
+      const deniedEmbed = interaction.message.embeds[0]
+        ? EmbedBuilder.from(interaction.message.embeds[0]).setColor(COLORS.denied)
+        : null;
+      await interaction.update({ embeds: deniedEmbed ? [deniedEmbed] : [], components: [] });
+
+      await closeOrArchiveTicket(interaction.channel, claimDenyArchiveCategoryId, deniedName);
+
+      await interaction.followUp({
         content: claimDenyArchiveCategoryId
           ? `⛔ **Claim denied** by ${interaction.user}. Archiving this ticket…`
           : `⛔ **Claim denied** by ${interaction.user}. Closing this ticket in a few seconds…`,
       });
-      await closeOrArchiveTicket(interaction.channel, claimDenyArchiveCategoryId, deniedName);
       return;
     }
   } catch (err) {

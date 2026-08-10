@@ -281,7 +281,7 @@ module.exports = {
     // picker (src/ticket.js → addPremadeSelectRow) so staff can grant the
     // claimant's teammates access to the ticket too.
     addPremadeButton: 'Add Premade',
-    addPremadeEmoji: '🧑‍🤝‍🧑',
+    addPremadeEmoji: '🤝',
     addPremadePlaceholder: 'Search for teammates to add…',
     // src/ticket.js → createHelpTicket(). The one button inside a general
     // support ticket — no approve/deny here, just closing it once resolved.

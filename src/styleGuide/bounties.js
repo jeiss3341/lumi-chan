@@ -320,14 +320,13 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
   const v = values ?? bounty;
   const toast = message ? `<div class="toast${message.warn ? ' warn' : ''}">${esc(message.text)}</div>` : '';
 
-  // 'claimed' locks status changes here — flipping it would leave claimer_id
-  // stale/inconsistent, since that's only ever set by the real claim flow
-  // (src/db.js claimBounty), not by anything on this page. Every other
-  // status can move freely to any of the other three.
+  // 'claimed' can never be a target — only the real in-Discord claim flow
+  // (src/db.js claimBounty) sets claimer_id/claimed_at, so setting status to
+  // 'claimed' from here would leave those blank/inconsistent. But a bounty
+  // that's CURRENTLY claimed can still move away to any of the other four —
+  // e.g. to undo a wrongly-processed claim — so the control always shows.
   const otherStatuses = STATUS_ORDER.filter((s) => s !== bounty.status);
-  const statusChanger = bounty.status === 'claimed'
-    ? '<span class="fhint">Status is locked while claimed — only the real in-Discord claim flow can set or change this.</span>'
-    : `<details class="status-changer">
+  const statusChanger = `<details class="status-changer">
       <summary class="btn">Change Status</summary>
       <div class="confirm-box">
         <p>Are you sure? Moving a bounty to Approved posts/updates it on the board; moving it away from Approved pulls it off the board. Takes effect immediately.</p>
