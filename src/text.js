@@ -237,7 +237,7 @@ module.exports = {
       // again on individual claims.
       submissionMetricKind: {
         label: 'Tracked By',
-        description: 'Numeric (score/kills — staff enters a value each time) or Other (staff\'s judgment call, e.g. best clip)',
+        description: 'Numeric (enter a value each time, e.g. kills) or Other (staff judgment call, e.g. best clip)',
       },
       submissionMetricLabel: {
         label: 'Label',

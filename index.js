@@ -21,7 +21,6 @@ const {
   buildBountyModal,
   buildApproveModalStep1,
   buildApproveModalStep2,
-  buildApproveModalStep3,
   buildSubmissionValueModal,
   buildClaimProofModal,
   buildTicketDetailsModal,
@@ -177,10 +176,12 @@ const pendingBounties = new Map();
 
 // Same idea, for the Approve flow's step 1 → step 2 handoff (see
 // approve_modal_step1 / approve_modal_step2 below) — Discord's 5-component
-// modal cap means the 6 approve fields (preferred name, name, description,
-// reward, reward type, tier) can't fit in one modal, so step 1's values sit
-// here until step 2 is submitted. Keyed by bounty id, not user id, since
-// that's what's already threaded through every customId in this flow.
+// modal cap means the up-to-8 approve fields (preferred name, name,
+// description, tier, claim type, reward, reward type, and — for a
+// Submissions bounty — its leaderboard setup) can't fit in one modal, so
+// step 1's values sit here until step 2 is submitted. Keyed by bounty id,
+// not user id, since that's what's already threaded through every customId
+// in this flow.
 const pendingApprovals = new Map();
 
 // Same idea again, for a numeric-metric submissions claim: Approve Claim
@@ -381,20 +382,13 @@ async function closeOrArchiveTicket(channel, archiveCategoryId, newName) {
   closeChannelSoon(channel);
 }
 
-// Shared tail of the approve flow, once there's nothing left to collect —
-// edits the request ticket to its final approved state (content + strips
-// Approve/Deny), posts the approved card to `boardGetter`'s channel, and
-// archives the ticket. 'claim'-type bounties call this right after step 2;
-// 'submissions'-type bounties call it after the extra step 3 (leaderboard
-// setup — see approve_modal_step3_submit below), pointed at the submissions
-// board instead of the regular one.
-//
-// Deliberately the ONLY place the ticket message gets edited — a
-// submissions bounty's DB row can already say 'approved' after step 2 while
-// step 3 is still pending, and leaving the ticket (and its buttons) alone
-// until this actually runs means an abandoned step 3 is recoverable by just
-// pressing Approve again (see approve_bounty's resume check below), instead
-// of a bounty stuck approved-but-unfinished with no way back in.
+// Shared tail of the approve flow, called once at the end of step 2 (both
+// 'claim' and 'submissions' bounties reach it the same way — step 2 already
+// collected everything, leaderboard setup included, see
+// buildApproveModalStep2) — edits the request ticket to its final approved
+// state (content + strips Approve/Deny), posts the approved card to
+// `boardGetter`'s channel, and archives the ticket. 'submissions'-type
+// bounties point this at the submissions board instead of the regular one.
 async function finalizeApproval({ interaction, bountyId, approved, boardGetter, boardComponents, ticketChannelId, ticketMessageId }) {
   const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
   const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
@@ -1170,46 +1164,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // Resume path: a submissions bounty whose step 3 (leaderboard setup)
-      // never happened after an earlier Approve — status/name/description/
-      // etc. are already fully saved from that attempt, only
-      // submission_metric_kind is still unset. Skip straight back to step 3
-      // instead of restarting the whole step1→step2 flow (which would also
-      // just get rejected — setBountyStatus's own guard only allows
-      // pending→approved, and this bounty is already approved).
-      if (bounty.status === 'approved' && bounty.claim_type === 'submissions' && !bounty.submission_metric_kind) {
-        const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
-        const approved = buildBountyEmbed({
-          name: bounty.name,
-          description: bounty.description,
-          amountRaw: bounty.reward,
-          groupType: bounty.group_type,
-          user: requester ?? interaction.user,
-          status: 'approved',
-        });
-
-        pendingApprovals.set(bountyId, {
-          approved,
-          ticketChannelId: interaction.channelId,
-          ticketMessageId: interaction.message.id,
-          createdAt: Date.now(),
-        });
-
-        await interaction.reply({
-          content: "This bounty was already approved, but its leaderboard setup was never finished. Press **Continue** to finish it.",
-          components: [
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`approve_modal_step3:${bountyId}`)
-                .setLabel('Continue')
-                .setStyle(ButtonStyle.Primary),
-            ),
-          ],
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
       // showModal must be the FIRST response — nothing above this sends one.
       await interaction.showModal(buildApproveModalStep1(bounty));
       return;
@@ -1278,6 +1232,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const donatorRaw = interaction.fields.getTextInputValue('bounty_donator').trim();
       const name = interaction.fields.getTextInputValue('bounty_name');
       const description = interaction.fields.getTextInputValue('bounty_description');
+      const [tier] = interaction.fields.getStringSelectValues('bounty_tier');
+      const [claimType] = interaction.fields.getStringSelectValues('bounty_claim_type');
 
       const bounty = await getBountyById(bountyId);
       if (!bounty) {
@@ -1305,13 +1261,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         name,
         description,
         donatorName,
+        tier,
+        claimType,
         ticketChannelId: interaction.channelId,
         ticketMessageId: interaction.message.id,
         createdAt: Date.now(),
       });
 
       await interaction.reply({
-        content: 'Name and description saved. Press **Continue** to set the tier, reward type, and reward.',
+        content: 'Saved. Press **Continue** to set the reward'
+          + (claimType === 'submissions' ? ' and this bounty\'s leaderboard.' : '.'),
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -1331,7 +1290,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('approve_modal_step2:')) {
       const bountyId = customIdArg(interaction);
 
-      if (!pendingApprovals.has(bountyId)) {
+      const step1 = pendingApprovals.get(bountyId);
+      if (!step1) {
         await interaction.reply({
           content: '⚠️ This approval session expired — press **Approve** again to restart.',
           flags: MessageFlags.Ephemeral,
@@ -1350,19 +1310,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       // showModal must be the FIRST response — nothing above this sends one.
-      await interaction.showModal(buildApproveModalStep2(bounty));
+      // claimType (from step 1) decides whether step 2 also asks for the
+      // leaderboard setup, so the whole flow stays 2 pages either way.
+      await interaction.showModal(buildApproveModalStep2(bounty, step1.claimType));
       return;
     }
 
     // Step 2 submitted  →  this is what "Approve" actually commits: save
-    // everything from both steps, finalize approval, ship it to the board,
-    // and close the ticket.
+    // everything from both steps (including the leaderboard setup, if this
+    // is a Submissions bounty — step 2's fields vary based on step 1's
+    // Claim Type, see buildApproveModalStep2), finalize approval, ship it
+    // to the right board, and close the ticket. Always one shot — no more
+    // step 3, so there's no window where a bounty can end up approved in
+    // the DB but not yet posted/archived.
     if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_modal_step2_submit')) {
       const bountyId = customIdArg(interaction);
 
-      const [tier] = interaction.fields.getStringSelectValues('bounty_tier');
       const [prizeType] = interaction.fields.getStringSelectValues('bounty_reward_type');
-      const [claimType] = interaction.fields.getStringSelectValues('bounty_claim_type');
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
 
       const step1 = pendingApprovals.get(bountyId);
@@ -1373,7 +1337,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
         return;
       }
-      const { name, description, donatorName, ticketChannelId, ticketMessageId } = step1;
+      const { name, description, donatorName, tier, claimType, ticketChannelId, ticketMessageId } = step1;
+
+      // Only present when step 1's Claim Type was Submissions — step 2 was
+      // built without these fields at all otherwise (buildApproveModalStep2).
+      let submissionMetric = null;
+      if (claimType === 'submissions') {
+        const [kind] = interaction.fields.getStringSelectValues('submission_metric_kind');
+        const label = interaction.fields.getTextInputValue('submission_metric_label').trim();
+        submissionMetric = { kind, label };
+      }
 
       const bounty = await getBountyById(bountyId);
       if (!bounty) {
@@ -1401,6 +1374,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // groupType is re-supplied unchanged — staff don't set that here, it's
       // fixed by the requester at request time.
       await updateBounty(bountyId, { name, description, reward: amountRaw, donatorName, prizeType, tier, groupType: bounty.group_type, claimType });
+      if (submissionMetric) await setSubmissionMetric(bountyId, submissionMetric);
 
       // Guarded on 'pending' — the admin site can change a bounty's status
       // too (src/styleGuide/bountyRoutes.js), so if it was denied/cancelled
@@ -1427,93 +1401,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         status: 'approved',
       });
 
-      // Submissions bounties need one more step (leaderboard setup) before
-      // they're actually finalized — see approve_modal_step3 below. The DB
-      // row is already fully updated/approved above either way; the ticket
-      // message itself is deliberately left untouched until finalizeApproval
-      // actually runs (see that function's own comment) — so a submissions
-      // bounty whose step 3 never happens is still sitting here with its
-      // Approve/Deny buttons live, not stuck.
-      if (claimType === 'submissions') {
-        pendingApprovals.set(bountyId, { approved, ticketChannelId, ticketMessageId, createdAt: Date.now() });
-        await interaction.reply({
-          content: "✅ **Approved.** Press **Continue** to set up this bounty's leaderboard (numeric or judgment-call).",
-          components: [
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`approve_modal_step3:${bountyId}`)
-                .setLabel('Continue')
-                .setStyle(ButtonStyle.Primary),
-            ),
-          ],
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      await finalizeApproval({ interaction, bountyId, approved, boardGetter: getBoardChannel, ticketChannelId, ticketMessageId });
-      pendingApprovals.delete(bountyId);
-      return;
-    }
-
-    // "Continue" button following step 2, submissions-type bounties only —
-    // opens step 3 (leaderboard setup). Same reasoning as approve_modal_step2
-    // above for skipping a separate staff check. Also the resume path —
-    // approve_bounty's own resume check below seeds pendingApprovals the
-    // same shape and points its own Continue button here too.
-    if (interaction.isButton() && interaction.customId.startsWith('approve_modal_step3:')) {
-      const bountyId = customIdArg(interaction);
-
-      if (!pendingApprovals.has(bountyId)) {
-        await interaction.reply({
-          content: '⚠️ This session expired — press **Approve** again to pick up where you left off.',
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      const bounty = await getBountyById(bountyId);
-      if (!bounty) {
-        pendingApprovals.delete(bountyId);
-        await interaction.reply({
-          content: resolveText('REPLIES.bountyMissing'),
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      // showModal must be the FIRST response — nothing above this sends one.
-      await interaction.showModal(buildApproveModalStep3(bounty));
-      return;
-    }
-
-    // Step 3 submitted  →  saves the leaderboard definition, then finishes
-    // exactly what step 2 does for a 'claim'-type bounty (board post +
-    // archive), just pointed at the submissions board instead.
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_modal_step3_submit')) {
-      const bountyId = customIdArg(interaction);
-      const [kind] = interaction.fields.getStringSelectValues('submission_metric_kind');
-      const label = interaction.fields.getTextInputValue('submission_metric_label').trim();
-
-      const step2 = pendingApprovals.get(bountyId);
-      if (!step2) {
-        await interaction.reply({
-          content: '⚠️ This session expired — press **Approve** again to pick up where you left off.',
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      await setSubmissionMetric(bountyId, { kind, label });
-
       await finalizeApproval({
         interaction,
         bountyId,
-        approved: step2.approved,
-        boardGetter: getSubmissionsBoardChannel,
-        boardComponents: [closeSubmissionBountyRow(bountyId)],
-        ticketChannelId: step2.ticketChannelId,
-        ticketMessageId: step2.ticketMessageId,
+        approved,
+        boardGetter: claimType === 'submissions' ? getSubmissionsBoardChannel : getBoardChannel,
+        boardComponents: claimType === 'submissions' ? [closeSubmissionBountyRow(bountyId)] : undefined,
+        ticketChannelId,
+        ticketMessageId,
       });
       pendingApprovals.delete(bountyId);
       return;
