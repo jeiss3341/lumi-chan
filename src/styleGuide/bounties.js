@@ -4,6 +4,7 @@
 // This file only turns already-resolved data into HTML, same split as
 // styleGuide.js/server.js.
 const { esc, BASE_STYLES, topBar, fmtDate } = require('./styleGuide');
+const { resolveText } = require('./liveText');
 const { formatAmount, formatGroupType } = require('../bountyCard');
 const { labelText } = require('./discordUsers');
 
@@ -82,6 +83,26 @@ function userLabel(id, tags) {
   return label
     ? `${esc(labelText(label))} <span class="id-hint mono">${esc(id)}</span>`
     : `<span class="mono">${esc(id)}</span>`;
+}
+
+// Submissions-bounty leaderboard label — human-readable metric kind (the DB
+// only stores 'numeric'/'text'), and the standing line itself, same wording
+// as src/bountyCard.js's leaderboardLine() but with userLabel() (a resolved
+// name + id) in place of a raw <@id> Discord mention, since this renders as
+// a web page, not a Discord embed.
+function formatMetricKind(raw) {
+  if (raw === 'numeric') return 'Numeric';
+  if (raw === 'text') return 'Judgment call';
+  return '—';
+}
+
+function standingLine(bounty, tags) {
+  if (!bounty.leader_id) return resolveText('CARD.submissions.noLeaderYet');
+  const who = userLabel(bounty.leader_id, tags);
+  if (bounty.submission_metric_kind === 'numeric') {
+    return `🏆 ${who} is leading with <strong>${esc(bounty.leader_value)}</strong> ${esc(bounty.submission_metric_label)}`;
+  }
+  return `🏆 ${who} currently has the ${esc(bounty.submission_metric_label)}`;
 }
 
 // Both filter bars link with both query params so switching one doesn't
@@ -233,6 +254,7 @@ function buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, user
           <div class="b-meta">
             Requested by ${userLabel(b.requester_id, tags)} · ${fmtDate(b.created_at)} · ${esc(formatGroupType(b.group_type))}
             ${b.claimer_id ? ` · claimed by ${userLabel(b.claimer_id, tags)}` : ''}
+            ${b.claim_type === 'submissions' && b.leader_id ? ` · ${standingLine(b, tags)}` : ''}
           </div>
         </div>
         <div class="b-reward">${esc(formatAmount(b.reward))}</div>
@@ -357,7 +379,13 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       <div><div class="m-label">Decided</div><div class="m-value">${fmtDate(bounty.approved_at)}</div></div>
       <div><div class="m-label">Claimed</div><div class="m-value">${fmtDate(bounty.claimed_at)}</div></div>
       <div><div class="m-label">Board post</div><div class="m-value board-link">${boardLink ? `<a href="${esc(boardLink)}" target="_blank" rel="noopener">View in Discord ↗</a>` : '—'}</div></div>
+      ${bounty.claim_type === 'submissions' ? `
+      <div><div class="m-label">Tracked By</div><div class="m-value">${esc(formatMetricKind(bounty.submission_metric_kind))}${bounty.submission_metric_label ? ` — ${esc(bounty.submission_metric_label)}` : ''}</div></div>
+      <div><div class="m-label">Standing</div><div class="m-value">${standingLine(bounty, tags)}</div></div>
+      <div><div class="m-label">Leading Since</div><div class="m-value">${fmtDate(bounty.leader_set_at)}</div></div>
+      ` : ''}
     </div>
+    ${bounty.claim_type === 'submissions' ? '<p class="fhint" style="margin:-10px 0 20px;">Leaderboard fields are managed from Discord (claim approvals, Close Bounty) — not editable here.</p>' : ''}
 
     <form method="POST" action="/bounties/${bounty.id}/edit">
       ${fieldRow({ name: 'donator_name', label: 'Donator', value: v.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters.` })}
