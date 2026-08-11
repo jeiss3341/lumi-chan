@@ -120,8 +120,7 @@ async function syncApprovedBoardPost(client, bounty) {
 // off the board, same as the normal claim-approval flow already does. Also
 // pulls down the live #submissions leaderboard post, if one exists — an
 // in-progress submissions bounty getting denied/cancelled from the admin
-// site shouldn't leave a stale card with a working Close Bounty button
-// behind.
+// site shouldn't leave a stale leaderboard card behind.
 async function removeBoardPost(client, bounty) {
   if (bounty.claim_type === 'submissions' && bounty.submissions_board_channel_id && bounty.submissions_board_message_id) {
     const subChannel = await client.channels.fetch(bounty.submissions_board_channel_id).catch(() => null);

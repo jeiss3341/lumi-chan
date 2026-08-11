@@ -522,48 +522,11 @@ async function finalizeApproval({ interaction, bountyId, approved, boardGetter, 
   await interaction.editReply({ content: `✅ **Approved** by ${interaction.user}${boardNote}.${archiveNote}` });
 }
 
-// [🏆 Close Bounty] — the only button that lives on a public board post
-// rather than inside a ticket. Shown on a submissions bounty's live
-// leaderboard card (see finalizeApproval's boardComponents above); staff-
-// gated the same way ticket buttons are (requireStaff, in the
-// close_submission_bounty handler below), just not scoped to a private
-// channel since the board post itself is public.
-function closeSubmissionBountyRow(bountyId) {
-  return new ActionRowBuilder().addComponents(
-    applyEmoji(
-      new ButtonBuilder()
-        .setCustomId(`close_submission_bounty:${bountyId}`)
-        .setLabel(resolveText('TICKET.closeSubmissionBountyButton'))
-        .setStyle(ButtonStyle.Success),
-      'TICKET.closeSubmissionBountyEmoji',
-    ),
-  );
-}
-
-// [Yes, Close It] [Cancel] — the ephemeral (staff-only) "are you sure?"
-// shown after Close Bounty is pressed, before anything actually happens.
-// Same idea as helpTicketCloseConfirm (src/ticket.js) for a support ticket
-// — declaring a winner is still a real, hard-to-undo decision even though
-// it's private now (see confirm_close_submission_bounty), which is why it
-// keeps this step at all.
-function closeSubmissionBountyConfirmRow(bountyId) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`confirm_close_submission_bounty:${bountyId}`)
-      .setLabel('Yes, Close It')
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId('cancel_close_submission_bounty')
-      .setLabel('Cancel')
-      .setStyle(ButtonStyle.Secondary),
-  );
-}
-
 // /endsubmissions' two-step confirmation — this is a bulk, public,
 // can't-undo-from-here action across every pending submission bounty at
-// once (unlike the single-bounty Close Bounty button above), so per staff
-// it gets an extra step: "are you sure" then a second, more explicit
-// "really sure" before anything actually posts.
+// once, so per staff it gets an extra step beyond a normal single "are you
+// sure": this first "are you sure", then a second, more explicit "really
+// sure" before anything actually posts.
 function endSubmissionsConfirmRow1() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('endsubmissions_confirm1').setLabel('Yes, Continue').setStyle(ButtonStyle.Primary),
@@ -603,8 +566,9 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
   // Fetched up front (before setLeader) so any Teammates field Add Premade
   // already put on this ticket's own embed can be read and persisted onto
   // the bounty row — that field only ever lived on this one Discord
-  // message until now, so the board post and Close Bounty card had no way
-  // to know about it otherwise. Reused below instead of re-fetching.
+  // message until now, so the live board post and the eventual closed card
+  // (/endsubmissions) had no way to know about it otherwise. Reused below
+  // instead of re-fetching.
   const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
   const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
   const teammates = getTeammateIdsFromEmbed(ticketMessage?.embeds[0]);
@@ -704,7 +668,9 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
       ? await interaction.guild.channels.fetch(submissionsBoardChannelId).catch(() => null)
       : null;
     if (submissionsBoard) {
-      const boardMsg = await submissionsBoard.send({ embeds: [leaderboardEmbed], components: [closeSubmissionBountyRow(bounty.id)] });
+      // No Close Bounty button — /endsubmissions is now the only way to
+      // close a submissions bounty, individually or in bulk.
+      const boardMsg = await submissionsBoard.send({ embeds: [leaderboardEmbed] });
       await setSubmissionsBoardMessage(bounty.id, submissionsBoard.id, boardMsg.id);
       notes.push(`posted to ${submissionsBoard}`);
     } else {
@@ -729,8 +695,8 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
 // by channel topic, not a DB column — createClaimTicket sets a claim
 // ticket's topic to the bounty's own name (same trick byClaimTitleThenAge
 // uses, src/ticket.js), and nothing else tracks "every ticket ever opened
-// for bounty X." Called when a submissions bounty finalizes (Close Bounty,
-// /endsubmissions) so nothing's left behind with live Approve/Deny buttons
+// for bounty X." Called when /endsubmissions finalizes a bounty, so
+// nothing's left behind with live Approve/Deny buttons
 // pointing at a bounty that's no longer 'approved' — pressing them would
 // otherwise just silently fail (setLeader's own status guard) with a
 // generic error instead of a clear "this bounty is already closed."
@@ -761,14 +727,17 @@ async function archiveDanglingSubmissionTickets(guild, bounty, exceptChannelId) 
   return results;
 }
 
-// Shared by the Close Bounty button and /endsubmissions: declares the
-// current leader the winner in the DB and cleans up every ticket for this
-// bounty (the winner's — already archived at promotion time — plus any
-// other still-open submissions, see archiveDanglingSubmissionTickets).
-// Deliberately does NOT touch the public board post or #claimed — that's
-// the separate, explicit announceSubmissionBountyPublicly step below, so a
-// bounty can be closed privately without broadcasting it (see Close
-// Bounty's own handler for why).
+// Called by /endsubmissions for each still-open bounty it processes:
+// declares the current leader the winner in the DB and cleans up every
+// ticket for this bounty (the winner's — already archived at promotion
+// time — plus any other still-open submissions, see
+// archiveDanglingSubmissionTickets). Deliberately does NOT touch the public
+// board post or #claimed — that's the separate, explicit
+// announceSubmissionBountyPublicly step below, kept apart so a bounty
+// left half-finished by a previous failed /endsubmissions run
+// (status='claimed' but submissions_finalized still false — see
+// getUnfinalizedSubmissionBounties) doesn't get closed a second time on
+// retry, just re-announced.
 async function finalizeSubmissionBountyPrivately(guild, bounty) {
   const updated = await claimBounty(bounty.id, bounty.leader_id);
   if (!updated) return null;
@@ -781,9 +750,9 @@ async function finalizeSubmissionBountyPrivately(guild, bounty) {
 // to say "closed"; per staff, a resolved bounty shouldn't linger visually
 // on the ongoing-submissions channel once #claimed has the permanent
 // record) — then marks submissions_finalized so /endsubmissions never
-// re-announces it. Safe to call on a bounty finalized moments ago (Close
-// Bounty) or one that's been sitting closed for days (/endsubmissions
-// picking up stragglers) — same either way.
+// re-announces it. Safe to call on a bounty finalized moments ago in the
+// same /endsubmissions run, or one that's been sitting closed for days
+// from a previous run — same either way.
 async function announceSubmissionBountyPublicly(guild, bounty) {
   const leaderMember = await guild.members.fetch(bounty.leader_id).catch(() => null);
   const closedEmbed = buildLeaderboardEmbed(bounty, { closed: true, leaderAvatarURL: leaderMember?.displayAvatarURL() });
@@ -2142,77 +2111,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // "🏆 Close Bounty" on a submissions board post  →  staff only. Shows a
-    // confirmation first rather than finalizing immediately — even though
-    // this no longer posts publicly (see confirm_close_submission_bounty
-    // below), declaring a winner is still a real, hard-to-undo decision.
-    if (interaction.isButton() && interaction.customId.startsWith('close_submission_bounty')) {
-      if (!(await requireStaff(interaction, getClaimStaff, 'close a submissions bounty'))) return;
-
-      const bountyId = customIdArg(interaction);
-      const bounty = await getBountyById(bountyId);
-
-      if (!bounty || bounty.status !== 'approved') {
-        await interaction.reply({ content: '⚠️ This bounty is no longer open.', flags: MessageFlags.Ephemeral });
-        return;
-      }
-      if (!bounty.leader_id) {
-        await interaction.reply({ content: '⚠️ Nobody has submitted yet — nothing to close.', flags: MessageFlags.Ephemeral });
-        return;
-      }
-
-      await interaction.reply({
-        content: `Close **${bounty.name}** and declare <@${bounty.leader_id}> the winner? This is private — nothing posts publicly here. Run \`/endsubmissions\` when you're ready to announce results for the whole event.`,
-        components: [closeSubmissionBountyConfirmRow(bountyId)],
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    // "Yes, Close It"  →  only reachable from close_submission_bounty's own
-    // ephemeral reply (Discord scopes that to the staff member who
-    // triggered it), so no separate staff check — same reasoning as
-    // approve_modal_step2/3's own Continue buttons. Re-checks the bounty is
-    // still open in case it changed since the prompt was shown, then closes
-    // it PRIVATELY — declares the leader the winner in the DB, cleans up
-    // every ticket for this bounty (finalizeSubmissionBountyPrivately), but
-    // never touches the public board post or #claimed. /endsubmissions
-    // handles announcing it, for every bounty like this at once, once the
-    // whole event's submissions phase actually wraps up.
-    if (interaction.isButton() && interaction.customId.startsWith('confirm_close_submission_bounty')) {
-      const bountyId = customIdArg(interaction);
-      const bounty = await getBountyById(bountyId);
-
-      if (!bounty || bounty.status !== 'approved' || !bounty.leader_id) {
-        await interaction.update({
-          content: '⚠️ This bounty changed since you confirmed — nothing was closed. Check its current state and try again if needed.',
-          components: [],
-        });
-        return;
-      }
-
-      const updated = await finalizeSubmissionBountyPrivately(interaction.guild, bounty);
-      if (!updated) {
-        await interaction.update({ content: resolveText('REPLIES.claimFinalizeFailed'), components: [] });
-        return;
-      }
-
-      await interaction.update({
-        content: `🏆 **Closed privately** — winner: <@${updated.leader_id}>. Nothing posted publicly. Run \`/endsubmissions\` to announce this (and anything else pending) when the event's submissions phase ends.`,
-        components: [],
-      });
-      return;
-    }
-
-    // "Cancel"  →  drops the confirmation, nothing happens.
-    if (interaction.isButton() && interaction.customId === 'cancel_close_submission_bounty') {
-      await interaction.update({ content: 'Cancelled — nothing was closed.', components: [] });
-      return;
-    }
-
     // /endsubmissions  →  staff only (setDefaultMemberPermissions,
     // deploy-commands.js). Step 1 of 2: counts everything pending (still
-    // open, or closed privately via Close Bounty but not yet announced —
+    // open, or closed but not yet announced from a previous partial run —
     // see getUnfinalizedSubmissionBounties) and asks to continue. Re-counted
     // fresh at each step rather than trusted from here, since staff could
     // take a while clicking through and the real list only matters at the
@@ -2235,9 +2136,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // Step 2 of 2 — the "really sure" (see endSubmissionsConfirmRow2's own
-    // comment for why this gets an extra step beyond Close Bounty's single
-    // confirm: it's bulk AND public, not just one bounty).
+    // Step 2 of 2 — the "really sure" (see endSubmissionsConfirmRow1's own
+    // comment for why this gets a second confirm step: it's bulk AND
+    // public, across every pending bounty at once).
     if (interaction.isButton() && interaction.customId === 'endsubmissions_confirm1') {
       const pending = await getUnfinalizedSubmissionBounties();
       if (pending.length === 0) {
@@ -2252,8 +2153,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // Actually does it — for every pending bounty, closes it first if it's
-    // still open (finalizeSubmissionBountyPrivately, same as Close Bounty),
-    // then announces it publicly (announceSubmissionBountyPublicly). A
+    // still open (finalizeSubmissionBountyPrivately), then announces it
+    // publicly (announceSubmissionBountyPublicly). A
     // failure on one bounty doesn't stop the rest. Several sequential
     // Discord API calls per bounty, so deferred immediately.
     if (interaction.isButton() && interaction.customId === 'endsubmissions_confirm2') {
@@ -2264,9 +2165,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const failed = [];
       const skipped = [];
       for (const bounty of pending) {
-        // Same guard close_submission_bounty already applies one bounty at
-        // a time ("Nobody has submitted yet — nothing to close") — a
-        // bounty can sit 'approved' with zero submissions, and there's no
+        // A bounty can sit 'approved' with zero submissions, and there's no
         // winner to declare or announce for it. Left exactly as-is (still
         // pending, still shows on the next /endsubmissions run) rather than
         // force-closing it with no leader.

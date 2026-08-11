@@ -405,7 +405,7 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       <div><div class="m-label">Leading Since</div><div class="m-value">${fmtDate(bounty.leader_set_at)}</div></div>
       ` : ''}
     </div>
-    ${bounty.claim_type === 'submissions' ? '<p class="fhint" style="margin:-10px 0 20px;">Leaderboard fields are managed from Discord (claim approvals, Close Bounty) — not editable here.</p>' : ''}
+    ${bounty.claim_type === 'submissions' ? '<p class="fhint" style="margin:-10px 0 20px;">Leaderboard fields are managed from Discord (claim approvals, /endsubmissions) — not editable here.</p>' : ''}
 
     <form method="POST" action="/bounties/${bounty.id}/edit">
       ${fieldRow({ name: 'donator_name', label: bounty.group_type === 'premade' ? 'Donator(s)' : 'Donator', value: v.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize${bounty.group_type === 'premade' ? ' (list the whole team)' : ''}. Max ${LIMITS.donator} characters.` })}

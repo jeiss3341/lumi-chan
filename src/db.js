@@ -124,8 +124,9 @@
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_set_at TIMESTAMPTZ;`);
     // Comma-separated Discord ids of the leader's premade teammates (Add
     // Premade on their claim ticket), if any — carried here so the
-    // submissions board post and the eventual Close Bounty card can show
-    // them too, not just the ticket itself. Null for a solo claim.
+    // submissions board post and the eventual finalized card
+    // (/endsubmissions) can show them too, not just the ticket itself. Null
+    // for a solo claim.
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_teammates TEXT;`);
 
     // The LIVE leaderboard post in the submissions board channel — distinct
@@ -142,9 +143,11 @@
 
     // True once a closed submissions bounty's result has actually been
     // posted publicly (board post deleted from the live submissions
-    // channel, "Bounty Closed" card logged to #claimed) — Close Bounty sets
-    // status='claimed' privately without touching this; /endsubmissions is
-    // what flips it, in bulk, for every bounty where it's still false. Lets
+    // channel, "Bounty Closed" card logged to #claimed) — /endsubmissions
+    // is the only thing that ever sets status='claimed' for a submissions
+    // bounty, and it flips this in the same pass, for every bounty where
+    // it's still false (a previous run only got as far as closing before
+    // failing — see finalizeSubmissionBountyPrivately). Lets
     // /endsubmissions tell "already closed, just needs announcing" bounties
     // apart from "still open, needs closing AND announcing" ones. Always
     // false/irrelevant for claim_type='claim' bounties, which never had a
@@ -546,10 +549,10 @@
   }
 
   // Every submissions-type bounty /endsubmissions still needs to touch —
-  // either still open (status='approved', staff never pressed Close Bounty)
-  // or privately closed already (status='claimed' via Close Bounty) but not
-  // yet publicly announced. Once submissions_finalized is true a bounty
-  // never shows up here again.
+  // either still open (status='approved') or closed already from a
+  // previous partial run (status='claimed') but not yet publicly
+  // announced. Once submissions_finalized is true a bounty never shows up
+  // here again.
   async function getUnfinalizedSubmissionBounties() {
     const result = await pool.query(
       `SELECT * FROM bounties

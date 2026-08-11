@@ -161,7 +161,7 @@ module.exports = {
     claimedTitlePrefix: '🏁 Bounty Claimed:',
     // src/bountyCard.js → buildLeaderboardEmbed(). The card posted to the
     // submissions board (see /deployclaimbounty) — stays live, edited in
-    // place as the current leader changes, until staff presses Close Bounty.
+    // place as the current leader changes, until staff runs /endsubmissions.
     submissions: {
       closedTitlePrefix: '🏆 Bounty Closed:',
       fieldStanding: 'Standing',
@@ -319,12 +319,6 @@ module.exports = {
     addPremadeButton: 'Add Premade',
     addPremadeEmoji: '🤝',
     addPremadePlaceholder: 'Search for teammates to add…',
-    // index.js → closeSubmissionBountyRow(). The one button on a
-    // submissions bounty's live board post — declares the current leader
-    // the winner and finalizes it, same as approve_claim does for a normal
-    // one-shot claim.
-    closeSubmissionBountyButton: 'Close Bounty',
-    closeSubmissionBountyEmoji: '🏆',
     // index.js → promoteSubmissionLeader(). Posted in a displaced leader's
     // ticket when someone else takes the lead — %s is replaced with a
     // mention of whoever surpassed them.
@@ -368,8 +362,8 @@ module.exports = {
       '🏆 **Submitting to a Leaderboard Bounty**',
       '> Some bounties (score chases, best-clip contests) aren\'t first-come-first-served — they stay open on their own **submissions board**, always showing whoever\'s currently best. Claiming one works exactly like above (proof + private ticket), but:',
       '> • If staff approve your submission and you\'re currently the best, you become the **leader** — shown live on the submissions board.',
-      '> • If someone later submits something better, they take your spot — your ticket reopens automatically so staff (and you) can take another look. You can try again.',
-      '> • The bounty stays open until staff press **Close Bounty**, declaring whoever\'s leading at that moment the winner.',
+      '> • If someone later submits something better, they take your spot and your ticket is archived — submit a new (better) claim any time to get back in contention.',
+      '> • The bounty stays open until staff run **/endsubmissions**, declaring whoever\'s leading at that moment the winner.',
       '',
       '💬 **Getting Help**',
       '> 1. **Ask a Question** replies with a topic dropdown and instant answers.',
@@ -385,10 +379,10 @@ module.exports = {
       '',
       '🏁 **Reviewing a Claim**',
       '> • **Approve Claim** on a normal bounty finalizes it for good — posts to the claim board, archives the ticket, removes it from the board.',
-      '> • **Approve Claim** on a Submissions bounty instead promotes that claimant to leader (asks for a numeric value first, if that\'s what it tracks) — the submissions board updates live, and whoever they just beat gets their ticket reopened automatically for another look.',
+      '> • **Approve Claim** on a Submissions bounty instead promotes that claimant to leader (asks for a numeric value first, if that\'s what it tracks) — the first approved claim posts the live board card; the submissions board updates in place after that, and whoever they just beat gets their ticket archived.',
       '> • **Deny Claim** archives the ticket without changing the bounty — it (or, for Submissions, the leaderboard spot) stays open to try again.',
       '> • **Include Requester** adds the original requester to the ticket; **Add Premade** *(Premade Allowed only)* adds teammates via a member picker — they show up as a **Teammates** field on the card.',
-      '> • **🏆 Close Bounty** (on the live board post) confirms first, then ends the bounty for good — declares the leader the winner and logs it to the claim board.',
+      '> • **/endsubmissions** (staff-only slash command, two-step confirmation) finalizes and publicly announces every pending Submissions bounty at once — declares each one\'s leader the winner and logs it to the claim board.',
       '',
       '🛠️ **Ongoing Tools**',
       '> • `/allbounties` → review bounty history: **status** *(required)* — Approved/Pending/Claimed/Denied/All; **order** — newest/oldest/A–Z; **filter** — *By Status* to group results; **export** — *Yes* for a spreadsheet instead of the on-screen list.',

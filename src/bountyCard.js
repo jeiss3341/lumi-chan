@@ -60,10 +60,9 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
 }
 
 // The single line describing where a submissions bounty currently stands —
-// shared by buildLeaderboardEmbed below and index.js's ticket-reopen note
-// when a leader gets displaced. No leader yet (freshly approved, nobody's
-// submitted) reads as "Open" instead. `closed` swaps "is leading"/
-// "currently has" for "won with", once staff presses Close Bounty.
+// used by buildLeaderboardEmbed below. No leader yet (freshly approved,
+// nobody's submitted) reads as "Open" instead. `closed` swaps "is leading"/
+// "currently has" for "won with", once /endsubmissions finalizes it.
 function leaderboardLine(bounty, { closed = false } = {}) {
   if (!bounty.leader_id) return resolveText('CARD.submissions.noLeaderYet');
 
@@ -82,7 +81,7 @@ function leaderboardLine(bounty, { closed = false } = {}) {
 // fixed Requester, since this post stays open and gets edited in place as
 // the leader changes (index.js's approve_claim, submissions branch) rather
 // than finalizing on the first approved claim. `closed` retitles it to the
-// final winner announcement, once staff presses Close Bounty. `leaderAvatarURL`
+// final winner announcement, once /endsubmissions finalizes it. `leaderAvatarURL`
 // is optional (the caller fetches it, same reasoning as buildBountyEmbed's
 // `user` param) — omitted entirely (no thumbnail) if the leader can't be
 // resolved, rather than showing a broken image.
@@ -107,7 +106,7 @@ function buildLeaderboardEmbed(bounty, { closed = false, leaderAvatarURL } = {})
   // The leader's premade teammates (Add Premade on their claim ticket), if
   // any — persisted onto the bounty row by setLeader/promoteSubmissionLeader
   // (src/db.js, index.js) specifically so this board post and the eventual
-  // Close Bounty card can show them too, not just the ticket.
+  // finalized card (/endsubmissions) can show them too, not just the ticket.
   if (bounty.leader_teammates) {
     embed.addFields({
       name: resolveText('CARD.claim.fieldTeammates'),
