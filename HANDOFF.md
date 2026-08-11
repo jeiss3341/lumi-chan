@@ -1,52 +1,94 @@
-# Handoff — Lumi-Chan editable style-guide / admin page
+# Handoff — Lumi-Chan, Coastal Clash bounty bot
 
-Paste this whole file's content as your first message to a new Claude session to bring it up to speed.
+Paste this whole file as your first message to a new Claude session (or read it yourself) to get oriented before touching anything.
 
 ---
 
-I'm working on **Lumi-chan**, a Discord bot at `/Users/jeiss/Lumi-Chan` (Node.js, discord.js v14, Postgres via `pg`) for a "Coastal Clash" bounty event. It runs bounty request/claim/support-ticket flows for players via Discord panels, buttons, modals, and embeds — all copy for those lives in `src/text.js`.
+## What this is
 
-## What was just built (this session, not yet pushed to git)
+**Lumi-chan** is a Discord bot (Node.js, discord.js v14, Postgres via `pg`) for a "Coastal Clash" community event. It runs a full bounty lifecycle — request → staff approval → claim (or ongoing leaderboard-style submission) → finalized — plus general support tickets and a Q&A board. There's also a small built-in admin website (same process, served over HTTP) for staff to browse/edit bounties and tickets without going through Discord.
 
-An **admin-facing editable style-guide page**, served by a small built-in HTTP server alongside the Discord bot itself. It lets a non-technical manager view every board/button/form/message the bot sends, organized by player action (Requesting a Bounty / Claiming a Bounty / Getting Help & Q&A), and **edit it directly** — edits save to Postgres and actually change what the bot posts in Discord, not just the page's own preview.
+**Hosting**: Railway. Pushing to the `main` branch on GitHub triggers an automatic redeploy — Railway restarts the bot and admin site with whatever's on `main`, using its own `DATABASE_URL` (set in Railway's dashboard, not from any local file).
 
-Run it locally: `node index.js` starts both the Discord client and the HTTP server (default port 3000, or `$PORT`). Visit `http://localhost:3000/`.
+**You do not have to babysit this.** Every Discord interaction is wrapped in a try/catch (`index.js`, the big `client.on(Events.InteractionCreate, ...)` handler) — a bug in one button/command shows up as a generic "something went wrong" ephemeral reply to whoever triggered it, not a crash. If the whole process does crash, Railway restarts it automatically. The main risk isn't downtime, it's a *wrong* behavior nobody notices for a while (no automated tests exist — see below).
 
-### File layout
+---
 
-Everything for this feature lives in **`src/styleGuide/`** (new this session):
-- `server.js` — plain Node `http` server (no framework). Routes: `GET /` (the page), `POST /edit/:unitId` (save one card's fields), `POST /qanda/topics` (add a Q&A topic), `POST /qanda/topics/:id/delete` (remove one).
-- `styleGuide.js` — builds the page HTML. Organized into ~17 small self-contained "units" (Board, Form Fields, Buttons, Card, Messages — per section), each showing a live preview above its own save form.
-- `overrides.js` — Postgres-backed key/value override store (table `content_overrides`), with an in-memory cache warmed at startup (mirrors the pre-existing `settingsCache` pattern in `src/db.js`). `get(path, fallback)`, `setMany(entries)`. Also runs `migrateLegacyLineOverrides()` on boot (idempotent, safe to leave in — migrates an old storage format from earlier in this session, unlikely to ever fire again).
-- `liveText.js` — **the critical piece**: `resolveText(path)` / `resolveLines(path)`, which check a saved override first and fall back to `text.js`'s default. Every bot-facing module reads copy through this now instead of `TEXT.*` directly — without it, saved edits would only affect the admin page's own preview, never the real bot. (This was a real gap caught mid-session; fixed by wiring it into `index.js`, `src/panel.js`, `src/modal.js`, `src/ticket.js`, `src/bountyCard.js`, `src/qanda.js`.)
-- `fieldSchema.js` — single source of truth for every editable field: which unit it belongs to, its label, and which Discord API length limit governs it (`FIELD_KINDS`, verified against the actual installed `@discordjs/builders` validator source, not guessed — e.g. embed title 1–256, button label 1–80, modal field label 1–45). Used by both the renderer and the save-validation logic.
-- `qandaTopics.js` — turns the Q&A topics (originally a fixed 6-entry object in `text.js`) into an addable/removable collection. An ordered list of topic IDs is itself saved state (`QANDA.topics.__order__`); removing a default topic just hides it, never touches `text.js`; capped at 25 (Discord's dropdown option limit).
-- `textLines.js` — `linesToText`/`textToLines`, converting between `text.js`'s array-of-lines format (blank = paragraph break, `'> '` prefix = bullet) and a single `\n`-joined string for a `<textarea>`.
+## Current state (as of this handoff)
 
-### Key behaviors to know before touching this
+- `main` is up to date with everything described below — nothing is sitting uncommitted or unpushed.
+- The most recent real work (same session as this handoff) was a substantial rework of the **submissions-type bounty lifecycle** — see "How submissions bounties work" below, it's the newest and least battle-tested part of the codebase.
+- Slash commands are registered and current on both guilds (main server + test server) — `/endsubmissions` exists, `/allbounties` has a `claim_type` filter option.
+- A **local-only Postgres database** now exists on this Mac (`lumi_local`, via Homebrew) — local dev no longer shares a database with production. See "Local dev setup" below; this matters a lot if you do any local testing.
 
-- **Multi-line fields are one `<textarea>` each**, not one input per line — a manager can freely add/remove bullets by adding/removing lines. The only convention: blank line = paragraph break, a line starting with `> ` = a bullet.
-- **Validation happens server-side on submit**, using real Discord limits from `fieldSchema.js`. An invalid save does **not** redirect — it re-renders the page directly (HTTP 400) with the one failing unit's inputs showing what was actually typed plus inline errors, while its own preview stays untouched (never shows unvalidated content). Valid saves redirect (303) with a `?saved=<unitId>` toast.
-- **No auth yet** — deliberately deferred. The user wants Discord OAuth + Google login with a pre-approved allowlist eventually, but explicitly said "later, not now." There's a visible warning banner on the page about this. Don't add a password/basic-auth gate unless asked — the user has a specific plan for this.
-- **`esc()` in `styleGuide.js` must escape `"` and `'`**, not just `&`/`<`/`>` — a real bug earlier this session (missing quote-escaping) silently truncated any saved value containing a literal quote, because it broke the `value="..."` HTML attribute. Already fixed; don't regress it if you touch that function.
-- **The Palette section (colors) is read-only** — not wired into the override/edit system yet. Out of scope so far.
-- **`src/text.js` is never written to** — it's the static default; overrides layer on top of it in Postgres. Keep it that way.
+---
 
-### Operational gotcha (bit us repeatedly this session)
+## How the bounty system works
 
-**Never run two `node index.js` processes at once.** Both connect to Discord's gateway and race to answer every interaction — the loser throws `DiscordAPIError[10062] Unknown interaction`. Before starting the bot, always check first:
-```bash
-pgrep -fl "node index.js"
-```
-Kill any existing one before starting a new one. This also applies to any one-off `node -e "..."` test script that touches the override cache — if the real server is also running, they'll maintain independent stale in-memory caches of the same Postgres data and clobber each other's writes (this happened once this session during Q&A-topic-cap testing; caused real confusion until caught).
+Two bounty types, chosen by staff at approval time (`claim_type`: `claim` or `submissions`):
 
-## Current state
+1. **Request** — a player fills out a form, staff reviews it in a private ticket, approves or denies. An approved bounty (either type) posts the same plain card to the `#approved`-equivalent board channel (configured via `/deployrequestbounty`'s `board` option). Denying just closes the ticket, nothing posted.
 
-- **Nothing from this session is pushed to git.** `git status` shows `index.js`, `src/bountyCard.js`, `src/modal.js`, `src/panel.js`, `src/qanda.js`, `src/ticket.js` modified, and `src/styleGuide/` untracked. Last pushed commit on `origin/main` is `9a4956a`.
-- Fully tested end-to-end this session: valid saves, over-limit rejection with exact boundary checks (256/257, 80/81, 45/46), textarea add/remove-bullet round-trip, Q&A add/remove (including removing a default topic and hitting the 25-topic cap), and full process-restart persistence — all confirmed working, including confirming the *live bot* (not just the page) reflects saved edits.
-- There's a full implementation plan with more detail at `/Users/jeiss/.claude/plans/cuddly-wishing-bird.md` if you need the original design reasoning.
-- There's also a persistent memory note at `lumi_chan_webpage_revert_plan.md` (in Claude's memory system) describing exactly how to fully revert this feature if the user ever wants to abandon it — check that if asked to undo any of this.
+2. **Claim-type** (the simple, one-shot kind): a player claims it (proof + private ticket), staff presses **Approve Claim**, and it's done for good — posts to the `#claimed`-equivalent board (`/deployclaimbounty`'s `board` option), ticket archived.
 
-## Immediate next steps (pick up here)
+3. **Submissions-type** (ongoing leaderboard, e.g. score chases or best-clip contests): players submit the same way (proof + private ticket), but **Approve Claim promotes the claimant to current leader** instead of finalizing anything. The *first* approved submission creates a **live leaderboard card** in the submissions board channel (`/deployclaimbounty`'s `submissions_board` option) — this card gets **edited in place** every time someone new takes the lead. Whoever gets beaten has their ticket **archived immediately** as `submission-lost-<bounty>` (not reopened — this used to reopen tickets for reconsideration, which was fragile and got removed this session, see below). The bounty stays open indefinitely until staff runs **`/endsubmissions`**.
 
-Nothing urgent is broken — the last thing I need to do is decide whether to push this to git (and eventually deploy to Railway with a public domain, and add the auth layer later per the user's stated preference). Ask me what to work on next rather than assuming.
+4. **`/endsubmissions`** — staff-only, two-step confirmation ("are you sure" → "really sure"). Finalizes and **publicly announces every pending submissions bounty at once**: declares each one's current leader the winner, deletes the live leaderboard post from the submissions channel, and posts a final "Bounty Closed" card to `#claimed`. This is now the **only** way to close a submissions bounty — there used to be an individual "Close Bounty" button on each live leaderboard card, but it was removed this session in favor of `/endsubmissions` handling everything (the user's explicit call).
+
+Every ticket (regardless of outcome — claimed, denied, won, lost) gets **archived, never deleted**: moved to a dedicated archive category and renamed (`declared-claim-`, `denied-claim-`, `submission-won-`, `submission-lost-`, etc.), so the full history stays inspectable in Discord and on the admin site's Tickets page. See "Known risks" below for why this matters.
+
+The admin website (nav: Content & Style / Bounties / Tickets) can also edit a bounty's fields or deny/cancel it after the fact — for submissions bounties, this now syncs (or removes) the live leaderboard card too, not just the static `#approved`-equivalent record.
+
+---
+
+## Local dev setup
+
+There is now a **separate, local-only Postgres database** on this machine, specifically so local testing can never again touch production data:
+
+- Installed via Homebrew: `brew services start postgresql@16` (should already be running; if not, that's the command to restart it).
+- Database name: `lumi_local`.
+- `.env`'s `DATABASE_URL` points at `postgres://localhost/lumi_local`. **The original production connection string is commented out directly below it in `.env`** — don't delete that line, it's the only record of the real value outside Railway's dashboard.
+- The local bot is scoped to the test guild via `.env`'s `ACTIVE_GUILD_ID` — this makes the locally-running process ignore interactions from the main server (see `index.js` around the `InteractionCreate` handler's very first lines).
+- `lumi_local` starts empty of bounty data, but was seeded once with a copy of production's `settings` and `content_overrides` tables (text/style customizations) — **only the guild-agnostic `content_overrides` rows are actually correct**; the `settings` rows (channel/category/role IDs) were copied from the *main* server and need to be redone by re-running `/deployrequestbounty`, `/deployclaimbounty`, `/deployticket` once in the *test* server if they haven't been already.
+- **Never run two `node index.js` processes at once** (local + something else) — both would connect to Discord's gateway and race to answer every interaction; the loser throws `DiscordAPIError[10062] Unknown interaction`. Check first: `pgrep -fl "node index.js"`.
+
+---
+
+## Known risks / things to watch
+
+Ranked roughly by how likely they are to actually bite:
+
+1. **No automated tests.** Every change this whole session was verified by hand (local testing, reading the diff, tracing code paths). A fix made without that care could silently regress something. Be extra careful with anything touching `promoteSubmissionLeader`, `finalizeSubmissionBountyPrivately`, or `announceSubmissionBountyPublicly` in `index.js` — that's this session's newest code.
+
+2. **The shared-database mistake is easy to repeat.** This exact incident already happened once: testing locally against the *same* database as production silently overwrote a real production setting (a ticket category ID) and broke real ticket creation on the main server, with a confusing "Category does not exist" error as the only symptom. Local dev is now isolated (`lumi_local`, see above) specifically to prevent this — **if anyone ever "fixes" `.env` back to the production connection string for convenience, this can happen again.** If you see `parent_id[CHANNEL_PARENT_INVALID]: Category does not exist` in Railway's logs, this family of bug is the first thing to check — specifically, whether `settings` in the *production* database has a category/channel ID that doesn't actually exist in the main guild.
+
+3. **Discord channel count.** Every finished ticket is archived (renamed + moved), never deleted — none of them ever come back down. Discord's hard limit is 500 channels per guild (categories count, threads don't). A long-running event with many submissions-type bounties (each losing submission leaves a permanent archived channel) could approach this over time. Nothing has been built to address this yet — it was flagged, not fixed, this session. Two options discussed: (a) auto-delete archived tickets past some retention window (small, contained fix), or (b) rebuild tickets as Discord threads instead of channels (threads don't count against the limit at all, but it's a real rewrite — thread permissions work completely differently from channel `permissionOverwrites`, role-based access doesn't translate directly). If you're reading this because the bot can't create a new ticket channel and the error mentions a channel/category limit, this is why.
+
+4. **Slash command registration is a separate manual step from deploying code.** Pushing to `main` deploys the *code*, but adding/changing a slash command's definition (`deploy-commands.js`) additionally requires running `node deploy-commands.js` once, by hand — it is **not** automatic on push. This registers to *every* guild in `config.json`'s `guildIds` (currently both the main server and the test server) in one shot. If a new/changed command doesn't show up in Discord after a deploy, this is almost certainly why.
+
+5. **The `submissions_finalized` column matters.** If `/endsubmissions` ever partially fails (some bounties finalize, one throws mid-way), it's designed to be safe to just run again — it only ever touches bounties where `submissions_finalized` is still `false`. Don't manually flip that column in the database unless you're sure a bounty's public announcement actually went out; if you do it wrongly, that bounty will never get announced by `/endsubmissions` again (silently skipped).
+
+---
+
+## How to actually ship a fix
+
+1. Make the change, test it locally against `lumi_local` first if at all possible (start the bot: `pgrep -fl "node index.js"` to check nothing's already running, then `npm start`).
+2. Commit directly to `main` (this session didn't use long-lived feature branches — small working-tree changes, committed and pushed once verified) — or a short branch if you want a clean diff to review first, doesn't matter, just merge/push to `main` when ready.
+3. **Stage files by name, never `git add -A`/`.`** — there's real risk of accidentally picking up something you didn't mean to (this was a deliberate practice the whole session, to avoid `.env` or stray local artifacts ever ending up in a commit — though `.env` is also gitignored as a backstop).
+4. `git push origin main` — Railway redeploys automatically. It restarts the process, which briefly drops any in-flight button click, but nothing is lost (archived tickets, DB rows, etc. are all safe either way).
+5. If you touched `deploy-commands.js`, also run `node deploy-commands.js` by hand (see risk #4 above) — this hits **production**, so double-check the change is actually right before running it.
+6. Check Railway's dashboard logs after deploying to confirm a clean boot (`Database ready.`, `Logged in as Lumi-chan#...`, no immediate errors).
+
+---
+
+## Where to look for more
+
+- Every non-obvious decision in the code has an inline comment explaining *why*, not just what — this codebase leans heavily on that instead of separate docs. If something looks surprising, read the comment above it before assuming it's a bug.
+- `git log --oneline` — commit messages are detailed and explain reasoning, not just "fix bug."
+- `README.md` — setup instructions, environment variables, deploy notes.
+- Claude's plan files under `/Users/jeiss/.claude/plans/` capture the reasoning behind specific past changes, but get overwritten by later, unrelated planning sessions — don't treat any specific plan filename as a stable reference, they're transient by design.
+
+## A couple of standing preferences worth knowing
+
+- Bulk, public, hard-to-undo actions (like `/endsubmissions`) get a **two-step** confirmation, not just one — this was an explicit, deliberate choice, not an oversight. Don't "simplify" it back to one step without checking first.
+- The user generally prefers things default to **private/staff-only first, with an explicit separate step to go public** — that's why Close Bounty went private-only and `/endsubmissions` is the deliberate public-announcement step. Keep that pattern in mind if adding anything new to the closing flow.
