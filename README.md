@@ -187,6 +187,10 @@ src/
 | `SESSION_SECRET` | for admin login | Any long random string, signs the login session cookie. |
 | `PORT` | no | The admin site's port; Railway sets this automatically. |
 
+## Related work, different repo
+
+The Coastal Clash event also has a separate public website (player stats, live leaderboard, player database, live-streaming checker) — that's a different codebase (`project-lumi`, maintained by Ilyfue), not part of this repo. See `HANDOFF.md`'s "Coastal Clash player/leaderboard TODO" section for the current plan there.
+
 ## Deploying
 
 - Don't upload `.env` — set variables in Railway's **Variables** tab instead.

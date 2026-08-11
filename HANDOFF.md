@@ -10,7 +10,7 @@ Paste this whole file as your first message to a new Claude session (or read it 
 
 **Hosting**: Railway. Pushing to the `main` branch on GitHub triggers an automatic redeploy — Railway restarts the bot and admin site with whatever's on `main`, using its own `DATABASE_URL` (set in Railway's dashboard, not from any local file).
 
-**This is a separate project from the Coastal Clash public website/leaderboard.** That's a different repo, `/Users/jeiss/Documents/GitHub/project-lumi` — see its `README.md` for the player stats / live leaderboard / player database / live-streaming-checker TODO. This file (Lumi-Chan) covers the Discord bounty bot only.
+**The Coastal Clash public website/leaderboard (player stats, live leaderboard, player database, live-streaming checker) is separate code, a different repo entirely** (`project-lumi`, maintained by Ilyfue — not something this session touches or manages). The planning notes for that work are kept below for reference, but the actual code lives elsewhere.
 
 **You do not have to babysit this.** Every Discord interaction is wrapped in a try/catch (`index.js`, the big `client.on(Events.InteractionCreate, ...)` handler) — a bug in one button/command shows up as a generic "something went wrong" ephemeral reply to whoever triggered it, not a crash. If the whole process does crash, Railway restarts it automatically. The main risk isn't downtime, it's a *wrong* behavior nobody notices for a while (no automated tests exist — see below).
 
@@ -94,3 +94,48 @@ Ranked roughly by how likely they are to actually bite:
 
 - Bulk, public, hard-to-undo actions (like `/endsubmissions`) get a **two-step** confirmation, not just one — this was an explicit, deliberate choice, not an oversight. Don't "simplify" it back to one step without checking first.
 - The user generally prefers things default to **private/staff-only first, with an explicit separate step to go public** — that's why Close Bounty went private-only and `/endsubmissions` is the deliberate public-announcement step. Keep that pattern in mind if adding anything new to the closing flow.
+
+---
+
+## Coastal Clash player/leaderboard TODO (reference notes — different repo, different codebase)
+
+**This is not Lumi-Chan's code.** The actual work described below happens in `project-lumi` (aka `leni-bot`, maintained by Ilyfue) — kept here purely as planning notes, not as something to build inside this repo.
+
+### Timeline — this is tight
+
+- Signups closed: August 11
+- **Website + participant list launch: August 12**
+- Tournament runs **August 13–29**, daily eliminations at 12:00 AM PST / 3:00 AM EST, two brackets (Pro / Casual)
+
+### What this event actually is
+
+Coastal Clash is a community ladder event for Eternal Return (a video game), organized by Project Lumi. ~70-80 participants split into **Pro** (Mythril+ peak rank) and **Casual** (Meteorite and below, open to all regions/skill/bounty-eligible) brackets, eliminated daily based on ranked standing until one remains per bracket. The bounty system side of this event is Lumi-Chan (this repo) — already built and working. This section is only about the separate player-stats/leaderboard site.
+
+### Already done (per the owner, as of Aug 11)
+
+Admin Backend Page, Bounty Board, and Hosting & domain are already finished on the `project-lumi` side — not covered further here.
+
+### What already exists in `project-lumi` (reusable)
+
+- **`commands/hanabi.js`** — a working Eternal Return API client: nickname → rank/MMR lookup (`open-api.bser.io`, auth via `ER_API_KEY` header), rate-limit retry handling, a periodic refresh loop. Template for Coastal Clash's rank-fetching — **it only pulls `mmr`, not RP**; check the raw `/rank/{userNum}/{seasonID}/3` response for whichever field the event actually wants to rank by. Also hardcodes a `seasonID + 18` offset that needs re-verifying for the current season.
+- **`hanabi-cup/`** — a Next.js site that reads a `players.json` the bot writes and polls it every 30s client-side. Template for a new `coastal-clash/` leaderboard site (currently an empty directory there).
+- **`players.xlsx`** — a 4-column roster spreadsheet (`name`, `twitch`, `twitter`, `youtube`), read once to seed `players.json`. Today's entire "player database" — intake only, no rank data. Open question: where does the actual signed-up roster (~70-80 names + socials) come from to fill an equivalent sheet?
+
+### What's genuinely missing (net-new work)
+
+1. **Live-streaming checker.** Nothing in `project-lumi` has ever called the Twitch Helix API or YouTube Data API — every existing "Twitch/YouTube" thing is a static profile-link icon, never checked for actual live status.
+   - **Twitch**: Helix `GET /streams?user_login=<name>` — needs an app access token via client credentials (`TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET`, neither exists yet).
+   - **YouTube**: `search.list?eventType=live&type=video&channelId=...` — needs `YOUTUBE_API_KEY` (also missing); YouTube's quota is much stingier than Twitch's — check whether polling 70-80 channels on a short interval is sustainable on a free-tier quota before picking a refresh rate.
+2. **`ER_API_KEY` isn't available yet** — per the production-key request email, Nimble Neuron hadn't responded as of writing. Player stats and the leaderboard are both blocked on this key — worth a fallback plan (lower-tier/dev key, or a manual-refresh stopgap) in case it's still pending when needed.
+3. **The `coastal-clash/` leaderboard site itself** — unbuilt. Per the event spec: Home page, Header nav (Home / Leaderboard dropdown / Bounty Board / Submissions — the latter two just need linking to what's already built), Leaderboard page (PFP, name, rank, socials, live-now indicator per player, split by bracket), and the Submission Board (clip/video-bounty display — bounty name, who completed it, value/prize, embedded clip/video — nothing like this exists yet).
+4. **Bracket assignment (Pro vs. Casual)** — based on peak rank across the last 3 seasons, meaning historical season/rank data per player, not just current season, then applying the Mythril+ / Meteorite-and-below cutoff. `hanabi.js` only does current-season lookups today.
+5. **Daily elimination / culling structure** — two brackets, eliminations at a fixed daily time. Conceptually the same "TFT bootcamp"-style culling discussed for the bounty side elsewhere this session: if elimination needs manual staff review/confirmation rather than being fully automatic, don't have both brackets' reviews land on staff at the exact same moment every day — stagger them.
+
+### Priority order
+
+1. Confirm `ER_API_KEY` status — if not through yet, decide the fallback now.
+2. Get the actual signed-up roster into a `players.xlsx`-equivalent (blocks everything downstream).
+3. Fork `commands/hanabi.js` → a Coastal Clash rank-fetch module: drop Hanabi-specific cull logic, verify/add RP if that's the real ranking field, add the peak-rank-last-3-seasons bracket check.
+4. Fork `hanabi-cup/` → `coastal-clash/`, wire the Leaderboard page against the new `players.json` shape (bracket field included).
+5. Live-streaming checker (Twitch first — simpler API, higher quota; YouTube after).
+6. Daily elimination logic, with the staggered-review timing in mind.
