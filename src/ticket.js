@@ -115,19 +115,15 @@ function staffReviewButtons(bountyId) {
 
 // [Approve Claim] [Deny Claim] shown inside a claim ticket. Same idea as
 // staffReviewButtons above, just a distinct customId prefix so the handler
-// can tell "approve a request" and "approve a claim" apart. `claimantId` is
-// baked into Approve Claim's customId (rather than read back off the
-// Claimant embed field, which now shows a resolved nickname/username, not a
-// parseable mention — see src/bountyCard.js) so the handler always has a
-// reliable id regardless of what the card displays.
+// can tell "approve a request" and "approve a claim" apart.
 // `groupType` is the bounty's own group_type ('solo' | 'premade' | null) —
 // "Add Premade" only shows up for bounties that actually allow a premade
 // group, since adding teammates to a solo-only claim doesn't make sense.
-function claimReviewButtons(bountyId, claimantId, groupType) {
+function claimReviewButtons(bountyId, groupType) {
   const buttons = [
     applyEmoji(
       new ButtonBuilder()
-        .setCustomId(`approve_claim:${bountyId}:${claimantId}`)
+        .setCustomId(`approve_claim:${bountyId}`)
         .setLabel(resolveText('TICKET.approveClaimButton'))
         .setStyle(ButtonStyle.Success),
       'TICKET.approveClaimEmoji',
@@ -345,7 +341,7 @@ async function createClaimTicket({ guild, member, botId, embed, title, staffRole
       ? `${mentions.join(' ')} — a bounty claim from ${member} needs review.`
       : resolveText('TICKET.noClaimStaffConfigured'),
     embeds: [embed],
-    components: [claimReviewButtons(bountyId, member.id, groupType)],
+    components: [claimReviewButtons(bountyId, groupType)],
     allowedMentions: {
       roles: staffRoleId ? [staffRoleId] : [],
       users: staffUserId ? [staffUserId] : [],

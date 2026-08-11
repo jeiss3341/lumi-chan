@@ -11,7 +11,7 @@ const {
 const { buildBountyEmbed } = require('../bountyCard');
 const { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS, GROUP_TYPES, CLAIM_TYPES } = require('./bounties');
 const { readBody, redirectTo } = require('./httpUtil');
-const { resolveUserLabels, resolveDisplayName } = require('./discordUsers');
+const { resolveUserLabels } = require('./discordUsers');
 
 const VALID_PRIZE_TYPES = PRIZE_TYPES.map((t) => t.value);
 const VALID_TIERS = TIERS.map((t) => t.value);
@@ -51,18 +51,13 @@ async function resolveUserTags(client, ids) {
 }
 
 async function buildApprovedEmbedFor(client, bounty) {
-  const guild = client.guilds.cache.first() ?? null;
-  const [requester, requesterName] = await Promise.all([
-    client.users.fetch(bounty.requester_id).catch(() => null),
-    resolveDisplayName(client, guild, bounty.requester_id),
-  ]);
+  const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
   return buildBountyEmbed({
     name: bounty.name,
     description: bounty.description,
     amountRaw: bounty.reward,
     groupType: bounty.group_type,
     user: requester ?? { id: bounty.requester_id, displayAvatarURL: () => null },
-    requesterName,
     status: 'approved',
   });
 }
