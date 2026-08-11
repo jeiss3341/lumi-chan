@@ -382,13 +382,14 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       ${bounty.claim_type === 'submissions' ? `
       <div><div class="m-label">Tracked By</div><div class="m-value">${esc(formatMetricKind(bounty.submission_metric_kind))}${bounty.submission_metric_label ? ` — ${esc(bounty.submission_metric_label)}` : ''}</div></div>
       <div><div class="m-label">Standing</div><div class="m-value">${standingLine(bounty, tags)}</div></div>
+      ${bounty.leader_teammates ? `<div><div class="m-label">Teammates</div><div class="m-value">${bounty.leader_teammates.split(',').map((id) => userLabel(id, tags)).join(', ')}</div></div>` : ''}
       <div><div class="m-label">Leading Since</div><div class="m-value">${fmtDate(bounty.leader_set_at)}</div></div>
       ` : ''}
     </div>
     ${bounty.claim_type === 'submissions' ? '<p class="fhint" style="margin:-10px 0 20px;">Leaderboard fields are managed from Discord (claim approvals, Close Bounty) — not editable here.</p>' : ''}
 
     <form method="POST" action="/bounties/${bounty.id}/edit">
-      ${fieldRow({ name: 'donator_name', label: 'Donator', value: v.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize. Max ${LIMITS.donator} characters.` })}
+      ${fieldRow({ name: 'donator_name', label: bounty.group_type === 'premade' ? 'Donator(s)' : 'Donator', value: v.donator_name, error: errors.donator_name, hint: `Optional — who to credit for the prize${bounty.group_type === 'premade' ? ' (list the whole team)' : ''}. Max ${LIMITS.donator} characters.` })}
       ${fieldRow({ name: 'name', label: 'Name', value: v.name, error: errors.name, hint: `Max ${LIMITS.name} characters.` })}
       ${fieldRow({ name: 'description', label: 'Description', value: v.description, error: errors.description, multiline: true, hint: `Max ${LIMITS.description} characters.` })}
       ${selectRow({ name: 'tier', label: 'Tier', value: v.tier, error: errors.tier, options: TIERS, hint: 'Optional.' })}
