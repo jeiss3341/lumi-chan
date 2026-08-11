@@ -128,6 +128,29 @@
     // them too, not just the ticket itself. Null for a solo claim.
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_teammates TEXT;`);
 
+    // The LIVE leaderboard post in the submissions board channel — distinct
+    // from board_channel_id/board_message_id, which is always the plain,
+    // never-edited-again "Bounty Approved" record in the request board
+    // (same meaning for both claim_type='claim' and 'submissions' bounties).
+    // These two stay null until the first claim is approved (see
+    // promoteSubmissionLeader) — nothing sits in the submissions channel for
+    // a bounty nobody's submitted to yet — then get edited in place on every
+    // leader change, and deleted once the bounty is finalized
+    // (announceSubmissionBountyPublicly).
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submissions_board_channel_id TEXT;`);
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submissions_board_message_id TEXT;`);
+
+    // True once a closed submissions bounty's result has actually been
+    // posted publicly (board post deleted from the live submissions
+    // channel, "Bounty Closed" card logged to #claimed) — Close Bounty sets
+    // status='claimed' privately without touching this; /endsubmissions is
+    // what flips it, in bulk, for every bounty where it's still false. Lets
+    // /endsubmissions tell "already closed, just needs announcing" bounties
+    // apart from "still open, needs closing AND announcing" ones. Always
+    // false/irrelevant for claim_type='claim' bounties, which never had a
+    // private/public split to begin with.
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submissions_finalized BOOLEAN NOT NULL DEFAULT false;`);
+
     // Warm the settings cache so the first interaction after boot doesn't have
     // to fall back to the DB for each setting it reads.
     await loadSettings();
@@ -459,6 +482,16 @@
     );
   }
 
+  // Same idea as setBoardMessage, for the separate live submissions-board
+  // post (see the column comments in initDb()) — called once, the moment
+  // the first claim is approved, to record where that post landed.
+  async function setSubmissionsBoardMessage(id, channelId, messageId) {
+    await pool.query(
+      `UPDATE bounties SET submissions_board_channel_id = $2, submissions_board_message_id = $3 WHERE id = $1`,
+      [id, channelId, messageId],
+    );
+  }
+
   // Flips an approved bounty to claimed — guarded by "still approved" so two
   // simultaneous claim approvals can't both succeed for the same bounty.
   // Returns the updated row (with board_channel_id/board_message_id) so the
@@ -510,6 +543,27 @@
       [id, leaderId, value ?? null, ticketChannelId, ticketMessageId, teammates?.length ? teammates.join(',') : null],
     );
     return result.rows[0] ?? null;
+  }
+
+  // Every submissions-type bounty /endsubmissions still needs to touch —
+  // either still open (status='approved', staff never pressed Close Bounty)
+  // or privately closed already (status='claimed' via Close Bounty) but not
+  // yet publicly announced. Once submissions_finalized is true a bounty
+  // never shows up here again.
+  async function getUnfinalizedSubmissionBounties() {
+    const result = await pool.query(
+      `SELECT * FROM bounties
+       WHERE claim_type = 'submissions' AND submissions_finalized = false AND status IN ('approved', 'claimed')
+       ORDER BY COALESCE(approved_at, created_at) ASC`,
+    );
+    return result.rows;
+  }
+
+  // Marks a submissions bounty's public result as posted — /endsubmissions'
+  // last step for each bounty it processes, so re-running it is a no-op for
+  // anything already announced.
+  async function markSubmissionsFinalized(id) {
+    await pool.query(`UPDATE bounties SET submissions_finalized = true WHERE id = $1`, [id]);
   }
 
   // Bounties filtered by status ('approved' | 'pending' | 'denied'), or all of
@@ -578,7 +632,10 @@
     getBounties,
     getClaimableBounties,
     setBoardMessage,
+    setSubmissionsBoardMessage,
     claimBounty,
     setSubmissionMetric,
     setLeader,
+    getUnfinalizedSubmissionBounties,
+    markSubmissionsFinalized,
   };

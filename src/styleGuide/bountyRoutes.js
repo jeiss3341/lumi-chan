@@ -8,8 +8,8 @@ const {
   getBounties, getBountyById, createBounty, updateBounty, findTitleConflict,
   approveBounty, setBountyStatus, setBoardMessage, getBoardChannel,
 } = require('../db');
-const { buildBountyEmbed } = require('../bountyCard');
-const { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS, GROUP_TYPES, CLAIM_TYPES } = require('./bounties');
+const { buildBountyEmbed, buildLeaderboardEmbed } = require('../bountyCard');
+const { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS, GROUP_TYPES, CLAIM_TYPES, CLAIM_FILTERS } = require('./bounties');
 const { readBody, redirectTo } = require('./httpUtil');
 const { resolveUserLabels } = require('./discordUsers');
 
@@ -62,13 +62,39 @@ async function buildApprovedEmbedFor(client, bounty) {
   });
 }
 
+// The live leaderboard card's embed, for whichever guild this bot is in
+// (single-guild bot, same assumption resolveUserTags above already makes).
+async function buildLeaderboardEmbedFor(client, bounty) {
+  const guild = client.guilds.cache.first() ?? null;
+  const leaderMember = bounty.leader_id && guild ? await guild.members.fetch(bounty.leader_id).catch(() => null) : null;
+  return buildLeaderboardEmbed(bounty, { leaderAvatarURL: leaderMember?.displayAvatarURL() });
+}
+
+// If a submissions bounty already has a live #submissions leaderboard post
+// (submissions_board_channel_id/message_id — set once, by promoteSubmissionLeader,
+// the moment the first claim is approved; still null if nobody's claimed
+// yet, in which case there's nothing here to keep in sync), edits it to
+// match the bounty's current fields too — so a reward/description change
+// made here doesn't go stale on the live card until the bounty closes.
+// Best-effort, same as the rest of this file's Discord side effects.
+async function syncSubmissionsBoardPost(client, bounty) {
+  if (bounty.claim_type !== 'submissions' || !bounty.submissions_board_channel_id || !bounty.submissions_board_message_id) return;
+  const channel = await client.channels.fetch(bounty.submissions_board_channel_id).catch(() => null);
+  const msg = channel ? await channel.messages.fetch(bounty.submissions_board_message_id).catch(() => null) : null;
+  if (msg) await msg.edit({ embeds: [await buildLeaderboardEmbedFor(client, bounty)] }).catch(() => null);
+}
+
 // Edits the bounty's existing board post to match its current fields, or
 // posts a fresh one (and records it) if it isn't tracked yet — e.g. it was
 // just approved for the first time, or the old post was deleted out from
 // under us. Never throws; failures come back as { ok: false, reason }, so a
-// Discord hiccup doesn't block the DB save that triggered this.
+// Discord hiccup doesn't block the DB save that triggered this. Also syncs
+// the live #submissions leaderboard post, if one exists (see
+// syncSubmissionsBoardPost) — this function's return value describes only
+// the #approved record either way, same as before this existed.
 async function syncApprovedBoardPost(client, bounty) {
   const embed = await buildApprovedEmbedFor(client, bounty);
+  await syncSubmissionsBoardPost(client, bounty);
 
   if (bounty.board_channel_id && bounty.board_message_id) {
     const channel = await client.channels.fetch(bounty.board_channel_id).catch(() => null);
@@ -91,8 +117,18 @@ async function syncApprovedBoardPost(client, bounty) {
 }
 
 // Used when a bounty leaves 'approved' (denied/cancelled) — pulls its post
-// off the board, same as the normal claim-approval flow already does.
+// off the board, same as the normal claim-approval flow already does. Also
+// pulls down the live #submissions leaderboard post, if one exists — an
+// in-progress submissions bounty getting denied/cancelled from the admin
+// site shouldn't leave a stale card with a working Close Bounty button
+// behind.
 async function removeBoardPost(client, bounty) {
+  if (bounty.claim_type === 'submissions' && bounty.submissions_board_channel_id && bounty.submissions_board_message_id) {
+    const subChannel = await client.channels.fetch(bounty.submissions_board_channel_id).catch(() => null);
+    const subMsg = subChannel ? await subChannel.messages.fetch(bounty.submissions_board_message_id).catch(() => null) : null;
+    if (subMsg) await subMsg.delete().catch(() => null);
+  }
+
   if (!bounty.board_channel_id || !bounty.board_message_id) return;
   const channel = await client.channels.fetch(bounty.board_channel_id).catch(() => null);
   const msg = channel ? await channel.messages.fetch(bounty.board_message_id).catch(() => null) : null;
@@ -135,15 +171,21 @@ async function handleBountiesList(req, res, session, client) {
     const filterStatus = VALID_STATUSES.includes(requested) ? requested : 'all';
     const requestedGroup = url.searchParams.get('group') || 'all';
     const filterGroup = VALID_GROUP_FILTERS.includes(requestedGroup) ? requestedGroup : 'all';
+    const requestedClaim = url.searchParams.get('claim') || 'all';
+    const filterClaim = CLAIM_FILTERS.includes(requestedClaim) ? requestedClaim : 'all';
 
     const allBounties = await getBounties(filterStatus);
-    const bounties = filterGroup === 'all' ? allBounties : allBounties.filter((b) => b.group_type === filterGroup);
+    const bounties = allBounties
+      .filter((b) => filterGroup === 'all' || b.group_type === filterGroup)
+      // Unset claim_type means the pre-submissions-feature default, 'claim'
+      // (see CLAIM_TYPES' hint text) — matched the same way here.
+      .filter((b) => filterClaim === 'all' || (b.claim_type || 'claim') === filterClaim);
     const tags = await resolveUserTags(client, bounties.flatMap((b) => [b.requester_id, b.claimer_id, b.leader_id]));
 
     const msg = url.searchParams.get('msg');
     const message = msg ? { text: msg, warn: url.searchParams.get('warn') === '1' } : undefined;
 
-    const html = buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, username: session.username, message });
+    const html = buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, filterClaim, username: session.username, message });
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   } catch (err) {

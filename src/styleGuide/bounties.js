@@ -64,6 +64,12 @@ const STATUS_FILTERS = ['all', 'pending', 'approved', 'claimed', 'denied', 'canc
 const GROUP_FILTERS = ['all', 'solo', 'premade'];
 const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Premade Allowed' };
 
+// Same idea as GROUP_FILTERS, for claim_type — lets staff pull up just the
+// ongoing submissions leaderboards, or just regular one-shot claims,
+// separately from the combined list.
+const CLAIM_FILTERS = ['all', 'claim', 'submissions'];
+const CLAIM_FILTER_LABELS = { all: 'All', claim: 'Claim', submissions: 'Submissions' };
+
 // Statuses the admin edit page's free status-change control can move a
 // bounty between — 'claimed' is deliberately excluded (see buildBountyEditHtml).
 const STATUS_ORDER = ['pending', 'approved', 'denied', 'cancelled'];
@@ -105,25 +111,36 @@ function standingLine(bounty, tags) {
   return `🏆 ${who} currently has the ${esc(bounty.submission_metric_label)}`;
 }
 
-// Both filter bars link with both query params so switching one doesn't
-// drop whichever value the other is currently set to — except `group=all`
-// is left out of the URL entirely, since that's the default anyway.
-function groupParam(activeGroup) {
-  return activeGroup === 'all' ? '' : `&group=${esc(activeGroup)}`;
+// All three filter bars link with every param so switching one doesn't drop
+// whichever value the others are currently set to — except `group=all`/
+// `claim=all` are left out of the URL entirely, since those are the
+// defaults anyway. `status` is always explicit, same as before.
+function filterQuery(status, group, claim) {
+  let q = `status=${esc(status)}`;
+  if (group && group !== 'all') q += `&group=${esc(group)}`;
+  if (claim && claim !== 'all') q += `&claim=${esc(claim)}`;
+  return q;
 }
 
-function filterBar(activeStatus, activeGroup) {
+function filterBar(activeStatus, activeGroup, activeClaim) {
   return `<div class="filter-bar">${STATUS_FILTERS.map((s) => {
     const label = s === 'all' ? 'All' : (STATUS_LABELS[s] ?? s);
     const cls = s === activeStatus ? 'filter-link active' : 'filter-link';
-    return `<a class="${cls}" href="/bounties?status=${esc(s)}${groupParam(activeGroup)}">${esc(label)}</a>`;
+    return `<a class="${cls}" href="/bounties?${filterQuery(s, activeGroup, activeClaim)}">${esc(label)}</a>`;
   }).join('')}</div>`;
 }
 
-function groupFilterBar(activeGroup, activeStatus) {
+function groupFilterBar(activeGroup, activeStatus, activeClaim) {
   return `<div class="filter-bar">${GROUP_FILTERS.map((g) => {
     const cls = g === activeGroup ? 'filter-link active' : 'filter-link';
-    return `<a class="${cls}" href="/bounties?status=${esc(activeStatus)}${groupParam(g)}">${esc(GROUP_FILTER_LABELS[g])}</a>`;
+    return `<a class="${cls}" href="/bounties?${filterQuery(activeStatus, g, activeClaim)}">${esc(GROUP_FILTER_LABELS[g])}</a>`;
+  }).join('')}</div>`;
+}
+
+function claimFilterBar(activeClaim, activeStatus, activeGroup) {
+  return `<div class="filter-bar">${CLAIM_FILTERS.map((c) => {
+    const cls = c === activeClaim ? 'filter-link active' : 'filter-link';
+    return `<a class="${cls}" href="/bounties?${filterQuery(activeStatus, activeGroup, c)}">${esc(CLAIM_FILTER_LABELS[c])}</a>`;
   }).join('')}</div>`;
 }
 
@@ -241,7 +258,7 @@ ${body}
 </html>`;
 }
 
-function buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, username, message }) {
+function buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, filterClaim, username, message }) {
   const toast = message
     ? `<div class="toast${message.warn ? ' warn' : ''}">${esc(message.text)}</div>`
     : '';
@@ -273,9 +290,11 @@ function buildBountiesListHtml({ bounties, tags, filterStatus, filterGroup, user
   ${toast}
   <a class="new-btn" href="/bounties/new" style="margin-top:24px;">+ New Bounty</a>
   <div class="filter-row">
-    ${filterBar(filterStatus, filterGroup)}
+    ${filterBar(filterStatus, filterGroup, filterClaim)}
     <span class="filter-divider"></span>
-    ${groupFilterBar(filterGroup, filterStatus)}
+    ${groupFilterBar(filterGroup, filterStatus, filterClaim)}
+    <span class="filter-divider"></span>
+    ${claimFilterBar(filterClaim, filterStatus, filterGroup)}
   </div>
   <div class="bounty-list">${rows}</div>`;
 
@@ -410,4 +429,4 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
   return pageShell({ title: bounty.name, active: 'bounties', username, body });
 }
 
-module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS, GROUP_TYPES, CLAIM_TYPES };
+module.exports = { buildBountiesListHtml, buildBountyNewHtml, buildBountyEditHtml, LIMITS, PRIZE_TYPES, TIERS, GROUP_TYPES, CLAIM_TYPES, CLAIM_FILTERS };

@@ -151,6 +151,9 @@ const {
   claimBounty,
   setSubmissionMetric,
   setLeader,
+  getUnfinalizedSubmissionBounties,
+  markSubmissionsFinalized,
+  setSubmissionsBoardMessage,
 } = require('./src/db');
 
 // Pulls the Discord user ID out of an embed field's mention value, e.g. reads
@@ -540,9 +543,9 @@ function closeSubmissionBountyRow(bountyId) {
 // [Yes, Close It] [Cancel] — the ephemeral (staff-only) "are you sure?"
 // shown after Close Bounty is pressed, before anything actually happens.
 // Same idea as helpTicketCloseConfirm (src/ticket.js) for a support ticket
-// — this one's on a public board post rather than a private channel, so an
-// accidental press is more consequential (it finalizes a bounty in front
-// of everyone), which is exactly why it gets this step at all.
+// — declaring a winner is still a real, hard-to-undo decision even though
+// it's private now (see confirm_close_submission_bounty), which is why it
+// keeps this step at all.
 function closeSubmissionBountyConfirmRow(bountyId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -553,6 +556,25 @@ function closeSubmissionBountyConfirmRow(bountyId) {
       .setCustomId('cancel_close_submission_bounty')
       .setLabel('Cancel')
       .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// /endsubmissions' two-step confirmation — this is a bulk, public,
+// can't-undo-from-here action across every pending submission bounty at
+// once (unlike the single-bounty Close Bounty button above), so per staff
+// it gets an extra step: "are you sure" then a second, more explicit
+// "really sure" before anything actually posts.
+function endSubmissionsConfirmRow1() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('endsubmissions_confirm1').setLabel('Yes, Continue').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('endsubmissions_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+function endSubmissionsConfirmRow2() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('endsubmissions_confirm2').setLabel('Yes, End Submissions').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('endsubmissions_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
   );
 }
 
@@ -571,9 +593,9 @@ function getTeammateIdsFromEmbed(embed) {
 // it: straight from the button for a text-metric bounty (nothing to
 // collect), or from submission_value_modal_submit below for a numeric one
 // (value collected first). Promotes `claimantId` to current leader —
-// updates the DB, reopens whoever it just displaced (if anyone) for another
-// look, archives THIS ticket the same way a normal claim approval does, and
-// edits the live submissions-board post. `ticketChannelId`/`ticketMessageId`
+// updates the DB, archives whoever it just displaced (if anyone) as
+// 'submission-lost', archives THIS ticket as 'submission-won', and edits
+// the live submissions-board post. `ticketChannelId`/`ticketMessageId`
 // identify this claim ticket explicitly rather than relying on
 // interaction.channel/.message, since the numeric path arrives here from a
 // modal submit — a fresh interaction with neither.
@@ -594,62 +616,50 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
     return;
   }
 
-  // Everything below is several sequential Discord API calls (reopening up
-  // to one other ticket, archiving this one, editing the board post) —
-  // comfortably past Discord's 3-second ack window, so acknowledge now and
-  // fill in the real result with editReply once it's done (same pattern
-  // claim_proof_modal already uses for its own multi-step ticket creation).
+  // Everything below is several sequential Discord API calls (archiving up
+  // to two tickets, editing the board post) — comfortably past Discord's
+  // 3-second ack window, so acknowledge now and fill in the real result
+  // with editReply once it's done (same pattern claim_proof_modal already
+  // uses for its own multi-step ticket creation).
   await interaction.deferReply();
 
   const notes = [];
 
   // Displaced the previous leader (if any, and if it's actually someone
-  // else) — reopen their ticket for another look instead of leaving it
-  // silently archived forever.
+  // else) — archived straight to 'submission-lost', not reopened for
+  // another look. Reopening used to be the behavior here, but it was
+  // fragile: several failure branches (a missing category, a failed
+  // channel/message fetch, a thrown setParent) could leave that ticket
+  // permanently stuck renamed 'submission-won' with nothing ever revisiting
+  // it, since only the immediately-previous leader is tracked at all
+  // (src/db.js setLeader only stores one leader_id at a time) — that's how
+  // you'd end up with several stale 'submission-won-<bounty>' channels for
+  // one bounty. Archiving immediately, the same way deny_claim already
+  // does for a denied submission, means the fixed 'submission-won' name is
+  // only ever applied once, to whoever's still leading when the bounty
+  // actually closes.
   if (updated.previous_leader_id && updated.previous_leader_id !== claimantId && updated.previous_leader_ticket_channel_id) {
     const oldChannel = await interaction.guild.channels.fetch(updated.previous_leader_ticket_channel_id).catch(() => null);
     const oldMessage = oldChannel && updated.previous_leader_ticket_message_id
       ? await oldChannel.messages.fetch(updated.previous_leader_ticket_message_id).catch(() => null)
       : null;
 
-    if (oldChannel && oldMessage) {
-      const submissionsCategoryId = await getSubmissionsTicketCategory();
-      const previousLeaderMember = await interaction.guild.members.fetch(updated.previous_leader_id).catch(() => null);
+    if (oldChannel) {
+      const lostEmbed = oldMessage?.embeds[0] ? EmbedBuilder.from(oldMessage.embeds[0]).setColor(COLORS.denied) : null;
+      if (oldMessage && lostEmbed) await oldMessage.edit({ embeds: [lostEmbed], components: [] }).catch(() => null);
 
-      // Tracked (not just .catch(console.error)'d away) so the reopened
-      // ticket's own note can say plainly if the category move itself
-      // failed — its buttons still work right where it is either way.
-      let reopenedOk = false;
-      if (submissionsCategoryId) {
-        try {
-          await oldChannel.setParent(submissionsCategoryId, { lockPermissions: true });
-          await oldChannel
-            .setName(toChannelName('claim', bounty.name, previousLeaderMember?.displayName ?? updated.previous_leader_id))
-            .catch(console.error);
-          await alphabetizeCategory(oldChannel.parent).catch(console.error);
-          reopenedOk = true;
-        } catch (err) {
-          console.error('Failed to move displaced submission back to the active category:', err);
-        }
-      }
-
-      const reopenedEmbed = EmbedBuilder.from(oldMessage.embeds[0])
-        .setColor(COLORS.pending)
-        .setTitle(`${resolveText('CARD.claim.titlePrefix')} ${bounty.name}`);
-      await oldMessage
-        .edit({ embeds: [reopenedEmbed], components: [claimReviewButtons(bounty.id, bounty.group_type)] })
-        .catch(console.error);
-
-      const moveWarning = submissionsCategoryId && !reopenedOk
-        ? ' ⚠️ Could not move this ticket back to the active Submissions category — check it\'s still configured correctly (`/deployclaimbounty`). The buttons above still work right here either way.'
-        : '';
       await oldChannel
-        .send({
-          content: resolveText('TICKET.submissionSurpassedNote').replace('%s', `<@${claimantId}>`) + moveWarning,
-        })
+        .send({ content: resolveText('TICKET.submissionSurpassedNote').replace('%s', `<@${claimantId}>`) })
         .catch(console.error);
 
-      notes.push(`reopened <@${updated.previous_leader_id}>'s submission for review${reopenedOk ? '' : ' (category move failed, see warning there)'}`);
+      const lostArchiveCategoryId = await getClaimArchiveCategory();
+      const lostArchived = await closeOrArchiveTicket(oldChannel, lostArchiveCategoryId, toChannelName('submission-lost', bounty.name));
+      const lostNote = !lostArchiveCategoryId
+        ? ' (closing soon, no archive category configured)'
+        : lostArchived
+          ? ' (archived)'
+          : ' (⚠️ could not be archived — check the archive category is still configured correctly)';
+      notes.push(`<@${updated.previous_leader_id}>'s submission is no longer leading${lostNote}`);
     }
   }
 
@@ -677,18 +687,125 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
     }
   }
 
-  // Edit the live submissions-board post to show the new leader.
-  if (updated.board_channel_id && updated.board_message_id) {
-    const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);
-    const boardMsg = boardChannel ? await boardChannel.messages.fetch(updated.board_message_id).catch(() => null) : null;
+  // The live submissions-board post — created fresh on the first-ever
+  // leader (nothing sits in the submissions channel for a bounty nobody's
+  // submitted to yet, see finalizeApproval's call site), edited in place on
+  // every leader change after that. !updated.previous_leader_id is the same
+  // "is this the first promotion" signal already used above for the
+  // displaced-leader check — leader_id starts null and setLeader's CTE
+  // snapshots the pre-update value, so it's null exactly once, on the very
+  // first promotion.
+  const leaderMember = await interaction.guild.members.fetch(updated.leader_id).catch(() => null);
+  const leaderboardEmbed = buildLeaderboardEmbed(updated, { leaderAvatarURL: leaderMember?.displayAvatarURL() });
+
+  if (!updated.previous_leader_id) {
+    const submissionsBoardChannelId = await getSubmissionsBoardChannel();
+    const submissionsBoard = submissionsBoardChannelId
+      ? await interaction.guild.channels.fetch(submissionsBoardChannelId).catch(() => null)
+      : null;
+    if (submissionsBoard) {
+      const boardMsg = await submissionsBoard.send({ embeds: [leaderboardEmbed], components: [closeSubmissionBountyRow(bounty.id)] });
+      await setSubmissionsBoardMessage(bounty.id, submissionsBoard.id, boardMsg.id);
+      notes.push(`posted to ${submissionsBoard}`);
+    } else {
+      notes.push('⚠️ no submissions board channel configured — check `/deployclaimbounty`');
+    }
+  } else if (updated.submissions_board_channel_id && updated.submissions_board_message_id) {
+    const boardChannel = await interaction.guild.channels.fetch(updated.submissions_board_channel_id).catch(() => null);
+    const boardMsg = boardChannel ? await boardChannel.messages.fetch(updated.submissions_board_message_id).catch(() => null) : null;
     if (boardMsg) {
-      await boardMsg.edit({ embeds: [buildLeaderboardEmbed(updated)] }).catch(console.error);
+      await boardMsg.edit({ embeds: [leaderboardEmbed] }).catch(console.error);
       notes.push(`${boardChannel} updated`);
     }
   }
 
   const boardNote = notes.length ? ` (${notes.join(', ')})` : '';
   await interaction.editReply({ content: `🏆 **Now leading** by ${interaction.user}${boardNote}.` });
+}
+
+// Any OTHER still-open submission tickets for this bounty — every one that
+// was never approved (which would've archived it 'submission-won'/
+// 'submission-lost' already, see promoteSubmissionLeader) or denied. Found
+// by channel topic, not a DB column — createClaimTicket sets a claim
+// ticket's topic to the bounty's own name (same trick byClaimTitleThenAge
+// uses, src/ticket.js), and nothing else tracks "every ticket ever opened
+// for bounty X." Called when a submissions bounty finalizes (Close Bounty,
+// /endsubmissions) so nothing's left behind with live Approve/Deny buttons
+// pointing at a bounty that's no longer 'approved' — pressing them would
+// otherwise just silently fail (setLeader's own status guard) with a
+// generic error instead of a clear "this bounty is already closed."
+async function archiveDanglingSubmissionTickets(guild, bounty, exceptChannelId) {
+  const submissionsCategoryId = await getSubmissionsTicketCategory();
+  const category = submissionsCategoryId ? await guild.channels.fetch(submissionsCategoryId).catch(() => null) : null;
+  if (!category) return [];
+
+  const dangling = [...category.children.cache.values()].filter(
+    (ch) => ch.topic === bounty.name && ch.id !== exceptChannelId,
+  );
+
+  const archiveCategoryId = await getClaimArchiveCategory();
+  const results = [];
+  for (const channel of dangling) {
+    // The ticket card is always the first bot message in a fresh channel
+    // (createClaimTicket) — a small recent-message search finds it without
+    // assuming nothing else was ever posted after it.
+    const recent = await channel.messages.fetch({ limit: 10 }).catch(() => null);
+    const cardMessage = recent?.find((m) => m.author.id === client.user.id && m.embeds.length > 0);
+    if (cardMessage?.embeds[0]) {
+      const lostEmbed = EmbedBuilder.from(cardMessage.embeds[0]).setColor(COLORS.denied);
+      await cardMessage.edit({ embeds: [lostEmbed], components: [] }).catch(() => null);
+    }
+    const archived = await closeOrArchiveTicket(channel, archiveCategoryId, toChannelName('submission-lost', bounty.name));
+    results.push({ channel, archived });
+  }
+  return results;
+}
+
+// Shared by the Close Bounty button and /endsubmissions: declares the
+// current leader the winner in the DB and cleans up every ticket for this
+// bounty (the winner's — already archived at promotion time — plus any
+// other still-open submissions, see archiveDanglingSubmissionTickets).
+// Deliberately does NOT touch the public board post or #claimed — that's
+// the separate, explicit announceSubmissionBountyPublicly step below, so a
+// bounty can be closed privately without broadcasting it (see Close
+// Bounty's own handler for why).
+async function finalizeSubmissionBountyPrivately(guild, bounty) {
+  const updated = await claimBounty(bounty.id, bounty.leader_id);
+  if (!updated) return null;
+  await archiveDanglingSubmissionTickets(guild, updated, updated.leader_ticket_channel_id);
+  return updated;
+}
+
+// The public half — posts the closed leaderboard card to #claimed and
+// removes the live post from #submissions (rather than editing it in place
+// to say "closed"; per staff, a resolved bounty shouldn't linger visually
+// on the ongoing-submissions channel once #claimed has the permanent
+// record) — then marks submissions_finalized so /endsubmissions never
+// re-announces it. Safe to call on a bounty finalized moments ago (Close
+// Bounty) or one that's been sitting closed for days (/endsubmissions
+// picking up stragglers) — same either way.
+async function announceSubmissionBountyPublicly(guild, bounty) {
+  const leaderMember = await guild.members.fetch(bounty.leader_id).catch(() => null);
+  const closedEmbed = buildLeaderboardEmbed(bounty, { closed: true, leaderAvatarURL: leaderMember?.displayAvatarURL() });
+
+  // The live #submissions post, not the permanent #approved record —
+  // board_channel_id/board_message_id is never touched here, same as it's
+  // never touched for a claim-type bounty either.
+  if (bounty.submissions_board_channel_id && bounty.submissions_board_message_id) {
+    const boardChannel = await guild.channels.fetch(bounty.submissions_board_channel_id).catch(() => null);
+    const boardMsg = boardChannel ? await boardChannel.messages.fetch(bounty.submissions_board_message_id).catch(() => null) : null;
+    await boardMsg?.delete().catch(() => null);
+  }
+
+  let claimBoardChannel = null;
+  const claimBoardChannelId = await getClaimBoardChannel();
+  if (claimBoardChannelId) {
+    claimBoardChannel = await guild.channels.fetch(claimBoardChannelId).catch(() => null);
+    if (claimBoardChannel) await claimBoardChannel.send({ embeds: [closedEmbed] }).catch(() => null);
+  }
+
+  await markSubmissionsFinalized(bounty.id);
+  return { claimBoardChannel };
 }
 
 // True if this channel is already sitting in the given archive category —
@@ -746,8 +863,9 @@ async function createHelpTicketReply(interaction, { subject, body } = {}) {
 // `filter:By Status` option — when true, rows are blocked by status then
 // ordered within. The interaction MUST already be deferred (ephemeral)
 // before calling this — the workbook + user lookups take a moment.
-async function sendBountyExport(interaction, status, order, groupByStatus) {
-  const rows = orderBounties(await getBounties(status), order, groupByStatus);
+async function sendBountyExport(interaction, status, order, groupByStatus, claimTypeFilter) {
+  const filtered = (await getBounties(status)).filter((b) => !claimTypeFilter || (b.claim_type || 'claim') === claimTypeFilter);
+  const rows = orderBounties(filtered, order, groupByStatus);
   const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
 
   if (rows.length === 0) {
@@ -864,22 +982,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // single-choice option (no explicit "off" value, same idea as
       // `export`), including it always forces it on.
       const groupByStatus = interaction.options.getString('filter') === 'by_status' || status === 'all';
+      const claimTypeFilter = interaction.options.getString('claim_type'); // null | 'claim' | 'submissions'
 
       // Including `export` skips the on-screen list and just hands back the
       // themed .xlsx directly — the same file the results' button produces.
       if (interaction.options.getString('export') === 'yes') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        await sendBountyExport(interaction, status, order, groupByStatus);
+        await sendBountyExport(interaction, status, order, groupByStatus, claimTypeFilter);
         return;
       }
 
-      const rows = await getBounties(status);
+      // Unset claim_type on a row means the pre-submissions-feature default,
+      // 'claim' (see /allbounties' claim_type option description) — matched
+      // the same way the admin site's own claim_type filter does.
+      const rows = (await getBounties(status)).filter(
+        (b) => !claimTypeFilter || (b.claim_type || 'claim') === claimTypeFilter,
+      );
 
-      const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
+      const claimTypeLabel = claimTypeFilter === 'submissions' ? 'Submissions ' : claimTypeFilter === 'claim' ? 'Claim ' : '';
+      const label = (status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1));
 
       if (rows.length === 0) {
         await interaction.reply({
-          content: `No ${status === 'all' ? '' : status + ' '}bounties yet.`,
+          content: `No ${status === 'all' ? '' : status + ' '}${claimTypeLabel.toLowerCase()}bounties yet.`,
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -941,12 +1066,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const embeds = chunks.map((chunk, idx) => {
         const description = chunk.header ? `**${chunk.header}**\n${chunk.lines.join('\n\n')}` : chunk.lines.join('\n\n');
-        const title = chunks.length > 1 ? `📋 ${label} Bounties (${idx + 1}/${chunks.length})` : `📋 ${label} Bounties`;
+        const title = chunks.length > 1
+          ? `📋 ${label} ${claimTypeLabel}Bounties (${idx + 1}/${chunks.length})`
+          : `📋 ${label} ${claimTypeLabel}Bounties`;
         return new EmbedBuilder()
           .setTitle(title)
           .setColor(COLORS.approved)
           .setDescription(description)
-          .setFooter({ text: `Coastal Clash • ${rows.length} ${status === 'all' ? 'total' : status}` });
+          .setFooter({ text: `Coastal Clash • ${rows.length} ${status === 'all' ? 'total' : status}${claimTypeFilter ? ` (${claimTypeFilter})` : ''}` });
       });
 
       // Discord caps a message at 10 embeds AND 6000 total characters summed
@@ -1585,12 +1712,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
           status: 'approved',
         });
 
+        // Same request-board post for both claim types — no buttons, never
+        // edited again. A submissions bounty's live #submissions leaderboard
+        // card doesn't exist yet at approval time; it's created later, on
+        // the first claim (see promoteSubmissionLeader).
         await finalizeApproval({
           interaction,
           bountyId,
           approved,
-          boardGetter: claimType === 'submissions' ? getSubmissionsBoardChannel : getBoardChannel,
-          boardComponents: claimType === 'submissions' ? [closeSubmissionBountyRow(bountyId)] : undefined,
+          boardGetter: getBoardChannel,
           ticketChannelId,
           ticketMessageId,
         });
@@ -2013,10 +2143,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // "🏆 Close Bounty" on a submissions board post  →  staff only. Shows a
-    // confirmation first rather than finalizing immediately — this is a
-    // public board post, so an accidental press would declare a winner in
-    // front of everyone with no undo. See confirm_close_submission_bounty
-    // below for what actually happens once confirmed.
+    // confirmation first rather than finalizing immediately — even though
+    // this no longer posts publicly (see confirm_close_submission_bounty
+    // below), declaring a winner is still a real, hard-to-undo decision.
     if (interaction.isButton() && interaction.customId.startsWith('close_submission_bounty')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'close a submissions bounty'))) return;
 
@@ -2033,7 +2162,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.reply({
-        content: `Close **${bounty.name}** and declare <@${bounty.leader_id}> the winner? This posts publicly and can't be undone from here.`,
+        content: `Close **${bounty.name}** and declare <@${bounty.leader_id}> the winner? This is private — nothing posts publicly here. Run \`/endsubmissions\` when you're ready to announce results for the whole event.`,
         components: [closeSubmissionBountyConfirmRow(bountyId)],
         flags: MessageFlags.Ephemeral,
       });
@@ -2044,11 +2173,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ephemeral reply (Discord scopes that to the staff member who
     // triggered it), so no separate staff check — same reasoning as
     // approve_modal_step2/3's own Continue buttons. Re-checks the bounty is
-    // still open in case it changed since the prompt was shown (e.g.
-    // someone else already closed it), then does the actual close: declares
-    // the current leader the winner, edits the board post in place (fetched
-    // explicitly by id, since this interaction lives on the ephemeral
-    // confirmation, not the board post itself), and logs it to the claim board.
+    // still open in case it changed since the prompt was shown, then closes
+    // it PRIVATELY — declares the leader the winner in the DB, cleans up
+    // every ticket for this bounty (finalizeSubmissionBountyPrivately), but
+    // never touches the public board post or #claimed. /endsubmissions
+    // handles announcing it, for every bounty like this at once, once the
+    // whole event's submissions phase actually wraps up.
     if (interaction.isButton() && interaction.customId.startsWith('confirm_close_submission_bounty')) {
       const bountyId = customIdArg(interaction);
       const bounty = await getBountyById(bountyId);
@@ -2061,32 +2191,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const updated = await claimBounty(bountyId, bounty.leader_id);
+      const updated = await finalizeSubmissionBountyPrivately(interaction.guild, bounty);
       if (!updated) {
         await interaction.update({ content: resolveText('REPLIES.claimFinalizeFailed'), components: [] });
         return;
       }
 
-      const closedEmbed = buildLeaderboardEmbed(updated, { closed: true });
-
-      if (updated.board_channel_id && updated.board_message_id) {
-        const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);
-        const boardMsg = boardChannel ? await boardChannel.messages.fetch(updated.board_message_id).catch(() => null) : null;
-        if (boardMsg) await boardMsg.edit({ embeds: [closedEmbed], components: [] }).catch(console.error);
-      }
-
-      let claimBoardNote = '';
-      const claimBoardChannelId = await getClaimBoardChannel();
-      if (claimBoardChannelId) {
-        const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
-        if (claimBoard) {
-          await claimBoard.send({ embeds: [closedEmbed] }).catch(console.error);
-          claimBoardNote = ` and logged to ${claimBoard}`;
-        }
-      }
-
       await interaction.update({
-        content: `🏆 **Bounty closed** by ${interaction.user} — winner: <@${updated.leader_id}>${claimBoardNote}.`,
+        content: `🏆 **Closed privately** — winner: <@${updated.leader_id}>. Nothing posted publicly. Run \`/endsubmissions\` to announce this (and anything else pending) when the event's submissions phase ends.`,
         components: [],
       });
       return;
@@ -2095,6 +2207,98 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // "Cancel"  →  drops the confirmation, nothing happens.
     if (interaction.isButton() && interaction.customId === 'cancel_close_submission_bounty') {
       await interaction.update({ content: 'Cancelled — nothing was closed.', components: [] });
+      return;
+    }
+
+    // /endsubmissions  →  staff only (setDefaultMemberPermissions,
+    // deploy-commands.js). Step 1 of 2: counts everything pending (still
+    // open, or closed privately via Close Bounty but not yet announced —
+    // see getUnfinalizedSubmissionBounties) and asks to continue. Re-counted
+    // fresh at each step rather than trusted from here, since staff could
+    // take a while clicking through and the real list only matters at the
+    // moment it's actually acted on.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'endsubmissions') {
+      if (!(await requireStaff(interaction, getClaimStaff, 'end submissions'))) return;
+
+      const pending = await getUnfinalizedSubmissionBounties();
+      if (pending.length === 0) {
+        await interaction.reply({ content: 'Nothing to end — no submission bounties are pending.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const names = pending.slice(0, 10).map((b) => `**${b.name}**`).join(', ') + (pending.length > 10 ? `, and ${pending.length - 10} more` : '');
+      await interaction.reply({
+        content: `This will finalize and publicly announce results for **${pending.length}** submission bounty${pending.length === 1 ? '' : 'ies'}: ${names}. Continue?`,
+        components: [endSubmissionsConfirmRow1()],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // Step 2 of 2 — the "really sure" (see endSubmissionsConfirmRow2's own
+    // comment for why this gets an extra step beyond Close Bounty's single
+    // confirm: it's bulk AND public, not just one bounty).
+    if (interaction.isButton() && interaction.customId === 'endsubmissions_confirm1') {
+      const pending = await getUnfinalizedSubmissionBounties();
+      if (pending.length === 0) {
+        await interaction.update({ content: 'Nothing left to end — looks like this already happened.', components: [] });
+        return;
+      }
+      await interaction.update({
+        content: `Really end submissions? This posts publicly to #claimed and removes each bounty's live board post for **${pending.length}** submission bounty${pending.length === 1 ? '' : 'ies'} — can't be undone from here.`,
+        components: [endSubmissionsConfirmRow2()],
+      });
+      return;
+    }
+
+    // Actually does it — for every pending bounty, closes it first if it's
+    // still open (finalizeSubmissionBountyPrivately, same as Close Bounty),
+    // then announces it publicly (announceSubmissionBountyPublicly). A
+    // failure on one bounty doesn't stop the rest. Several sequential
+    // Discord API calls per bounty, so deferred immediately.
+    if (interaction.isButton() && interaction.customId === 'endsubmissions_confirm2') {
+      await interaction.deferUpdate();
+
+      const pending = await getUnfinalizedSubmissionBounties();
+      let succeeded = 0;
+      const failed = [];
+      const skipped = [];
+      for (const bounty of pending) {
+        // Same guard close_submission_bounty already applies one bounty at
+        // a time ("Nobody has submitted yet — nothing to close") — a
+        // bounty can sit 'approved' with zero submissions, and there's no
+        // winner to declare or announce for it. Left exactly as-is (still
+        // pending, still shows on the next /endsubmissions run) rather than
+        // force-closing it with no leader.
+        if (!bounty.leader_id) {
+          skipped.push(bounty.name);
+          continue;
+        }
+        try {
+          const closed = bounty.status === 'approved' ? await finalizeSubmissionBountyPrivately(interaction.guild, bounty) : bounty;
+          if (!closed) {
+            failed.push(bounty.name);
+            continue;
+          }
+          await announceSubmissionBountyPublicly(interaction.guild, closed);
+          succeeded++;
+        } catch (err) {
+          console.error(`Failed to finalize submission bounty ${bounty.id} (${bounty.name}) during /endsubmissions:`, err);
+          failed.push(bounty.name);
+        }
+      }
+
+      const failedNote = failed.length ? ` ⚠️ Failed: ${failed.join(', ')} — check logs and re-run \`/endsubmissions\` for those.` : '';
+      const skippedNote = skipped.length ? ` Skipped (no submissions yet, still open): ${skipped.join(', ')}.` : '';
+      await interaction.editReply({
+        content: `🏆 **Submissions ended** by ${interaction.user} — announced ${succeeded} bounty${succeeded === 1 ? '' : 'ies'}.${skippedNote}${failedNote}`,
+        components: [],
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'endsubmissions_cancel') {
+      await interaction.update({ content: 'Cancelled — nothing was ended.', components: [] });
       return;
     }
 

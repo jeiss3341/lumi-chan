@@ -329,7 +329,7 @@ module.exports = {
     // ticket when someone else takes the lead — %s is replaced with a
     // mention of whoever surpassed them.
     submissionSurpassedNote:
-      '⚠️ This submission was surpassed by %s and has been reopened for another look — **Approve** to reinstate as leader, or **Deny** to close it out.',
+      '⚠️ This submission was surpassed by %s and is no longer leading — archiving this ticket. A new (better) submission from the same person would be a fresh claim ticket, judged the same as any other.',
     // src/ticket.js → createHelpTicket(). The one button inside a general
     // support ticket — no approve/deny here, just closing it once resolved.
     closeHelpButton: 'Close Ticket',
@@ -562,6 +562,7 @@ module.exports = {
       status: 'Which bounties to show.',
       order: 'How to sort the results (defaults to newest first).',
       filter: 'Filter the results into groups by status too (default: on for All).',
+      claimType: 'Only show Claim-type or Submissions-type bounties (default: both).',
       export: 'Get a themed spreadsheet (.xlsx) instead of the on-screen list.',
     },
     readme: {
@@ -586,6 +587,9 @@ module.exports = {
     },
     deployQandA: {
       command: 'Post the Q&A board in this channel (staff only).',
+    },
+    endSubmissions: {
+      command: 'Finalize and publicly announce every pending submission bounty at once (staff only).',
     },
   },
 };

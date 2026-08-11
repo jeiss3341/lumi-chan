@@ -92,6 +92,19 @@ const commands = [
         .addChoices({ name: 'By Status', value: 'by_status' })
         .setRequired(false),
     )
+    // Independent of `status` — status is which review state to show,
+    // claim_type is which of the two claim flows (one-shot vs ongoing
+    // leaderboard) a bounty uses. Leaving it out shows both, same as today.
+    .addStringOption((option) =>
+      option
+        .setName('claim_type')
+        .setDescription(TEXT.COMMANDS.allBounties.claimType)
+        .addChoices(
+          { name: 'Claim', value: 'claim' },
+          { name: 'Submissions', value: 'submissions' },
+        )
+        .setRequired(false),
+    )
     // String (not Boolean) with a single choice, so there's no False to
     // pick — and it's defined last, so it's the last thing Discord ever
     // has left to suggest filling in.
@@ -209,6 +222,15 @@ const commands = [
   new SlashCommandBuilder()
     .setName('deployqanda')
     .setDescription(TEXT.COMMANDS.deployQandA.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
+  // Bulk-finalizes every submission bounty still pending public
+  // announcement — see finalizeSubmissionBountyPrivately/
+  // announceSubmissionBountyPublicly (index.js). Two-step confirmation
+  // happens in the handler itself, not here.
+  new SlashCommandBuilder()
+    .setName('endsubmissions')
+    .setDescription(TEXT.COMMANDS.endSubmissions.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
 ];

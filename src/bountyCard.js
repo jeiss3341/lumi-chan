@@ -82,8 +82,11 @@ function leaderboardLine(bounty, { closed = false } = {}) {
 // fixed Requester, since this post stays open and gets edited in place as
 // the leader changes (index.js's approve_claim, submissions branch) rather
 // than finalizing on the first approved claim. `closed` retitles it to the
-// final winner announcement, once staff presses Close Bounty.
-function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
+// final winner announcement, once staff presses Close Bounty. `leaderAvatarURL`
+// is optional (the caller fetches it, same reasoning as buildBountyEmbed's
+// `user` param) — omitted entirely (no thumbnail) if the leader can't be
+// resolved, rather than showing a broken image.
+function buildLeaderboardEmbed(bounty, { closed = false, leaderAvatarURL } = {}) {
   const titlePrefix = closed
     ? resolveText('CARD.submissions.closedTitlePrefix')
     : resolveText('CARD.request.approvedTitlePrefix');
@@ -91,12 +94,15 @@ function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
   const embed = new EmbedBuilder()
     .setColor(closed ? COLORS.approved : COLORS.pending)
     .setTitle(`${titlePrefix} ${bounty.name}`)
-    .setDescription(bounty.description)
-    .addFields(
-      { name: resolveText('CARD.request.fieldReward'), value: formatAmount(bounty.reward), inline: true },
-      { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(bounty.group_type), inline: true },
-      { name: resolveText('CARD.submissions.fieldStanding'), value: leaderboardLine(bounty, { closed }), inline: false },
-    );
+    .setDescription(bounty.description);
+
+  if (leaderAvatarURL) embed.setThumbnail(leaderAvatarURL);
+
+  embed.addFields(
+    { name: resolveText('CARD.request.fieldReward'), value: formatAmount(bounty.reward), inline: true },
+    { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(bounty.group_type), inline: true },
+    { name: resolveText('CARD.submissions.fieldStanding'), value: leaderboardLine(bounty, { closed }), inline: false },
+  );
 
   // The leader's premade teammates (Add Premade on their claim ticket), if
   // any — persisted onto the bounty row by setLeader/promoteSubmissionLeader
