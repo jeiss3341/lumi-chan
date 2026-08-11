@@ -16,11 +16,21 @@ function formatGroupType(raw) {
   return GROUP_TYPE_LABELS[raw] ?? '—';
 }
 
+// Fallback for a Discord user id that turned out to be unresolvable (left
+// the server and deleted their account) — every name field below falls
+// back to this instead of ever printing the raw snowflake, since players
+// reading these cards have no use for a bare id.
+const UNKNOWN_USER = 'Unknown User';
+
 // Builds the bounty card. Pass a different `status` to recolor AND retitle
 // it as it moves through the flow: 'pending' ("Bounty Request", blurple) →
 // 'approved' ("Bounty Approved", green). Denied tickets just close, so
 // there's no 'denied' title — the pending one is a safe fallback.
-function buildBountyEmbed({ name, description, amountRaw, groupType, user, status = 'pending' }) {
+// `requesterName` is resolved (nickname-or-username) by the caller up
+// front — see src/styleGuide/discordUsers.js's resolveDisplayName — so
+// this stays a synchronous, pure builder. `user` is still needed for the
+// thumbnail avatar.
+function buildBountyEmbed({ name, description, amountRaw, groupType, user, requesterName, status = 'pending' }) {
   const titlePrefix =
     status === 'approved' ? resolveText('CARD.request.approvedTitlePrefix') : resolveText('CARD.request.titlePrefix');
   return new EmbedBuilder()
@@ -29,7 +39,7 @@ function buildBountyEmbed({ name, description, amountRaw, groupType, user, statu
     .setDescription(description)
     .setThumbnail(user.displayAvatarURL())
     .addFields(
-      { name: resolveText('CARD.request.fieldRequester'), value: `<@${user.id}>`, inline: true },
+      { name: resolveText('CARD.request.fieldRequester'), value: requesterName || UNKNOWN_USER, inline: true },
       { name: resolveText('CARD.request.fieldReward'), value: formatAmount(amountRaw), inline: true },
       { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(groupType), inline: true },
     )
@@ -41,8 +51,9 @@ function buildBountyEmbed({ name, description, amountRaw, groupType, user, statu
 // Builds the claim-review card shown inside a claim ticket. `notes` is the
 // claimant's proof/description text; the actual screenshot/clip is posted
 // as a follow-up attachment message, not embedded here. 'approved' retitles
-// it to "Bounty Claimed" — the shared finalized-claim title.
-function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
+// it to "Bounty Claimed" — the shared finalized-claim title. `claimantName`/
+// `originalRequesterName` are resolved by the caller (see buildBountyEmbed).
+function buildClaimEmbed({ bounty, claimant, claimantName, originalRequesterName, notes, status = 'pending' }) {
   const titlePrefix = status === 'approved' ? resolveText('CARD.claimedTitlePrefix') : resolveText('CARD.claim.titlePrefix');
   return new EmbedBuilder()
     .setColor(COLORS[status] ?? COLORS.pending)
@@ -50,9 +61,9 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
     .setDescription(notes)
     .setThumbnail(claimant.displayAvatarURL())
     .addFields(
-      { name: resolveText('CARD.claim.fieldClaimant'), value: `<@${claimant.id}>`, inline: true },
+      { name: resolveText('CARD.claim.fieldClaimant'), value: claimantName || UNKNOWN_USER, inline: true },
       { name: resolveText('CARD.claim.fieldReward'), value: formatAmount(bounty.reward), inline: true },
-      { name: resolveText('CARD.claim.fieldOriginalRequester'), value: `<@${bounty.requester_id}>`, inline: true },
+      { name: resolveText('CARD.claim.fieldOriginalRequester'), value: originalRequesterName || UNKNOWN_USER, inline: true },
     )
     .setImage(BANNER_URL)
     .setFooter({ text: TEXT.FOOTER })
@@ -60,21 +71,21 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
 }
 
 // The single line describing where a submissions bounty currently stands —
-// shared by buildLeaderboardEmbed below and index.js's ticket-reopen note
-// when a leader gets displaced. No leader yet (freshly approved, nobody's
-// submitted) reads as "Open" instead. `closed` swaps "is leading"/
+// used by buildLeaderboardEmbed below. No leader yet (freshly approved,
+// nobody's submitted) reads as "Open" instead. `closed` swaps "is leading"/
 // "currently has" for "won with", once staff presses Close Bounty.
-function leaderboardLine(bounty, { closed = false } = {}) {
+// `leaderName` is resolved by the caller (see buildBountyEmbed).
+function leaderboardLine(bounty, { closed = false, leaderName } = {}) {
   if (!bounty.leader_id) return resolveText('CARD.submissions.noLeaderYet');
 
-  const mention = `<@${bounty.leader_id}>`;
+  const who = leaderName || UNKNOWN_USER;
   if (bounty.submission_metric_kind === 'numeric') {
     const verb = resolveText(closed ? 'CARD.submissions.wonVerb' : 'CARD.submissions.leadingVerb');
-    return `🏆 ${mention} ${verb} **${bounty.leader_value}** ${bounty.submission_metric_label}`;
+    return `🏆 ${who} ${verb} **${bounty.leader_value}** ${bounty.submission_metric_label}`;
   }
 
   const verb = resolveText(closed ? 'CARD.submissions.wonOtherVerb' : 'CARD.submissions.leadingOtherVerb');
-  return `🏆 ${mention} ${verb} the ${bounty.submission_metric_label}`;
+  return `🏆 ${who} ${verb} the ${bounty.submission_metric_label}`;
 }
 
 // Builds the card for the submissions board (see /deployclaimbounty) — same
@@ -82,8 +93,10 @@ function leaderboardLine(bounty, { closed = false } = {}) {
 // fixed Requester, since this post stays open and gets edited in place as
 // the leader changes (index.js's approve_claim, submissions branch) rather
 // than finalizing on the first approved claim. `closed` retitles it to the
-// final winner announcement, once staff presses Close Bounty.
-function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
+// final winner announcement, once staff presses Close Bounty. `leaderName`/
+// `teammateNames` are resolved by the caller (see buildBountyEmbed) —
+// `teammateNames` in the same order as bounty.leader_teammates's ids.
+function buildLeaderboardEmbed(bounty, { closed = false, leaderName, teammateNames = [] } = {}) {
   const titlePrefix = closed
     ? resolveText('CARD.submissions.closedTitlePrefix')
     : resolveText('CARD.request.approvedTitlePrefix');
@@ -95,7 +108,7 @@ function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
     .addFields(
       { name: resolveText('CARD.request.fieldReward'), value: formatAmount(bounty.reward), inline: true },
       { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(bounty.group_type), inline: true },
-      { name: resolveText('CARD.submissions.fieldStanding'), value: leaderboardLine(bounty, { closed }), inline: false },
+      { name: resolveText('CARD.submissions.fieldStanding'), value: leaderboardLine(bounty, { closed, leaderName }), inline: false },
     );
 
   // The leader's premade teammates (Add Premade on their claim ticket), if
@@ -105,7 +118,7 @@ function buildLeaderboardEmbed(bounty, { closed = false } = {}) {
   if (bounty.leader_teammates) {
     embed.addFields({
       name: resolveText('CARD.claim.fieldTeammates'),
-      value: bounty.leader_teammates.split(',').map((id) => `<@${id}>`).join(', '),
+      value: teammateNames.map((n) => n || UNKNOWN_USER).join(', ') || UNKNOWN_USER,
       inline: true,
     });
   }

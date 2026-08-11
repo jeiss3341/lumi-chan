@@ -41,6 +41,7 @@ const {
 const { startServer } = require('./src/styleGuide/server');
 const { loadOverrides } = require('./src/styleGuide/overrides');
 const { resolveText, applyEmoji } = require('./src/styleGuide/liveText');
+const { resolveUserLabels, resolveDisplayName, resolveDisplayNames } = require('./src/styleGuide/discordUsers');
 const TEXT = require('./src/text');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
@@ -487,6 +488,20 @@ function getTeammateIdsFromEmbed(embed) {
   return field ? field.value.match(/\d+/g) ?? [] : [];
 }
 
+// buildLeaderboardEmbed needs the leader's (and any teammates') resolved
+// display names up front — it stays a synchronous, pure builder (see
+// bountyCard.js) — so both board-post call sites (promoteSubmissionLeader
+// and confirm_close_submission_bounty) go through here instead of resolving
+// it twice.
+async function buildResolvedLeaderboardEmbed(guild, bounty, opts = {}) {
+  const teammateIds = bounty.leader_teammates ? bounty.leader_teammates.split(',') : [];
+  const [leaderName, teammateNames] = await Promise.all([
+    resolveDisplayName(client, guild, bounty.leader_id),
+    resolveDisplayNames(client, guild, teammateIds),
+  ]);
+  return buildLeaderboardEmbed(bounty, { ...opts, leaderName, teammateNames });
+}
+
 // approve_claim's submissions-type branch, shared by both paths that reach
 // it: straight from the button for a text-metric bounty (nothing to
 // collect), or from submission_value_modal_submit below for a numeric one
@@ -557,7 +572,7 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
         .setColor(COLORS.pending)
         .setTitle(`${resolveText('CARD.claim.titlePrefix')} ${bounty.name}`);
       await oldMessage
-        .edit({ embeds: [reopenedEmbed], components: [claimReviewButtons(bounty.id, bounty.group_type)] })
+        .edit({ embeds: [reopenedEmbed], components: [claimReviewButtons(bounty.id, updated.previous_leader_id, bounty.group_type)] })
         .catch(console.error);
 
       const moveWarning = submissionsCategoryId && !reopenedOk
@@ -602,7 +617,8 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
     const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);
     const boardMsg = boardChannel ? await boardChannel.messages.fetch(updated.board_message_id).catch(() => null) : null;
     if (boardMsg) {
-      await boardMsg.edit({ embeds: [buildLeaderboardEmbed(updated)] }).catch(console.error);
+      const leaderboardEmbed = await buildResolvedLeaderboardEmbed(interaction.guild, updated);
+      await boardMsg.edit({ embeds: [leaderboardEmbed] }).catch(console.error);
       notes.push(`${boardChannel} updated`);
     }
   }
@@ -808,19 +824,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const dateTag = (d) =>
         d ? `<t:${Math.floor(new Date(d).getTime() / 1000)}:D>` : '';
 
+      // Resolved up front, once, for every id that'll show up across all
+      // rows — same reasoning as bountyRoutes.js's resolveUserTags — so
+      // lineFor below stays a synchronous lookup instead of a fetch per row.
+      const nameIds = [...new Set(rows.flatMap((b) => [b.requester_id, b.claimer_id, b.approver_id]))];
+      const nameLabels = await resolveUserLabels(client, interaction.guild, nameIds);
+      const nameFor = (id) => {
+        const label = nameLabels[id];
+        return label ? label.nickname || label.username : 'Unknown User';
+      };
+
       const lineFor = (b) => {
         const reward = b.reward || '—';
 
-        let meta = `by <@${b.requester_id}>`;
+        let meta = `by ${nameFor(b.requester_id)}`;
         if (b.status === 'claimed' && b.claimer_id) {
           const when = dateTag(b.claimed_at);
-          meta += ` · 🔒 claimed by <@${b.claimer_id}>${when ? ` · ${when}` : ''}`;
+          meta += ` · 🔒 claimed by ${nameFor(b.claimer_id)}${when ? ` · ${when}` : ''}`;
         } else if (b.status === 'approved' && b.approver_id) {
           const when = dateTag(b.approved_at);
-          meta += ` · ✅ approved by <@${b.approver_id}>${when ? ` · ${when}` : ''}`;
+          meta += ` · ✅ approved by ${nameFor(b.approver_id)}${when ? ` · ${when}` : ''}`;
         } else if (b.status === 'denied' && b.approver_id) {
           const when = dateTag(b.approved_at);
-          meta += ` · ⛔ denied by <@${b.approver_id}>${when ? ` · ${when}` : ''}`;
+          meta += ` · ⛔ denied by ${nameFor(b.approver_id)}${when ? ` · ${when}` : ''}`;
         } else {
           meta += ` · ⏳ pending`;
         }
@@ -1157,6 +1183,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const embed = buildBountyEmbed({
         ...data,
         user: interaction.user,
+        requesterName: interaction.member?.displayName ?? interaction.user.username,
         status: 'pending',
       });
 
@@ -1308,6 +1335,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         amountRaw,
         groupType,
         user: interaction.user,
+        requesterName: interaction.member?.displayName ?? interaction.user.username,
         status: 'pending',
       });
 
@@ -1495,13 +1523,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // post and no way to tell staff tried and failed. Revert to 'pending'
       // and say so plainly, rather than the old silent half-finished state.
       try {
-        const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
+        const [requester, requesterName] = await Promise.all([
+          client.users.fetch(bounty.requester_id).catch(() => null),
+          resolveDisplayName(client, interaction.guild, bounty.requester_id),
+        ]);
         const approved = buildBountyEmbed({
           name,
           description,
           amountRaw,
           groupType: bounty.group_type,
           user: requester ?? interaction.user,
+          requesterName,
           status: 'approved',
         });
 
@@ -1603,7 +1635,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const uploaded = interaction.fields.getUploadedFiles('claim_files', false);
       const files = uploaded ? [...uploaded.values()] : [];
 
-      const embed = buildClaimEmbed({ bounty, claimant: interaction.user, notes, status: 'pending' });
+      const originalRequesterName = await resolveDisplayName(client, interaction.guild, bounty.requester_id);
+      const embed = buildClaimEmbed({
+        bounty,
+        claimant: interaction.user,
+        claimantName: interaction.member?.displayName ?? interaction.user.username,
+        originalRequesterName,
+        notes,
+        status: 'pending',
+      });
 
       try {
         const { staffRoleId, staffUserId } = await getClaimStaff();
@@ -1647,15 +1687,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // Archived tickets shouldn't still be actionable — the button stays on
       // the message forever (nothing removes it), so a stale click here used
       // to reach the permission-grant call below for no reason. Short-circuit
-      // before that, and before the embed-parsing/lookup work above it too.
+      // before that, and before the lookup work below it too.
       if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
         await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
         return;
       }
 
-      const requesterId = interaction.message.embeds[0]
-        ? extractMentionId(interaction.message.embeds[0], resolveText('CARD.claim.fieldOriginalRequester'))
-        : null;
+      // Read straight off the bounty row (bountyId's baked into this
+      // button's own customId) rather than parsing the Original Requester
+      // embed field — that field shows a resolved name now, not a mention
+      // (see src/bountyCard.js), so it's no longer parseable. Falls back to
+      // the old field-parsing for tickets whose embed predates this change,
+      // in case bountyId itself is somehow missing (very old ticket).
+      const includeRequesterBountyId = customIdArg(interaction);
+      const requesterBounty = includeRequesterBountyId ? await getBountyById(includeRequesterBountyId) : null;
+      const requesterId = requesterBounty?.requester_id
+        ?? (interaction.message.embeds[0]
+          ? extractMentionId(interaction.message.embeds[0], resolveText('CARD.claim.fieldOriginalRequester'))
+          : null);
 
       if (!requesterId) {
         await interaction.reply({ content: resolveText('REPLIES.includeRequesterFailed'), flags: MessageFlags.Ephemeral });
@@ -1785,9 +1834,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const bountyId = customIdArg(interaction);
-      const claimantId = interaction.message.embeds[0]
-        ? extractMentionId(interaction.message.embeds[0], 'Claimant')
-        : null;
+      // claimantId is baked into this button's own customId (claimReviewButtons,
+      // src/ticket.js) rather than parsed off the Claimant embed field — that
+      // field shows a resolved name now, not a mention (see src/bountyCard.js),
+      // so it's no longer parseable. Falls back to the old field-parsing for
+      // tickets whose buttons predate this change.
+      const claimantId = interaction.customId.split(':')[2]
+        ?? (interaction.message.embeds[0] ? extractMentionId(interaction.message.embeds[0], 'Claimant') : null);
 
       if (!bountyId || !claimantId) {
         await interaction.reply({ content: resolveText('REPLIES.claimFinalizeFailed'), flags: MessageFlags.Ephemeral });
@@ -1987,7 +2040,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const closedEmbed = buildLeaderboardEmbed(updated, { closed: true });
+      const closedEmbed = await buildResolvedLeaderboardEmbed(interaction.guild, updated, { closed: true });
 
       if (updated.board_channel_id && updated.board_message_id) {
         const boardChannel = await interaction.guild.channels.fetch(updated.board_channel_id).catch(() => null);

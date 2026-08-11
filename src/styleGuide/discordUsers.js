@@ -24,4 +24,27 @@ function labelText({ username, nickname }) {
   return nickname && nickname !== username ? `${username} · ${nickname}` : username;
 }
 
-module.exports = { resolveUserLabels, labelText };
+// The single display name for user-facing Discord messages (bounty/claim
+// cards, board posts) — nickname if they have one, else username. Unlike
+// labelText, this is for players, not the admin audit view, so it's one
+// name, not a "username · nickname" pair. Resolves to null if the user is
+// wholly unresolvable (left and deleted their account) — callers show a
+// placeholder rather than ever falling back to the raw id.
+async function resolveDisplayName(client, guild, id) {
+  if (!id) return null;
+  const labels = await resolveUserLabels(client, guild, [id]);
+  const label = labels[id];
+  return label ? label.nickname || label.username : null;
+}
+
+// Same, batched — returns names in the same order as `ids` (not object
+// insertion order, which JS reorders for all-digit keys like snowflakes).
+async function resolveDisplayNames(client, guild, ids) {
+  const labels = await resolveUserLabels(client, guild, ids);
+  return ids.map((id) => {
+    const label = labels[id];
+    return label ? label.nickname || label.username : null;
+  });
+}
+
+module.exports = { resolveUserLabels, labelText, resolveDisplayName, resolveDisplayNames };
