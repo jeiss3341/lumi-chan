@@ -44,17 +44,18 @@ const { resolveText, applyEmoji } = require('./src/styleGuide/liveText');
 const TEXT = require('./src/text');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
-// We only need the Guilds intent. No Message Content intent required, so you
-// don't have to flip any privileged-intent toggles in the Developer Portal.
-//
-// Deliberate trade-off: without MessageContent (a privileged intent — risky
-// to turn on for a bot mid-event, since Discord rejects the whole
-// connection if it's requested but not enabled in the Developer Portal),
-// Discord blanks out message.content for anything a real user sent. The
-// admin Tickets page's chat log (src/styleGuide/ticketRoutes.js) can
-// therefore only show full content for the bot's OWN messages (embeds,
-// prompts) — a real user's replies show up as an empty row (name/avatar/
-// timestamp, no text). Accepted as-is rather than risk the bot going down.
+// Guilds + GuildMessages. Still no Message Content intent (privileged — risky
+// to turn on for a bot mid-event, since Discord rejects the whole connection
+// if it's requested but not enabled in the Developer Portal) — not needed:
+// Discord exempts messages that @mention the bot from the content-sanitizing
+// that intent normally guards against, which is exactly the only case the
+// hello/beep/boop reply below needs to read. Everything else a real user
+// sends is still blanked out. The admin Tickets page's chat log
+// (src/styleGuide/ticketRoutes.js) can therefore only show full content for
+// the bot's OWN messages (embeds, prompts) and any message that mentioned
+// the bot — a real user's other replies show up as an empty row (name/
+// avatar/timestamp, no text). Accepted as-is rather than risk the bot going
+// down.
 //
 // The message sweeper matters more than it looks: discord.js's DEFAULT
 // sweeper config only ever sweeps threads, never messages — so every
@@ -64,7 +65,7 @@ const { COLORS, BANNER_URL } = TEXT.VISUALS;
 // next deploy. 30min lifetime, swept every 10min; nothing here needs an
 // old message to still be in cache (the page always re-fetches).
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
   sweepers: {
     ...Options.DefaultSweeperSettings,
     messages: { interval: 600, lifetime: 1800 },
@@ -222,6 +223,85 @@ client.once(Events.ClientReady, async (c) => {
   c.user.setPresence({
     activities: [{ name: 'boop', type: 4 }],
   });
+});
+
+// Application emoji (Developer Portal → Emojis), not a guild emoji — usable
+// in message content across every server the bot is in, no fetch/cache
+// lookup or GuildEmojisAndStickers intent needed, just the raw tag.
+const LUMI_HELLO_EMOJI = '<:LumiHello:1536577693208940594>';
+
+// "any form of hello" — collapse repeated letters (heyyy/hiii/hellooo all
+// collapse to hey/hi/helo) so casual and meme spellings match the same base
+// word without listing every stretched-out variant by hand. Every one of
+// these still falls under the one "Hello!" reply — they're spellings of the
+// same greeting, not separate responses.
+function stretchy(word) {
+  return word
+    .replace(/(.)\1+/g, '$1')
+    .split('')
+    .map((c) => `${c}+`)
+    .join('');
+}
+const HELLO_WORDS = [
+  'hello', 'hallo', 'hollo', 'hullo', 'henlo', 'hewwo', 'hola',
+  'hi', 'hiya', 'hai', 'hey', 'heya', 'heyo', 'ello',
+  'yo', 'yoohoo', 'sup', 'wassup', 'whatsup',
+  'howdy', 'greetings', 'salutations', 'ahoy', 'oi',
+];
+const GREETING_RE = new RegExp(`\\b(?:${HELLO_WORDS.map(stretchy).join('|')})\\b`, 'i');
+const BEEP_RE = new RegExp(`\\b${stretchy('beep')}\\b`, 'i');
+const BOOP_RE = new RegExp(`\\b${stretchy('boop')}\\b`, 'i');
+
+// "thank" alone (stretchy) covers "thank you"/"thank u", but not "thanks" —
+// stretchy collapses repeats, it doesn't add an optional trailing letter, so
+// "thanks" needs its own entry alongside the squished "thankyou" and slang.
+const THANKS_WORDS = ['thank', 'thanks', 'thankyou', 'thx', 'thnx', 'ty', 'tysm'];
+const THANKS_RE = new RegExp(`\\b(?:${THANKS_WORDS.map(stretchy).join('|')})\\b`, 'i');
+
+function stretchyPhrase(words) {
+  return words.map(stretchy).join('\\s+');
+}
+const GOOD_JOB_PHRASES = [
+  ['good', 'job'], ['nice', 'job'], ['great', 'job'], ['awesome', 'job'], ['amazing', 'job'],
+  ['good', 'work'], ['nice', 'work'], ['great', 'work'], ['well', 'done'],
+];
+const GOOD_JOB_RE = new RegExp(
+  `\\b(?:${GOOD_JOB_PHRASES.map(stretchyPhrase).join('|')}|${stretchy('gj')})\\b`,
+  'i',
+);
+
+// Lumi's two favorites — greeting and boop — always get the emoji. Everything
+// else (beep, thank-yous, good-jobs) is just the plain word back, no emoji.
+client.on(Events.MessageCreate, async (message) => {
+  if (process.env.ACTIVE_GUILD_ID && message.guildId !== process.env.ACTIVE_GUILD_ID) return;
+  if (!message.guildId) return;
+  if (message.author.bot) return;
+  if (!message.mentions.users.has(client.user.id)) return;
+
+  const said = message.content.replace(/<@!?\d+>/g, '').trim();
+  let reply = null;
+  let withEmoji = false;
+  if (GREETING_RE.test(said)) {
+    reply = Math.random() < 0.5 ? 'Hi!' : 'Hello!';
+    withEmoji = true;
+  } else if (BOOP_RE.test(said)) {
+    reply = 'Boop!';
+    withEmoji = true;
+  } else if (BEEP_RE.test(said)) {
+    reply = 'Boop!';
+  } else if (THANKS_RE.test(said)) {
+    reply = "You're welcome!";
+  } else if (GOOD_JOB_RE.test(said)) {
+    reply = 'Thank you!';
+  }
+  if (!reply) return;
+
+  // A plain @mention message, not a Discord "reply" (no reference banner
+  // pointing back at the original message).
+  await message.channel.send(`${reply} ${message.author}`).catch(() => {});
+
+  // The emoji as its own follow-up message, not tacked onto the greeting.
+  if (withEmoji) await message.channel.send(LUMI_HELLO_EMOJI).catch(() => {});
 });
 
 // Is this member allowed to review bounties? True if they hold the configured
