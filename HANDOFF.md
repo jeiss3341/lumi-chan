@@ -10,6 +10,8 @@ Paste this whole file as your first message to a new Claude session (or read it 
 
 **Hosting**: Railway. Pushing to the `main` branch on GitHub triggers an automatic redeploy — Railway restarts the bot and admin site with whatever's on `main`, using its own `DATABASE_URL` (set in Railway's dashboard, not from any local file).
 
+**This is a separate project from the Coastal Clash public website/leaderboard.** That's a different repo, `/Users/jeiss/Documents/GitHub/project-lumi` — see its `README.md` for the player stats / live leaderboard / player database / live-streaming-checker TODO. This file (Lumi-Chan) covers the Discord bounty bot only.
+
 **You do not have to babysit this.** Every Discord interaction is wrapped in a try/catch (`index.js`, the big `client.on(Events.InteractionCreate, ...)` handler) — a bug in one button/command shows up as a generic "something went wrong" ephemeral reply to whoever triggered it, not a crash. If the whole process does crash, Railway restarts it automatically. The main risk isn't downtime, it's a *wrong* behavior nobody notices for a while (no automated tests exist — see below).
 
 ---
