@@ -1,7 +1,18 @@
 const { EmbedBuilder } = require('discord.js');
 const TEXT = require('./text');
 const { resolveText } = require('./styleGuide/liveText');
+const { fmtDate } = require('./styleGuide/styleGuide');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
+
+// Discord's built-in `.setTimestamp()` footer auto-localizes to whatever
+// timezone the VIEWER's own client/OS thinks it's in — which looked wrong
+// on screen when that wasn't actually a NA timezone. Admin site and bounty
+// exports already sidestep this by printing the fixed PT/ET text via
+// fmtDate() instead of relying on per-viewer rendering; cards now do the
+// same, so the same bounty reads identically here and on the admin site.
+function footerWithTimestamp() {
+  return `${TEXT.FOOTER} • ${fmtDate(new Date())}`;
+}
 
 // Reward is free text now (not just dollars — could be "250 NP", "5 gems",
 // anything) so this is just a display-safe pass-through.
@@ -34,8 +45,7 @@ function buildBountyEmbed({ name, description, amountRaw, groupType, user, statu
       { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(groupType), inline: true },
     )
     .setImage(BANNER_URL)
-    .setFooter({ text: TEXT.FOOTER })
-    .setTimestamp();
+    .setFooter({ text: footerWithTimestamp() });
 }
 
 // Builds the claim-review card shown inside a claim ticket. `notes` is the
@@ -55,8 +65,7 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
       { name: resolveText('CARD.claim.fieldOriginalRequester'), value: `<@${bounty.requester_id}>`, inline: true },
     )
     .setImage(BANNER_URL)
-    .setFooter({ text: TEXT.FOOTER })
-    .setTimestamp();
+    .setFooter({ text: footerWithTimestamp() });
 }
 
 // The single line describing where a submissions bounty currently stands —
@@ -117,8 +126,7 @@ function buildLeaderboardEmbed(bounty, { closed = false, leaderAvatarURL } = {})
 
   return embed
     .setImage(BANNER_URL)
-    .setFooter({ text: TEXT.FOOTER })
-    .setTimestamp();
+    .setFooter({ text: footerWithTimestamp() });
 }
 
 module.exports = { buildBountyEmbed, buildClaimEmbed, buildLeaderboardEmbed, leaderboardLine, formatAmount, formatGroupType };
