@@ -1,17 +1,18 @@
 const { EmbedBuilder } = require('discord.js');
 const TEXT = require('./text');
 const { resolveText } = require('./styleGuide/liveText');
-const { fmtDate } = require('./styleGuide/styleGuide');
+const { fmtDateRelative } = require('./styleGuide/styleGuide');
 const { COLORS, BANNER_URL } = TEXT.VISUALS;
 
 // Discord's built-in `.setTimestamp()` footer auto-localizes to whatever
 // timezone the VIEWER's own client/OS thinks it's in — which looked wrong
-// on screen when that wasn't actually a NA timezone. Admin site and bounty
-// exports already sidestep this by printing the fixed PT/ET text via
-// fmtDate() instead of relying on per-viewer rendering; cards now do the
-// same, so the same bounty reads identically here and on the admin site.
+// on screen when that wasn't actually a NA timezone. Cards now print a
+// fixed PT/ET string instead of relying on per-viewer rendering, kept in
+// the short "Today"/"Yesterday"/M-D-YY phrasing Discord's own timestamps
+// used to read (fmtDateRelative), rather than the admin site's longer
+// "Aug 12, 2026" form (fmtDate) — cards want the punchier, familiar look.
 function footerWithTimestamp() {
-  return `${TEXT.FOOTER} • ${fmtDate(new Date())}`;
+  return `${TEXT.FOOTER} • ${fmtDateRelative(new Date())}`;
 }
 
 // Reward is free text now (not just dollars — could be "250 NP", "5 gems",

@@ -914,4 +914,33 @@ function fmtDate(value) {
   return `${date}, ${pt} PST · ${et} EST`;
 }
 
-module.exports = { buildStyleGuideHtml, buildLoginPageHtml, BASE_STYLES, topBar, esc, fmtDate };
+// Same PT/ET pairing as fmtDate, but with the day written the way Discord's
+// own auto-localized timestamps used to read ("Today"/"Yesterday"/short
+// M/D/YY) — used on bounty cards (src/bountyCard.js), which want that
+// shorter, friendlier phrasing instead of fmtDate's full "medium" date.
+// "Today"/"Yesterday" are bucketed by the Eastern calendar day specifically
+// (not the viewer's own day) so it's a fixed, consistent boundary for
+// everyone — the whole reason cards moved off Discord's real per-viewer
+// auto-localized timestamp in the first place.
+function fmtDateRelative(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  const now = new Date();
+
+  const dayKey = (date) => date.toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+  const todayKey = dayKey(now);
+  const yesterdayKey = dayKey(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const dKey = dayKey(d);
+
+  const pt = d.toLocaleTimeString('en-US', { ...TIME_TZ_OPTS, timeZone: 'America/Los_Angeles' });
+  const et = d.toLocaleTimeString('en-US', { ...TIME_TZ_OPTS, timeZone: 'America/New_York' });
+
+  let day;
+  if (dKey === todayKey) day = 'Today';
+  else if (dKey === yesterdayKey) day = 'Yesterday';
+  else day = d.toLocaleDateString('en-US', { dateStyle: 'short', timeZone: 'America/New_York' });
+
+  return `${day}, ${pt} PST · ${et} EST`;
+}
+
+module.exports = { buildStyleGuideHtml, buildLoginPageHtml, BASE_STYLES, topBar, esc, fmtDate, fmtDateRelative };
