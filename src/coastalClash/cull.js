@@ -250,19 +250,27 @@ async function runDailyCull(now = new Date(), dryRun = false) {
   // Season-ID verification itself calls the ER API (against reference
   // players) — skip it too while season isn't marked live, so /daychange
   // and the daily cull make ZERO API calls until then, not just skip the
-  // RP fetch. refreshAllRP already no-ops safely with seasonId=null.
+  // RP fetch. A verification FAILURE (e.g. the ER API itself is down —
+  // confirmed happening in production, see er_api_findings memory) no
+  // longer throws and aborts the whole function — it only skips the RP
+  // fetch (refreshAllRP can't safely run with an unverified seasonId).
+  // Everything below that doesn't depend on ER data — Twitch check, cull
+  // execution, indanger, leaderboard_meta — still runs regardless, since
+  // an unrelated external API being down shouldn't block schedule-only
+  // data (next_cull_at is pure calendar math) from ever being written.
   const seasonLive = (await db.getSeasonLive()) === 'true';
   let seasonId = null;
   let corrected = false;
+  let seasonVerificationFailed = false;
   if (seasonLive) {
     const referenceNicknames = await pickReferenceNicknames(db.pool);
     ({ seasonId, corrected } = await erApi.getVerifiedSeasonId(db, referenceNicknames, dryRun));
-    if (seasonId === null) {
-      throw new Error('Could not verify a live ER season ID — refusing to run the cull with unverified data.');
-    }
+    if (seasonId === null) seasonVerificationFailed = true;
   }
 
-  const refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
+  const refreshResult = seasonVerificationFailed
+    ? { updated: 0, failed: [], skipped: true, reason: 'could not verify a live ER season ID this cycle (external API issue?) — RP fetch skipped, will retry next cycle' }
+    : await refreshAllRP(db.pool, seasonId, dryRun);
   const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
 
   let proCull = { culled: [] };
@@ -282,6 +290,7 @@ async function runDailyCull(now = new Date(), dryRun = false) {
     reason: cullsToday ? undefined : `${schedule.getNonCullReason(day)} — indanger still updated`,
     seasonId,
     seasonIdCorrected: corrected,
+    seasonVerificationFailed,
     refresh: refreshResult,
     twitchRefresh: twitchResult,
     proCulled: proCull.culled,
@@ -297,18 +306,23 @@ async function runDailyCull(now = new Date(), dryRun = false) {
 async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   const day = schedule.getEventDay(now);
 
+  // Same decoupling as runDailyCull above — a season-verification failure
+  // (ER API issue) only skips the RP fetch, not the rest of the refresh
+  // cycle. This is the function the 10-min timer actually calls, so it's
+  // what's been leaving leaderboard_meta empty in production.
   const seasonLive = (await db.getSeasonLive()) === 'true';
   let seasonId = null;
   let corrected = false;
+  let seasonVerificationFailed = false;
   if (seasonLive) {
     const referenceNicknames = await pickReferenceNicknames(db.pool);
     ({ seasonId, corrected } = await erApi.getVerifiedSeasonId(db, referenceNicknames, dryRun));
-    if (seasonId === null) {
-      throw new Error('Could not verify a live ER season ID — refusing to refresh with unverified data.');
-    }
+    if (seasonId === null) seasonVerificationFailed = true;
   }
 
-  const refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
+  const refreshResult = seasonVerificationFailed
+    ? { updated: 0, failed: [], skipped: true, reason: 'could not verify a live ER season ID this cycle (external API issue?) — RP fetch skipped, will retry next cycle' }
+    : await refreshAllRP(db.pool, seasonId, dryRun);
   const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun);
@@ -318,6 +332,7 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
     day,
     seasonId,
     seasonIdCorrected: corrected,
+    seasonVerificationFailed,
     refresh: refreshResult,
     twitchRefresh: twitchResult,
     proIndanger: proDanger.dangerNames,
