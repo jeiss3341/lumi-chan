@@ -6,6 +6,19 @@ const erApi = require('./erApi');
 const twitchApi = require('./twitchApi');
 const schedule = require('./schedule');
 
+// Writes leaderboard_meta (last_updated_at + next_cull_at) — the ONLY
+// place project-lumi's site can get the actual countdown/refresh data
+// from, since the schedule logic itself lives only in this bot's code.
+// Pro and Casual currently share the exact same set of cull DAYS (just
+// different thresholds — see schedule.js's PRO/CASUAL_THRESHOLDS), so
+// "next cull" is the same moment for both; 'pro' is used as the lookup
+// bracket only because one had to be picked, not because it's special.
+async function updateLeaderboardMeta(day) {
+  const nextCullDay = schedule.getNextCullDay('pro', day);
+  const nextCullAt = nextCullDay !== null ? schedule.cullMomentForDay(nextCullDay) : null;
+  await db.setLeaderboardMeta(nextCullAt);
+}
+
 // Reference players used to verify the stored season ID is still live
 // (see erApi.getVerifiedSeasonId). Picked as currently-active, non-culled
 // players likely to have played recently — not load-bearing beyond that.
@@ -254,6 +267,7 @@ async function runDailyCull(now = new Date(), dryRun = false) {
 
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun, proCull.culled);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun, casualCull.culled);
+  if (!dryRun) await updateLeaderboardMeta(day);
 
   return {
     day,
@@ -291,6 +305,7 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun);
+  if (!dryRun) await updateLeaderboardMeta(day);
 
   return {
     day,

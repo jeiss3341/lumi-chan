@@ -197,6 +197,22 @@
       );
     `);
 
+    // Single-row table exposing the schedule/countdown data that ONLY
+    // lives inside this bot process's own code (src/coastalClash/schedule.js)
+    // otherwise — the project-lumi site has no way to know "when's the
+    // next cull" or "when was this last refreshed" without this. Written
+    // by every refresh cycle (src/coastalClash/cull.js), read directly by
+    // the site's own Postgres query — same shared-database pattern as
+    // players, just its own table rather than bolting onto that one.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS leaderboard_meta (
+        id              INTEGER PRIMARY KEY DEFAULT 1,
+        last_updated_at TIMESTAMPTZ,
+        next_cull_at    TIMESTAMPTZ,
+        CONSTRAINT single_row CHECK (id = 1)
+      );
+    `);
+
     // Warm the settings cache so the first interaction after boot doesn't have
     // to fall back to the DB for each setting it reads.
     await loadSettings();
@@ -490,6 +506,20 @@
 
   function setDayChangeStatusMessage(channelId, messageId) {
     return setSetting('coastal_clash_daychange_status_message', `${channelId}:${messageId}`);
+  }
+
+  // Upserts the single leaderboard_meta row — called every refresh cycle
+  // (src/coastalClash/cull.js) so project-lumi's site always has a fresh
+  // "last updated" and an accurate "next cull" to count down to, both
+  // sourced from this bot's own schedule logic that the site otherwise
+  // has no visibility into at all.
+  async function setLeaderboardMeta(nextCullAt) {
+    await pool.query(
+      `INSERT INTO leaderboard_meta (id, last_updated_at, next_cull_at)
+       VALUES (1, NOW(), $1)
+       ON CONFLICT (id) DO UPDATE SET last_updated_at = NOW(), next_cull_at = EXCLUDED.next_cull_at`,
+      [nextCullAt],
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -803,6 +833,7 @@
     setLiveNowMessageId,
     getLiveAnnounceChannel,
     setLiveAnnounceChannel,
+    setLeaderboardMeta,
     getSeasonLive,
     setSeasonLive,
     getDayChangeStatusMessage,
