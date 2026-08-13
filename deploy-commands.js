@@ -258,6 +258,16 @@ const commands = [
     .setDescription(TEXT.COMMANDS.deployLiveUpdate.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
+  // Read-only: dumps every currently-configured Coastal Clash
+  // channel/message setting plus leaderboard_meta's freshness — since
+  // those settings are global (not per-server), this is the fast way to
+  // check where the real board is actually pointed, instead of a manual
+  // DB query.
+  new SlashCommandBuilder()
+    .setName('readdeployment')
+    .setDescription(TEXT.COMMANDS.readDeployment.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
   // Testing-only: advances the simulated Coastal Clash day counter by one
   // and immediately refreshes whichever live leaderboard message(s) are
   // deployed, so a day-change can actually be watched in Discord instead

@@ -52,6 +52,11 @@ module.exports = {
       // ocean/racing mood board — for spreadsheet exports, future embeds, etc.
       sand: 0xe4c9a0,
       navy: 0x123c54,
+      // Platform brand colors for the Live Now board / live announce feed
+      // — Twitch's official purple. YouTube's brand red can join here
+      // once YouTube live tracking is added, so each platform reads as
+      // itself at a glance instead of both sharing a generic color.
+      twitch: 0x9146ff,
     },
     // Shown inside panels and bounty/claim cards. 1500x500 — the original
     // banner size (not the 3000x1000 upscale).
@@ -593,6 +598,9 @@ module.exports = {
     },
     deployLiveUpdate: {
       command: 'Post a new alert here whenever a player switches into Eternal Return on Twitch.',
+    },
+    readDeployment: {
+      command: 'Show which channels/messages the Coastal Clash boards are currently pointed at (staff only).',
     },
     dayChange: {
       command: 'TEST ONLY: advance the simulated Coastal Clash day by one and refresh the live board.',

@@ -445,6 +445,17 @@
     return setSetting(`coastal_clash_leaderboard_message_${bracket}`, messageId);
   }
 
+  // Called when someone manually deletes a bracket's leaderboard message
+  // (index.js's messageDelete listener) — clears BOTH the channel and
+  // message id so the refresh timer treats that bracket as "not deployed"
+  // and stays quiet, instead of auto-recreating the message on the next
+  // cycle (the old behavior: postOrUpdateBracketMessage falls back to
+  // posting fresh whenever the stored message id fails to fetch).
+  async function clearLeaderboardDeployment(bracket) {
+    await clearSetting(`coastal_clash_leaderboard_channel_${bracket}`);
+    await clearSetting(`coastal_clash_leaderboard_message_${bracket}`);
+  }
+
   // "Live Now" post — a single message (not per-bracket) listing everyone
   // currently streaming, edited in place by the same refresh cycle that
   // updates twitchlive (src/coastalClash/cull.js refreshTwitchLiveStatus).
@@ -462,6 +473,13 @@
 
   function setLiveNowMessageId(messageId) {
     return setSetting('coastal_clash_livenow_message', messageId);
+  }
+
+  // Same manual-delete-means-stop behavior as clearLeaderboardDeployment
+  // above, for the Live Now board.
+  async function clearLiveNowDeployment() {
+    await clearSetting('coastal_clash_livenow_channel');
+    await clearSetting('coastal_clash_livenow_message');
   }
 
   // "Live Update" announcement feed — a NEW message per stream that
@@ -827,10 +845,12 @@
     setLeaderboardChannel,
     getLeaderboardMessageId,
     setLeaderboardMessageId,
+    clearLeaderboardDeployment,
     getLiveNowChannel,
     setLiveNowChannel,
     getLiveNowMessageId,
     setLiveNowMessageId,
+    clearLiveNowDeployment,
     getLiveAnnounceChannel,
     setLiveAnnounceChannel,
     setLeaderboardMeta,

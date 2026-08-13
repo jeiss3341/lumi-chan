@@ -297,6 +297,23 @@ const GOOD_JOB_RE = new RegExp(
   'i',
 );
 
+// Manually deleting a Coastal Clash board message means "stop posting
+// this here" — without this, the next refresh cycle would just see the
+// stored message id fail to fetch and silently post a brand new one
+// (postOrUpdateBracketMessage / postOrUpdateLiveNow's fallback), making
+// the board impossible to actually get rid of. message.id is always
+// present even on a partial (uncached) delete event, so no fetch needed.
+client.on(Events.MessageDelete, async (message) => {
+  const [proMessageId, casualMessageId, liveNowMessageId] = await Promise.all([
+    getLeaderboardMessageId('pro'),
+    getLeaderboardMessageId('casual'),
+    getLiveNowMessageId(),
+  ]);
+  if (message.id === proMessageId) await db.clearLeaderboardDeployment('pro');
+  else if (message.id === casualMessageId) await db.clearLeaderboardDeployment('casual');
+  else if (message.id === liveNowMessageId) await db.clearLiveNowDeployment();
+});
+
 // Lumi's two favorites — greeting and boop — always get the emoji. Everything
 // else (beep, thank-yous, good-jobs) is just the plain word back, no emoji.
 client.on(Events.MessageCreate, async (message) => {
@@ -1298,6 +1315,45 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.editReply({
         content: `🔴 Coastal Clash Live Update announcements will post in this channel from now on.${posted ? ` Posted ${posted} already-live streamer${posted === 1 ? '' : 's'} now.` : ''}`,
       });
+      return;
+    }
+
+    // /readdeployment  →  read-only diagnostic dump of everything currently
+    // configured (which channel/message each board is pointed at) plus
+    // leaderboard_meta's live freshness data. All of these settings are
+    // GLOBAL, not per-server (src/db.js's getLeaderboardChannel etc. just
+    // read a single settings row) — so running deploy commands in the
+    // wrong server silently redirects the real board there. This exists
+    // so that mix-up is a 5-second Discord check instead of a manual DB
+    // query every time.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'readdeployment') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const [proChannel, proMsg, casualChannel, casualMsg, liveNowChannel, liveNowMsg, liveAnnounceChannel, seasonLive, metaRows] = await Promise.all([
+        db.getLeaderboardChannel('pro'),
+        db.getLeaderboardMessageId('pro'),
+        db.getLeaderboardChannel('casual'),
+        db.getLeaderboardMessageId('casual'),
+        db.getLiveNowChannel(),
+        db.getLiveNowMessageId(),
+        db.getLiveAnnounceChannel(),
+        db.getSeasonLive(),
+        db.pool.query('SELECT last_updated_at, next_cull_at FROM leaderboard_meta WHERE id = 1'),
+      ]);
+      const meta = metaRows.rows[0];
+
+      const fmtChannel = (id) => (id ? `<#${id}>` : '*not set*');
+      const lines = [
+        `**Pro leaderboard:** ${fmtChannel(proChannel)}${proMsg ? ` (msg \`${proMsg}\`)` : ''}`,
+        `**Casual leaderboard:** ${fmtChannel(casualChannel)}${casualMsg ? ` (msg \`${casualMsg}\`)` : ''}`,
+        `**Live Now board:** ${fmtChannel(liveNowChannel)}${liveNowMsg ? ` (msg \`${liveNowMsg}\`)` : ''}`,
+        `**Live announce feed:** ${fmtChannel(liveAnnounceChannel)}`,
+        `**Season live (RP fetch enabled):** ${seasonLive === 'true' ? 'yes' : 'no'}`,
+        `**leaderboard_meta.last_updated_at:** ${meta?.last_updated_at ? `<t:${Math.floor(new Date(meta.last_updated_at).getTime() / 1000)}:R>` : '*never*'}`,
+        `**leaderboard_meta.next_cull_at:** ${meta?.next_cull_at ? `<t:${Math.floor(new Date(meta.next_cull_at).getTime() / 1000)}:R>` : '*not set*'}`,
+      ];
+
+      await interaction.editReply({ content: `📋 **Coastal Clash deployment status**\n${lines.join('\n')}` });
       return;
     }
 
