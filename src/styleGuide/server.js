@@ -22,6 +22,7 @@ const qandaTopics = require('./qandaTopics');
 const auth = require('./auth');
 const bountyRoutes = require('./bountyRoutes');
 const ticketRoutes = require('./ticketRoutes');
+const leaderboardRoutes = require('./leaderboardRoutes');
 const { readBody, redirectTo } = require('./httpUtil');
 
 // `session` is always present here — every caller runs after the auth gate
@@ -383,6 +384,26 @@ function startServer(client) {
     if (req.method === 'GET' && ticketIdMatch) {
       ticketRoutes.handleTicketDetail(req, res, session, client, ticketIdMatch[1]);
       return;
+    }
+
+    if (req.method === 'GET' && path === '/leaderboard') {
+      leaderboardRoutes.handleLeaderboardList(req, res, session);
+      return;
+    }
+    // Player names are the table's TEXT primary key, not a numeric id like
+    // bounties — encodeURIComponent/decodeURIComponent on both ends keeps
+    // any punctuation in a nickname from breaking the route match.
+    const playerEditMatch = path.match(/^\/leaderboard\/([^/]+)\/edit$/);
+    if (playerEditMatch) {
+      const name = decodeURIComponent(playerEditMatch[1]);
+      if (req.method === 'GET') {
+        leaderboardRoutes.handlePlayerEditPage(req, res, session, name);
+        return;
+      }
+      if (req.method === 'POST') {
+        leaderboardRoutes.handleEditPlayer(req, res, session, name);
+        return;
+      }
     }
 
     res.writeHead(req.method === 'GET' ? 404 : 405, { 'Content-Type': 'text/plain' });

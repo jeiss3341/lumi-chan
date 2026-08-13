@@ -438,6 +438,46 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Coastal Clash players (admin site — src/styleGuide/leaderboardRoutes.js)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // bracket: 'pro' | 'casual' | 'all'. Active players first (by RP desc),
+  // eliminated ones after — same ordering logic as the Discord embed
+  // (src/coastalClash/embed.js) so the admin page and the live leaderboard
+  // never disagree about ordering.
+  async function getPlayers(bracket = 'all') {
+    if (bracket === 'all') {
+      const result = await pool.query(`SELECT * FROM players ORDER BY ispro DESC, culled ASC, mmr DESC, name ASC`);
+      return result.rows;
+    }
+    const result = await pool.query(
+      `SELECT * FROM players WHERE ispro = $1 ORDER BY culled ASC, mmr DESC, name ASC`,
+      [bracket === 'pro'],
+    );
+    return result.rows;
+  }
+
+  async function getPlayerByName(name) {
+    const result = await pool.query('SELECT * FROM players WHERE name = $1', [name]);
+    return result.rows[0] ?? null;
+  }
+
+  // Free-form update of the admin-editable fields — region/twitch/youtube
+  // (player info) plus culled/indanger/ispro (staff override, e.g.
+  // reversing a mistaken elimination or fixing a wrong bracket). mmr and
+  // the live-stream flags are NOT editable here — they're written only by
+  // the automated pipeline (src/coastalClash/cull.js refreshAllRP), since
+  // hand-editing RP would silently desync from the real API standing.
+  async function updatePlayer(name, { region, twitch, youtube, culled, indanger, ispro }) {
+    const result = await pool.query(
+      `UPDATE players SET region = $2, twitch = $3, youtube = $4, culled = $5, indanger = $6, ispro = $7
+       WHERE name = $1 RETURNING *`,
+      [name, region ?? '', twitch ?? '', youtube ?? '', culled, indanger, ispro],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // Bounty records
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -706,6 +746,9 @@
     setSeasonLive,
     getDayChangeStatusMessage,
     setDayChangeStatusMessage,
+    getPlayers,
+    getPlayerByName,
+    updatePlayer,
     createBounty,
     getBountyById,
     updateBounty,
