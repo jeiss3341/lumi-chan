@@ -7,7 +7,7 @@
 //   - Once/day at 11:59 PM PDT: the real cull (src/coastalClash/cull.js
 //     runDailyCull), auto-retried on failure, with a DM alert either way.
 const { runDailyCull, refreshLeaderboardOnly } = require('./cull');
-const { postOrUpdateLeaderboard } = require('./embed');
+const { postOrUpdateLeaderboard, postOrUpdateLiveNow, postLiveAnnouncements } = require('./embed');
 const db = require('../db');
 
 // Person to DM on cull failure/retry/self-correction. Hardcoded per the
@@ -56,6 +56,8 @@ async function runDailyCullWithRetry(client) {
       console.log(`Coastal Clash: day ${result.day} cull complete. Pro culled: ${result.proCulled?.length ?? 0}, Casual culled: ${result.casualCulled?.length ?? 0}.`);
       try {
         await postOrUpdateLeaderboard(client, db);
+        await postOrUpdateLiveNow(client, db);
+        await postLiveAnnouncements(client, db, result.twitchRefresh?.toAnnounce ?? []);
       } catch (err) {
         console.error('Coastal Clash: failed to post/update leaderboard message after cull:', err);
       }
@@ -95,8 +97,10 @@ function startCoastalClashTimers(client) {
       if (lastRefreshMinuteKey !== minuteKey) {
         lastRefreshMinuteKey = minuteKey;
         try {
-          await refreshLeaderboardOnly();
+          const refreshResult = await refreshLeaderboardOnly();
           await postOrUpdateLeaderboard(client, db);
+          await postOrUpdateLiveNow(client, db);
+          await postLiveAnnouncements(client, db, refreshResult.twitchRefresh?.toAnnounce ?? []);
         } catch (err) {
           console.error('Coastal Clash: 30-min refresh failed:', err);
         }

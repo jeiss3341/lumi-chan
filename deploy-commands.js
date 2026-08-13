@@ -240,6 +240,24 @@ const commands = [
     .setDescription(TEXT.COMMANDS.deployCasualLeaderboard.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
+  // Posts the "Live Now" message and remembers its channel+message id
+  // (src/db.js getLiveNowChannel/setLiveNowMessageId) so the refresh
+  // timer and daily cull can edit it in place. One message, not
+  // per-bracket — both brackets' live streamers show together.
+  new SlashCommandBuilder()
+    .setName('deployislive')
+    .setDescription(TEXT.COMMANDS.deployIsLive.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
+  // Sets the channel for the "Live Update" announcement feed — a NEW
+  // message per stream that switches into Eternal Return (not an
+  // edited-in-place board like /deployislive above). Just stores a
+  // channel id, no message id, since nothing here ever gets edited.
+  new SlashCommandBuilder()
+    .setName('deployliveupdate')
+    .setDescription(TEXT.COMMANDS.deployLiveUpdate.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
   // Testing-only: advances the simulated Coastal Clash day counter by one
   // and immediately refreshes whichever live leaderboard message(s) are
   // deployed, so a day-change can actually be watched in Discord instead

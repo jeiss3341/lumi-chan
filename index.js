@@ -160,8 +160,15 @@ const {
   setLeaderboardChannel,
   getLeaderboardMessageId,
   setLeaderboardMessageId,
+  getLiveNowChannel,
+  setLiveNowChannel,
+  getLiveNowMessageId,
+  setLiveNowMessageId,
+  getLiveAnnounceChannel,
+  setLiveAnnounceChannel,
 } = require('./src/db');
-const { buildLeaderboardEmbeds, postOrUpdateLeaderboard } = require('./src/coastalClash/embed');
+const { buildLeaderboardEmbeds, postOrUpdateLeaderboard, buildLiveNowEmbed, postLiveAnnouncements } = require('./src/coastalClash/embed');
+const { ETERNAL_RETURN_GAME_ID } = require('./src/coastalClash/twitchApi');
 const { runDailyCull } = require('./src/coastalClash/cull');
 const { dateForSimulatedDay } = require('./src/coastalClash/schedule');
 const db = require('./src/db');
@@ -1228,6 +1235,69 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.editReply({ content: `🏆 Coastal Clash ${bracket === 'pro' ? 'Pro' : 'Casual'} leaderboard ${edited ? 'updated' : 'deployed'} in this channel.` });
+      return;
+    }
+
+    // /deployislive  →  posts (or edits, on redeploy to the same channel)
+    // the "Live Now" message — one message, not per-bracket, listing
+    // everyone currently streaming with a clickable link and their
+    // current stream title. Kept up to date by the same refresh cycle
+    // that writes twitchlive/twitch_title (src/coastalClash/cull.js
+    // refreshTwitchLiveStatus).
+    if (interaction.isChatInputCommand() && interaction.commandName === 'deployislive') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const embed = await buildLiveNowEmbed(pool);
+
+      const existingChannelId = await getLiveNowChannel();
+      const existingMessageId = existingChannelId === interaction.channel.id ? await getLiveNowMessageId() : null;
+
+      let edited = false;
+      if (existingMessageId) {
+        try {
+          const existingMessage = await interaction.channel.messages.fetch(existingMessageId);
+          await existingMessage.edit({ embeds: [embed] });
+          edited = true;
+        } catch (err) {
+          console.warn('Coastal Clash: could not edit existing Live Now message on redeploy, posting a new one:', err.message);
+        }
+      }
+
+      if (!edited) {
+        const message = await interaction.channel.send({ embeds: [embed] });
+        await setLiveNowChannel(interaction.channel.id);
+        await setLiveNowMessageId(message.id);
+      }
+
+      await interaction.editReply({ content: `🔴 Coastal Clash Live Now board ${edited ? 'updated' : 'deployed'} in this channel.` });
+      return;
+    }
+
+    // /deployliveupdate  →  sets the channel for the "Live Update"
+    // announcement feed, THEN immediately posts for anyone already
+    // streaming Eternal Return right now — otherwise someone who started
+    // streaming before this command was ever run would never get
+    // announced (the refresh timer only fires on a fresh SWITCH into ER,
+    // not on "already was ER last check too"). twitch_status.last_game
+    // reflects the most recent refresh cycle (within the last ~10 min),
+    // so this reads current state without needing its own extra Twitch
+    // API call.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'deployliveupdate') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await setLiveAnnounceChannel(interaction.channel.id);
+
+      const { rows: alreadyLive } = await pool.query(
+        `SELECT p.name, p.twitch, s.title
+         FROM players p
+         JOIN twitch_status s ON s.name = p.name
+         WHERE p.twitchlive = true AND s.last_game = $1`,
+        [ETERNAL_RETURN_GAME_ID],
+      );
+      const toAnnounce = alreadyLive.map((p) => ({ name: p.name, twitch: p.twitch, title: p.title, gameName: 'Eternal Return' }));
+      const { posted } = await postLiveAnnouncements(interaction.client, db, toAnnounce);
+
+      await interaction.editReply({
+        content: `🔴 Coastal Clash Live Update announcements will post in this channel from now on.${posted ? ` Posted ${posted} already-live streamer${posted === 1 ? '' : 's'} now.` : ''}`,
+      });
       return;
     }
 

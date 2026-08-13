@@ -174,6 +174,29 @@
       );
     `);
 
+    // Twitch tracking data lives in its OWN table, deliberately kept OUT
+    // of players — that table is the exact shared contract project-lumi's
+    // site queries directly (SELECT name, region, ..., ispro AS "isPro"
+    // FROM players), and the user's explicit call was not to touch its
+    // schema for internal bot-only bookkeeping. name is not a hard
+    // foreign key (players existed before any code managed it — see
+    // comment above — so this stays loosely coupled by convention, not
+    // a DB-enforced constraint).
+    //   title: the CURRENT stream title (shown on the "Live Now" post).
+    //   last_game: the category as of the last check — detects a SWITCH
+    //     into Eternal Return (not just "is live") for /deployliveupdate.
+    //   announced_at: when they last triggered an announcement — the
+    //     30-min cooldown (refreshTwitchLiveStatus) checks this so a
+    //     stream crash-and-restart doesn't re-announce the same session.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS twitch_status (
+        name         TEXT PRIMARY KEY,
+        title        TEXT NOT NULL DEFAULT '',
+        last_game    TEXT NOT NULL DEFAULT '',
+        announced_at TIMESTAMPTZ
+      );
+    `);
+
     // Warm the settings cache so the first interaction after boot doesn't have
     // to fall back to the DB for each setting it reads.
     await loadSettings();
@@ -404,6 +427,38 @@
 
   function setLeaderboardMessageId(bracket, messageId) {
     return setSetting(`coastal_clash_leaderboard_message_${bracket}`, messageId);
+  }
+
+  // "Live Now" post — a single message (not per-bracket) listing everyone
+  // currently streaming, edited in place by the same refresh cycle that
+  // updates twitchlive (src/coastalClash/cull.js refreshTwitchLiveStatus).
+  function getLiveNowChannel() {
+    return getSetting('coastal_clash_livenow_channel');
+  }
+
+  function setLiveNowChannel(channelId) {
+    return setSetting('coastal_clash_livenow_channel', channelId);
+  }
+
+  function getLiveNowMessageId() {
+    return getSetting('coastal_clash_livenow_message');
+  }
+
+  function setLiveNowMessageId(messageId) {
+    return setSetting('coastal_clash_livenow_message', messageId);
+  }
+
+  // "Live Update" announcement feed — a NEW message per stream that
+  // switches into the Eternal Return category (src/coastalClash/cull.js
+  // refreshLiveAnnouncements), not an edited-in-place status board like
+  // Live Now above. No message-id tracking needed since nothing ever
+  // gets edited, only posted.
+  function getLiveAnnounceChannel() {
+    return getSetting('coastal_clash_liveannounce_channel');
+  }
+
+  function setLiveAnnounceChannel(channelId) {
+    return setSetting('coastal_clash_liveannounce_channel', channelId);
   }
 
   // Whether the ER API's season-40 data is treated as real, meaningful
@@ -742,6 +797,12 @@
     setLeaderboardChannel,
     getLeaderboardMessageId,
     setLeaderboardMessageId,
+    getLiveNowChannel,
+    setLiveNowChannel,
+    getLiveNowMessageId,
+    setLiveNowMessageId,
+    getLiveAnnounceChannel,
+    setLiveAnnounceChannel,
     getSeasonLive,
     setSeasonLive,
     getDayChangeStatusMessage,

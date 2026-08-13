@@ -588,6 +588,12 @@ module.exports = {
     deployCasualLeaderboard: {
       command: 'Post the live Coastal Clash Casual bracket leaderboard here (staff only, auto-updates).',
     },
+    deployIsLive: {
+      command: 'Post the live Coastal Clash "who is live" board here (staff only, auto-updates).',
+    },
+    deployLiveUpdate: {
+      command: 'Post a new alert here whenever a player switches into Eternal Return on Twitch.',
+    },
     dayChange: {
       command: 'TEST ONLY: advance the simulated Coastal Clash day by one and refresh the live board.',
     },

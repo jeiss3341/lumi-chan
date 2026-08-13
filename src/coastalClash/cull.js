@@ -3,6 +3,7 @@
 // share a ranking pool or a cutoff.
 const db = require('../db');
 const erApi = require('./erApi');
+const twitchApi = require('./twitchApi');
 const schedule = require('./schedule');
 
 // Reference players used to verify the stored season ID is still live
@@ -49,6 +50,99 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
       results.failed.push(name);
     }
     await erApi.sleep(erApi.CALL_SPACING_MS);
+  }
+
+  return results;
+}
+
+// Announcements re-fire if the same player's last announcement was more
+// than this long ago — a stream that crashes and restarts within the
+// window is treated as the SAME session continuing, not a new one worth
+// re-announcing (the user's explicit call).
+const LIVE_ANNOUNCE_COOLDOWN_MS = 30 * 60 * 1000;
+
+// Refreshes twitchlive for EVERY player (active and eliminated alike —
+// live status isn't tied to elimination, the design mockup shows it
+// regardless), AND figures out who just switched INTO the Eternal Return
+// category for the /deployliveupdate announcement feed — both share this
+// single Helix call rather than doubling the API hit. twitchlive lives
+// on players (part of the shared contract project-lumi's site reads
+// directly); title/last_game/announced_at live in the separate
+// twitch_status table, deliberately kept out of players per the user's
+// explicit call. Unlike refreshAllRP, none of this is gated behind
+// db.getSeasonLive() — Twitch status has nothing to do with whether the
+// ER ranked season is considered "real," and one batched call for the
+// whole roster is cheap enough to just always run.
+//
+// "Switched into ER" = their PREVIOUS check wasn't ER (or they weren't
+// live at all) and their CURRENT check is ER — not just "is live", so
+// someone streaming just-chatting for hours doesn't get announced, but
+// they do the moment they tab into Eternal Return. Cooldown is keyed off
+// announced_at regardless of brief drops, per LIVE_ANNOUNCE_COOLDOWN_MS.
+async function refreshTwitchLiveStatus(pool, dryRun = false) {
+  const { rows } = await pool.query(
+    `SELECT p.name, p.twitch, s.last_game, s.announced_at
+     FROM players p
+     LEFT JOIN twitch_status s ON s.name = p.name
+     WHERE p.twitch != ''`,
+  );
+  const results = { updated: 0, failed: [], toAnnounce: [] };
+  if (!rows.length) return results;
+
+  const rowsByLogin = new Map();
+  for (const row of rows) {
+    const login = twitchApi.extractTwitchLogin(row.twitch);
+    if (!login) continue;
+    if (!rowsByLogin.has(login)) rowsByLogin.set(login, []);
+    rowsByLogin.get(login).push(row);
+  }
+
+  let liveLogins;
+  try {
+    liveLogins = await twitchApi.fetchLiveLogins([...rowsByLogin.keys()]);
+  } catch (err) {
+    // One failed batch call shouldn't crash the whole refresh cycle —
+    // report it and leave twitchlive untouched until the next attempt.
+    results.failed = [...rowsByLogin.values()].flat().map((r) => r.name);
+    results.error = err.message;
+    return results;
+  }
+
+  const now = Date.now();
+  for (const [login, playerRows] of rowsByLogin) {
+    const liveInfo = liveLogins.get(login);
+    const isLive = !!liveInfo;
+    // Title cleared to '' when offline, same as it never having been set —
+    // avoids showing a stale title from their last stream once they're
+    // no longer live.
+    const title = liveInfo?.title ?? '';
+    const currentGameId = liveInfo?.gameId ?? '';
+    const isEternalReturn = currentGameId === twitchApi.ETERNAL_RETURN_GAME_ID;
+
+    for (const row of playerRows) {
+      const wasEternalReturn = row.last_game === twitchApi.ETERNAL_RETURN_GAME_ID;
+      const justSwitchedIn = isEternalReturn && !wasEternalReturn;
+      const lastAnnouncedMs = row.announced_at ? new Date(row.announced_at).getTime() : 0;
+      const offCooldown = now - lastAnnouncedMs > LIVE_ANNOUNCE_COOLDOWN_MS;
+      const willAnnounce = justSwitchedIn && offCooldown;
+
+      if (willAnnounce) results.toAnnounce.push({ name: row.name, twitch: row.twitch, title, gameName: liveInfo.gameName });
+
+      if (!dryRun) {
+        await pool.query(`UPDATE players SET twitchlive = $2 WHERE name = $1`, [row.name, isLive]);
+        // announced_at only advances when actually announcing — otherwise
+        // it stays whatever it already was (row.announced_at, already in
+        // hand from the earlier join, no extra query needed).
+        const announcedAt = willAnnounce ? new Date() : row.announced_at;
+        await pool.query(
+          `INSERT INTO twitch_status (name, title, last_game, announced_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (name) DO UPDATE SET title = EXCLUDED.title, last_game = EXCLUDED.last_game, announced_at = EXCLUDED.announced_at`,
+          [row.name, title, currentGameId, announcedAt],
+        );
+      }
+      results.updated++;
+    }
   }
 
   return results;
@@ -149,6 +243,7 @@ async function runDailyCull(now = new Date(), dryRun = false) {
   }
 
   const refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
+  const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
 
   let proCull = { culled: [] };
   let casualCull = { culled: [] };
@@ -167,6 +262,7 @@ async function runDailyCull(now = new Date(), dryRun = false) {
     seasonId,
     seasonIdCorrected: corrected,
     refresh: refreshResult,
+    twitchRefresh: twitchResult,
     proCulled: proCull.culled,
     casualCulled: casualCull.culled,
     proIndanger: proDanger.dangerNames,
@@ -192,6 +288,7 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   }
 
   const refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
+  const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun);
 
@@ -200,6 +297,7 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
     seasonId,
     seasonIdCorrected: corrected,
     refresh: refreshResult,
+    twitchRefresh: twitchResult,
     proIndanger: proDanger.dangerNames,
     casualIndanger: casualDanger.dangerNames,
   };
@@ -208,6 +306,7 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
 module.exports = {
   pickReferenceNicknames,
   refreshAllRP,
+  refreshTwitchLiveStatus,
   updateIndangerForBracket,
   executeCullForBracket,
   runDailyCull,

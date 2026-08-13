@@ -7,6 +7,7 @@
 const { EmbedBuilder } = require('discord.js');
 const { VISUALS } = require('../text');
 const schedule = require('./schedule');
+const twitchApi = require('./twitchApi');
 
 function buildBracketEmbed(pool, isPro, day) {
   return pool
@@ -127,4 +128,99 @@ async function postOrUpdateLeaderboard(client, db, now = new Date()) {
   return { pro: proResult, casual: casualResult };
 }
 
-module.exports = { buildLeaderboardEmbeds, postOrUpdateLeaderboard };
+// "Live Now" — one message (not per-bracket) listing everyone currently
+// streaming, refreshed by the same cycle that updates twitchlive
+// (src/coastalClash/cull.js refreshTwitchLiveStatus). Culled players are
+// included if they're live — streaming status isn't tied to elimination.
+async function buildLiveNowEmbed(pool) {
+  const { rows } = await pool.query(
+    `SELECT p.name, p.region, p.twitch, p.ispro, p.culled, s.title
+     FROM players p
+     LEFT JOIN twitch_status s ON s.name = p.name
+     WHERE p.twitchlive = true
+     ORDER BY p.ispro DESC, p.name ASC`,
+  );
+
+  const lines = rows.map((p) => {
+    const region = p.region ? `${p.region} | ` : '';
+    const bracket = p.ispro ? '🔱' : '⚔️';
+    const login = twitchApi.extractTwitchLogin(p.twitch);
+    const link = login ? `https://twitch.tv/${login}` : null;
+    const eliminated = p.culled ? ' ☠️' : '';
+    const nameLine = link
+      ? `${bracket} **${region}[${p.name}](${link})**${eliminated}`
+      : `${bracket} **${region}${p.name}**${eliminated}`;
+    return p.title ? `${nameLine}\n> ${p.title}` : nameLine;
+  });
+
+  const description = lines.length ? lines.join('\n') : '*Nobody is live right now.*';
+
+  return new EmbedBuilder()
+    .setTitle('🔴 Live Now')
+    .setColor(VISUALS.COLORS.denied)
+    .setDescription(description)
+    .setFooter({ text: `${rows.length} streamer${rows.length === 1 ? '' : 's'} live` });
+}
+
+// Same edit-in-place pattern as postOrUpdateBracketMessage — one message,
+// one channel, no duplicates on repeat refreshes.
+async function postOrUpdateLiveNow(client, db) {
+  const channelId = await db.getLiveNowChannel();
+  if (!channelId) return { posted: false, reason: 'no channel configured' };
+
+  const channel = await client.channels.fetch(channelId);
+  const embed = await buildLiveNowEmbed(db.pool);
+
+  const existingMessageId = await db.getLiveNowMessageId();
+  if (existingMessageId) {
+    try {
+      const message = await channel.messages.fetch(existingMessageId);
+      await message.edit({ embeds: [embed] });
+      return { posted: true, edited: true };
+    } catch (err) {
+      console.warn('Coastal Clash: could not edit existing Live Now message, posting a new one:', err.message);
+    }
+  }
+
+  const message = await channel.send({ embeds: [embed] });
+  await db.setLiveNowMessageId(message.id);
+  return { posted: true, edited: false };
+}
+
+// One fresh message PER entry in `toAnnounce` (src/coastalClash/cull.js
+// refreshTwitchLiveStatus's toAnnounce list — already filtered to
+// "just switched into Eternal Return" + off cooldown). Deliberately NOT
+// edited-in-place like Live Now above — this is a feed of distinct
+// events, not a status board. No-ops quietly if /deployliveupdate hasn't
+// been run yet, since the refresh cycle calls this unconditionally.
+async function postLiveAnnouncements(client, db, toAnnounce) {
+  if (!toAnnounce.length) return { posted: 0 };
+
+  const channelId = await db.getLiveAnnounceChannel();
+  if (!channelId) return { posted: 0, reason: 'no channel configured' };
+
+  const channel = await client.channels.fetch(channelId);
+  let posted = 0;
+  for (const player of toAnnounce) {
+    const login = twitchApi.extractTwitchLogin(player.twitch);
+    const link = login ? `https://twitch.tv/${login}` : null;
+    const embed = new EmbedBuilder()
+      .setTitle(`🔴 ${player.name} is now live!`)
+      .setColor(VISUALS.COLORS.denied)
+      .setDescription(`Playing **${player.gameName}**${player.title ? `\n> ${player.title}` : ''}`);
+    // setURL throws on null/undefined — only set it when there's a real
+    // link, same defensive pattern as liveText.js's applyEmoji.
+    if (link) embed.setURL(link);
+    await channel.send({ embeds: [embed] });
+    posted++;
+  }
+  return { posted };
+}
+
+module.exports = {
+  buildLeaderboardEmbeds,
+  postOrUpdateLeaderboard,
+  buildLiveNowEmbed,
+  postOrUpdateLiveNow,
+  postLiveAnnouncements,
+};
