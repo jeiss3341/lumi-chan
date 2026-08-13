@@ -39,6 +39,7 @@ const {
   claimReviewButtons,
 } = require('./src/ticket');
 const { startServer } = require('./src/styleGuide/server');
+const { startCoastalClashTimers } = require('./src/coastalClash/timer');
 const { loadOverrides } = require('./src/styleGuide/overrides');
 const { resolveText, applyEmoji } = require('./src/styleGuide/liveText');
 const TEXT = require('./src/text');
@@ -106,6 +107,7 @@ process.on('uncaughtException', (err) => {
 
 const {
   initDb,
+  pool,
   setTicketCategory,
   getTicketCategory,
   getRequestArchiveCategory,
@@ -154,7 +156,19 @@ const {
   getUnfinalizedSubmissionBounties,
   markSubmissionsFinalized,
   setSubmissionsBoardMessage,
+  setLeaderboardChannel,
+  setLeaderboardMessageId,
 } = require('./src/db');
+const { buildLeaderboardEmbeds, postOrUpdateLeaderboard } = require('./src/coastalClash/embed');
+const { runDailyCull } = require('./src/coastalClash/cull');
+const { dateForSimulatedDay } = require('./src/coastalClash/schedule');
+const db = require('./src/db');
+
+// The ONLY guild /daychange is allowed to run in, regardless of which
+// guilds the command itself ends up registered to. This is a real cull
+// trigger (writes culled/indanger, same as the live 11:59 PM PDT timer) —
+// it must never be runnable against the production 74 players.
+const COASTAL_CLASH_TEST_GUILD_ID = '1535008850074276120';
 
 // Pulls the Discord user ID out of an embed field's mention value, e.g. reads
 // "<@123>" back out of a field named 'Claimant'. Used on Approve Claim, where
@@ -219,6 +233,7 @@ client.once(Events.ClientReady, async (c) => {
   try {
     await initDb();
     console.log('Database ready.');
+    startCoastalClashTimers(c);
   } catch (err) {
     console.error('Database init failed — the bot is up, but DB-backed features will error until it recovers:', err);
   }
@@ -1170,6 +1185,122 @@ client.on(Events.InteractionCreate, async (interaction) => {
         content: '❓ Q&A board deployed in this channel.',
         flags: MessageFlags.Ephemeral,
       });
+      return;
+    }
+
+    // /deployproleaderboard and /deploycasualleaderboard  →  posts ONE
+    // bracket's live leaderboard and remembers where it landed
+    // (channel+message id, keyed by bracket), so the 30-min refresh timer
+    // and daily cull (src/coastalClash/timer.js) can edit this SAME
+    // message in place afterward. Fully independent commands — Pro and
+    // Casual can be deployed to different channels, at different times.
+    // Re-running either re-deploys that bracket to wherever it's run.
+    if (interaction.isChatInputCommand() && (interaction.commandName === 'deployproleaderboard' || interaction.commandName === 'deploycasualleaderboard')) {
+      const bracket = interaction.commandName === 'deployproleaderboard' ? 'pro' : 'casual';
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const { pro, casual } = await buildLeaderboardEmbeds(pool);
+      const embed = bracket === 'pro' ? pro : casual;
+      const message = await interaction.channel.send({ embeds: [embed] });
+      await setLeaderboardChannel(bracket, interaction.channel.id);
+      await setLeaderboardMessageId(bracket, message.id);
+      await interaction.editReply({ content: `🏆 Coastal Clash ${bracket === 'pro' ? 'Pro' : 'Casual'} leaderboard deployed in this channel.` });
+      return;
+    }
+
+    // Posts (first time) or edits-in-place (every time after) the shared
+    // /daychange + /dayprevious status message. Unlike an interaction
+    // reply, this is a REGULAR channel message — that's required for a
+    // LATER, separate interaction to be able to edit it at all (an
+    // ephemeral reply can only ever be edited by the same interaction
+    // that created it). Visible to the whole channel as a tradeoff.
+    async function postOrUpdateDayChangeStatus(client, channel, content) {
+      const stored = await db.getDayChangeStatusMessage();
+      const [storedChannelId, storedMessageId] = stored ? stored.split(':') : [null, null];
+
+      if (storedChannelId === channel.id && storedMessageId) {
+        try {
+          const message = await channel.messages.fetch(storedMessageId);
+          await message.edit({ content });
+          return;
+        } catch (err) {
+          console.warn('Coastal Clash: could not edit existing daychange status message, posting a new one:', err.message);
+        }
+      }
+
+      const message = await channel.send({ content });
+      await db.setDayChangeStatusMessage(channel.id, message.id);
+    }
+
+    // /daychange  →  TEST ONLY. Advances the same 'coastal_clash_sim_day'
+    // counter scripts/simulateNextDay.js uses, runs a REAL cull for that
+    // simulated day, then immediately pushes the result to whichever live
+    // leaderboard message(s) are deployed — so a day-change is actually
+    // visible in Discord instead of waiting on the real 11:59 PM PDT timer.
+    // Hard-refuses outside the designated test guild — this is a real cull
+    // trigger, not a read-only preview.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'daychange') {
+      if (interaction.guildId !== COASTAL_CLASH_TEST_GUILD_ID) {
+        await interaction.reply({ content: '🚨 This command only works in the Coastal Clash test server.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const SIM_DAY_KEY = 'coastal_clash_sim_day';
+      const current = parseInt((await db.getSetting(SIM_DAY_KEY)) ?? '0', 10);
+      const nextDay = current + 1;
+      const simulatedNow = dateForSimulatedDay(nextDay);
+
+      const result = await runDailyCull(simulatedNow, false);
+      await db.setSetting(SIM_DAY_KEY, String(nextDay));
+      await postOrUpdateLeaderboard(interaction.client, db, simulatedNow);
+
+      const cullLine = result.skipped
+        ? `${result.reason}.`
+        : `Pro culled: ${result.proCulled.join(', ') || '(none)'}\nCasual culled: ${result.casualCulled.join(', ') || '(none)'}`;
+      await postOrUpdateDayChangeStatus(
+        interaction.client,
+        interaction.channel,
+        `📅 Advanced to Day ${result.day}.\n${cullLine}\nPro indanger next: ${result.proIndanger.join(', ') || '(none)'}\nCasual indanger next: ${result.casualIndanger.join(', ') || '(none)'}\nLive leaderboard refreshed.`,
+      );
+      await interaction.deleteReply();
+      return;
+    }
+
+    // /dayprevious  →  TEST ONLY. Goes back one simulated day by resetting
+    // everyone (culled/indanger/mmr) and replaying runDailyCull for every
+    // day from 1 up to the new target — same verified logic /daychange
+    // uses, just run in a loop, rather than trying to reconstruct an
+    // "undo" from a boolean column that doesn't record which day someone
+    // was culled on. Same test-guild-only hard guard as /daychange.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'dayprevious') {
+      if (interaction.guildId !== COASTAL_CLASH_TEST_GUILD_ID) {
+        await interaction.reply({ content: '🚨 This command only works in the Coastal Clash test server.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const SIM_DAY_KEY = 'coastal_clash_sim_day';
+      const current = parseInt((await db.getSetting(SIM_DAY_KEY)) ?? '0', 10);
+      const target = Math.max(1, current - 1);
+
+      await pool.query('UPDATE players SET culled = false, indanger = false, mmr = 0');
+
+      let result = null;
+      for (let day = 1; day <= target; day++) {
+        result = await runDailyCull(dateForSimulatedDay(day), false);
+      }
+      await db.setSetting(SIM_DAY_KEY, String(target));
+      await postOrUpdateLeaderboard(interaction.client, db, dateForSimulatedDay(target));
+
+      const cullLine = result.skipped
+        ? `${result.reason}.`
+        : `Pro culled: ${result.proCulled.join(', ') || '(none)'}\nCasual culled: ${result.casualCulled.join(', ') || '(none)'}`;
+      await postOrUpdateDayChangeStatus(
+        interaction.client,
+        interaction.channel,
+        `⏮️ Rewound to Day ${result.day} (replayed from Day 1).\n${cullLine}\nPro indanger next: ${result.proIndanger.join(', ') || '(none)'}\nCasual indanger next: ${result.casualIndanger.join(', ') || '(none)'}\nLive leaderboard refreshed.`,
+      );
+      await interaction.deleteReply();
       return;
     }
 

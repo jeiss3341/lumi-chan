@@ -154,6 +154,26 @@
     // private/public split to begin with.
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submissions_finalized BOOLEAN NOT NULL DEFAULT false;`);
 
+    // Coastal Clash player leaderboard — lives in this same Postgres instance
+    // (shared with project-lumi's leaderboard site) but wasn't previously
+    // created by any code; it existed only because someone added it by hand
+    // in Railway's dashboard. IF NOT EXISTS means this is a no-op there,
+    // and just formalizes the schema for local/future environments.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS players (
+        name        TEXT PRIMARY KEY,
+        region      TEXT NOT NULL DEFAULT '',
+        twitch      TEXT NOT NULL DEFAULT '',
+        youtube     TEXT NOT NULL DEFAULT '',
+        mmr         INTEGER NOT NULL DEFAULT 0,
+        culled      BOOLEAN NOT NULL DEFAULT false,
+        indanger    BOOLEAN NOT NULL DEFAULT false,
+        youtubelive BOOLEAN NOT NULL DEFAULT false,
+        twitchlive  BOOLEAN NOT NULL DEFAULT false,
+        ispro       BOOLEAN NOT NULL DEFAULT true
+      );
+    `);
+
     // Warm the settings cache so the first interaction after boot doesn't have
     // to fall back to the DB for each setting it reads.
     await loadSettings();
@@ -360,6 +380,61 @@
 
   function setHelpStaffUser(userId) {
     return setSetting('help_staff_user', userId);
+  }
+
+  // Coastal Clash leaderboard — same channel+message-id pattern as the
+  // bounty board (getBoardChannel/setBoardMessage), but Pro and Casual are
+  // fully independent: separate commands (/deployproleaderboard,
+  // /deploycasualleaderboard), each with its own channel and message-id
+  // setting (keyed by bracket), so they can live in different channels
+  // entirely. The 30-min refresh timer and daily cull
+  // (src/coastalClash/timer.js) edit each bracket's message in place in
+  // whichever channel it was deployed to.
+  function getLeaderboardChannel(bracket) {
+    return getSetting(`coastal_clash_leaderboard_channel_${bracket}`);
+  }
+
+  function setLeaderboardChannel(bracket, channelId) {
+    return setSetting(`coastal_clash_leaderboard_channel_${bracket}`, channelId);
+  }
+
+  function getLeaderboardMessageId(bracket) {
+    return getSetting(`coastal_clash_leaderboard_message_${bracket}`);
+  }
+
+  function setLeaderboardMessageId(bracket, messageId) {
+    return setSetting(`coastal_clash_leaderboard_message_${bracket}`, messageId);
+  }
+
+  // Whether the ER API's season-40 data is treated as real, meaningful
+  // current-season standing yet. Defaults OFF: the API technically returns
+  // data for season 40 (carried-over placement MMR from season 39 — see
+  // er_api_findings memory), but the user's explicit call is that this
+  // does NOT count as "season 40 is out" for ranking purposes. While off,
+  // refreshAllRP (src/coastalClash/cull.js) skips calling the ER API
+  // entirely — cull/indanger logic still runs on whatever mmr is already
+  // stored (0 until this is flipped on). Flip on once real season-40
+  // standing should start being pulled for real.
+  function getSeasonLive() {
+    return getSetting('coastal_clash_season_live');
+  }
+
+  function setSeasonLive(isLive) {
+    return setSetting('coastal_clash_season_live', isLive ? 'true' : 'false');
+  }
+
+  // /daychange and /dayprevious (TEST ONLY, index.js) edit this SAME
+  // status message in place on every run, instead of each click posting a
+  // brand new reply — same edit-in-place pattern as the leaderboard
+  // messages. Channel is whichever channel a command was most recently
+  // run in; message id is per-channel would be overkill for a testing
+  // tool, so this is intentionally a single global slot.
+  function getDayChangeStatusMessage() {
+    return getSetting('coastal_clash_daychange_status_message');
+  }
+
+  function setDayChangeStatusMessage(channelId, messageId) {
+    return setSetting('coastal_clash_daychange_status_message', `${channelId}:${messageId}`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -623,6 +698,14 @@
     setHelpStaffRole,
     getHelpStaffUser,
     setHelpStaffUser,
+    getLeaderboardChannel,
+    setLeaderboardChannel,
+    getLeaderboardMessageId,
+    setLeaderboardMessageId,
+    getSeasonLive,
+    setSeasonLive,
+    getDayChangeStatusMessage,
+    setDayChangeStatusMessage,
     createBounty,
     getBountyById,
     updateBounty,

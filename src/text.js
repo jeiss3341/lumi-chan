@@ -582,6 +582,18 @@ module.exports = {
     deployQandA: {
       command: 'Post the Q&A board in this channel (staff only).',
     },
+    deployProLeaderboard: {
+      command: 'Post the live Coastal Clash Pro bracket leaderboard here (staff only, auto-updates).',
+    },
+    deployCasualLeaderboard: {
+      command: 'Post the live Coastal Clash Casual bracket leaderboard here (staff only, auto-updates).',
+    },
+    dayChange: {
+      command: 'TEST ONLY: advance the simulated Coastal Clash day by one and refresh the live board.',
+    },
+    dayPrevious: {
+      command: 'TEST ONLY: go back one simulated Coastal Clash day and refresh the live board.',
+    },
     endSubmissions: {
       command: 'Finalize and publicly announce every pending submission bounty at once (staff only).',
     },

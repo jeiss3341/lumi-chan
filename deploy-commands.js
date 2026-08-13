@@ -224,6 +224,44 @@ const commands = [
     .setDescription(TEXT.COMMANDS.deployQandA.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
+  // Posts the live Pro-bracket leaderboard message and remembers its
+  // channel+message id (src/db.js getLeaderboardChannel/setLeaderboardMessageId,
+  // keyed by bracket) so the 30-min refresh timer and daily cull
+  // (src/coastalClash/timer.js) can edit it in place afterward instead of
+  // posting duplicates. Separate from the Casual command below — each
+  // bracket can be deployed to a different channel entirely.
+  new SlashCommandBuilder()
+    .setName('deployproleaderboard')
+    .setDescription(TEXT.COMMANDS.deployProLeaderboard.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName('deploycasualleaderboard')
+    .setDescription(TEXT.COMMANDS.deployCasualLeaderboard.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
+  // Testing-only: advances the simulated Coastal Clash day counter by one
+  // and immediately refreshes whichever live leaderboard message(s) are
+  // deployed, so a day-change can actually be watched in Discord instead
+  // of waiting on the real clock. The HANDLER (index.js) hard-refuses to
+  // run outside the test guild, regardless of which guilds this command
+  // ends up registered to — see that refusal check before ever removing it.
+  new SlashCommandBuilder()
+    .setName('daychange')
+    .setDescription(TEXT.COMMANDS.dayChange.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
+  // Reset + replay days 1..(target-1), rather than trying to "undo" a
+  // cull directly — `culled` is a plain boolean with no record of WHICH
+  // day someone was culled on, so true rollback isn't reconstructable.
+  // Replaying from scratch reuses the exact same verified runDailyCull
+  // logic instead of adding new destructive-rollback code. Same
+  // test-guild-only hard guard as /daychange (index.js).
+  new SlashCommandBuilder()
+    .setName('dayprevious')
+    .setDescription(TEXT.COMMANDS.dayPrevious.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
   // Bulk-finalizes every submission bounty still pending public
   // announcement — see finalizeSubmissionBountyPrivately/
   // announceSubmissionBountyPublicly (index.js). Two-step confirmation
@@ -234,6 +272,16 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
 ];
+
+// Coastal Clash testing tools (daychange/dayprevious) directly manipulate
+// the database and replay real cull logic — they're gated in the HANDLER
+// (index.js) to only run in the test guild, but that's a functional
+// safety net, not a visibility one. This is the visibility net: they
+// simply never get REGISTERED anywhere except the test guild, so they
+// don't even show up as an option on the live server. Keep this list in
+// sync with any future test-only commands.
+const TEST_ONLY_COMMAND_NAMES = new Set(['daychange', 'dayprevious']);
+const TEST_GUILD_IDS = new Set(['1535008850074276120']);
 
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 
@@ -246,8 +294,12 @@ if (require.main === module) {
       await rest.put(Routes.applicationCommands(clientId), { body: [] });
 
       for (const id of guildIds) {
-        console.log(`Registering guild commands for ${id}...`);
-        await rest.put(Routes.applicationGuildCommands(clientId, id), { body: commands });
+        const isTestGuild = TEST_GUILD_IDS.has(id);
+        const commandsForGuild = isTestGuild
+          ? commands
+          : commands.filter((c) => !TEST_ONLY_COMMAND_NAMES.has(c.name));
+        console.log(`Registering ${commandsForGuild.length} guild commands for ${id}${isTestGuild ? ' (test guild — includes test-only commands)' : ' (test-only commands excluded)'}...`);
+        await rest.put(Routes.applicationGuildCommands(clientId, id), { body: commandsForGuild });
       }
       console.log('Done. Guild commands appear instantly.');
     } catch (err) {
@@ -256,4 +308,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { commands, clientId };
+module.exports = { commands, clientId, TEST_ONLY_COMMAND_NAMES, TEST_GUILD_IDS };
