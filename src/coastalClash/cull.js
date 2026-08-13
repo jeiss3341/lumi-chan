@@ -41,10 +41,12 @@ async function updateLeaderboardMeta(day) {
 // 10) for the bootstrap case before any confirmed players exist yet.
 async function pickReferenceNicknames(pool, limit = 40) {
   const { rows } = await pool.query(
-    `SELECT name FROM players WHERE culled = false ORDER BY (mmr > 0) DESC, random() LIMIT $1`,
+    `SELECT COALESCE(en.ign, p.name) AS ign FROM players p
+     LEFT JOIN er_nicknames en ON en.name = p.name
+     WHERE p.culled = false ORDER BY (p.mmr > 0) DESC, random() LIMIT $1`,
     [limit],
   );
-  return rows.map((r) => r.name);
+  return rows.map((r) => r.ign);
 }
 
 // Refreshes RP for every still-active player (both brackets), sequentially,
@@ -63,12 +65,19 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
     return { updated: 0, failed: [], skipped: true, reason: 'season not marked live (db.getSeasonLive())' };
   }
 
-  const { rows: active } = await pool.query(`SELECT name FROM players WHERE culled = false ORDER BY name`);
+  // ign is the actual Eternal Return nickname to query the API with — for
+  // almost everyone this is identical to their display name, but see
+  // er_nicknames (src/db.js) for players where those two differ.
+  const { rows: active } = await pool.query(
+    `SELECT p.name, COALESCE(en.ign, p.name) AS ign FROM players p
+     LEFT JOIN er_nicknames en ON en.name = p.name
+     WHERE p.culled = false ORDER BY p.name`,
+  );
   const results = { updated: 0, failed: [], notPlayedYet: [] };
 
-  for (const { name } of active) {
+  for (const { name, ign } of active) {
     try {
-      const { rp, notPlayedYet } = await erApi.fetchPlayerRP(name, seasonId);
+      const { rp, notPlayedYet } = await erApi.fetchPlayerRP(ign, seasonId);
       if (rp !== null) {
         if (!dryRun) await pool.query(`UPDATE players SET mmr = $2 WHERE name = $1`, [name, rp]);
         results.updated++;
@@ -86,7 +95,7 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
       // used to leave everyone else's RP unrefreshed AND leaderboard_meta
       // unwritten for that entire cycle. Log it, count it as failed, and
       // keep going.
-      console.error(`Coastal Clash: RP fetch threw for ${name}:`, err.message);
+      console.error(`Coastal Clash: RP fetch threw for ${name} (ign: ${ign}):`, err.message);
       results.failed.push(name);
     }
     await erApi.sleep(erApi.CALL_SPACING_MS);

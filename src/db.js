@@ -197,6 +197,27 @@
       );
     `);
 
+    // Maps a player's display name (players.name — shown everywhere,
+    // including project-lumi's site) to their actual Eternal Return IGN,
+    // for the rare case those two differ (e.g. someone named "Quip" whose
+    // in-game nickname is literally "AFK"). Same reasoning as twitch_status
+    // above — kept as its own table rather than a column on players, since
+    // that table's schema is project-lumi's read contract. Defaults to
+    // matching name for everyone; self-heals on every boot for any player
+    // added since (players isn't exclusively managed by this bot's code —
+    // see comment above).
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS er_nicknames (
+        name TEXT PRIMARY KEY,
+        ign  TEXT NOT NULL
+      );
+    `);
+    await pool.query(`
+      INSERT INTO er_nicknames (name, ign)
+      SELECT name, name FROM players
+      ON CONFLICT (name) DO NOTHING;
+    `);
+
     // Single-row table exposing the schedule/countdown data that ONLY
     // lives inside this bot process's own code (src/coastalClash/schedule.js)
     // otherwise — the project-lumi site has no way to know "when's the
