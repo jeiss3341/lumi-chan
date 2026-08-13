@@ -96,6 +96,10 @@ function startCoastalClashTimers(client) {
     const dateKey = pdt.toISOString().slice(0, 10);
     const h = pdt.getUTCHours();
     const m = pdt.getUTCMinutes();
+    // TEMP diagnostic (remove once leaderboard_meta stale-timer bug is
+    // found): confirms the interval is actually ticking and shows exactly
+    // where a 10-min refresh pass stalls, if it does.
+    console.log(`[CC tick] PDT ${dateKey} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
 
     if (h === 23 && m === 59 && lastCullDateKey !== dateKey) {
       lastCullDateKey = dateKey;
@@ -107,9 +111,12 @@ function startCoastalClashTimers(client) {
       const minuteKey = `${dateKey}T${h}:${m}`;
       if (lastRefreshMinuteKey !== minuteKey) {
         lastRefreshMinuteKey = minuteKey;
+        console.log(`[CC tick] starting 10-min refresh for ${minuteKey}`);
         try {
           await refreshLeaderboardOnly();
+          console.log(`[CC tick] refreshLeaderboardOnly resolved for ${minuteKey}`);
           await postOrUpdateLeaderboard(client, db);
+          console.log(`[CC tick] postOrUpdateLeaderboard resolved for ${minuteKey}`);
         } catch (err) {
           console.error('Coastal Clash: 10-min refresh failed:', err);
         }
