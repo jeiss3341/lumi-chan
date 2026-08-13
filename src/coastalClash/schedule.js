@@ -9,7 +9,7 @@
 // Thresholds are CUMULATIVE SURVIVOR COUNTS ("Top N remain"), not per-day
 // removal counts — the actual number culled on a given day is
 // (currently active count) - (that day's threshold).
-const EVENT_START_DATE = '2026-08-13'; // Day 1
+const EVENT_START_DATE = '2026-08-12'; // Day 1
 
 const PRO_THRESHOLDS = {
   4: 45, 5: 39, 6: 34, 7: 29, 8: 24, 9: 20, 10: 16,
