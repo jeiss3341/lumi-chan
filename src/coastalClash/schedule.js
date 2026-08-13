@@ -63,7 +63,7 @@ function getNextCullDay(bracket, afterDay) {
 // PDT of that day. dateForSimulatedDay gives midnight; add 23h59m.
 function cullMomentForDay(day) {
   const midnight = dateForSimulatedDay(day).getTime();
-  return new Date(midnight + (23 * 60 + 59) * 60 * 1000);
+  return new Date(midnight + (23 * 60 + 59) * 60 * 1000 + 59 * 1000);
 }
 
 // True on every day that actually culls someone (4-13, 15-17) — including
