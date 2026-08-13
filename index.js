@@ -156,7 +156,9 @@ const {
   getUnfinalizedSubmissionBounties,
   markSubmissionsFinalized,
   setSubmissionsBoardMessage,
+  getLeaderboardChannel,
   setLeaderboardChannel,
+  getLeaderboardMessageId,
   setLeaderboardMessageId,
 } = require('./src/db');
 const { buildLeaderboardEmbeds, postOrUpdateLeaderboard } = require('./src/coastalClash/embed');
@@ -1200,10 +1202,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const { pro, casual } = await buildLeaderboardEmbeds(pool);
       const embed = bracket === 'pro' ? pro : casual;
-      const message = await interaction.channel.send({ embeds: [embed] });
-      await setLeaderboardChannel(bracket, interaction.channel.id);
-      await setLeaderboardMessageId(bracket, message.id);
-      await interaction.editReply({ content: `🏆 Coastal Clash ${bracket === 'pro' ? 'Pro' : 'Casual'} leaderboard deployed in this channel.` });
+
+      // If this bracket's already deployed to THIS SAME channel, edit that
+      // existing message instead of posting a duplicate. Deploying to a
+      // DIFFERENT channel (or for the first time) still posts fresh there
+      // and starts tracking the new location, same as before.
+      const existingChannelId = await getLeaderboardChannel(bracket);
+      const existingMessageId = existingChannelId === interaction.channel.id ? await getLeaderboardMessageId(bracket) : null;
+
+      let edited = false;
+      if (existingMessageId) {
+        try {
+          const existingMessage = await interaction.channel.messages.fetch(existingMessageId);
+          await existingMessage.edit({ embeds: [embed] });
+          edited = true;
+        } catch (err) {
+          console.warn(`Coastal Clash: could not edit existing ${bracket} leaderboard message on redeploy, posting a new one:`, err.message);
+        }
+      }
+
+      if (!edited) {
+        const message = await interaction.channel.send({ embeds: [embed] });
+        await setLeaderboardChannel(bracket, interaction.channel.id);
+        await setLeaderboardMessageId(bracket, message.id);
+      }
+
+      await interaction.editReply({ content: `🏆 Coastal Clash ${bracket === 'pro' ? 'Pro' : 'Casual'} leaderboard ${edited ? 'updated' : 'deployed'} in this channel.` });
       return;
     }
 
