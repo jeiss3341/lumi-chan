@@ -20,11 +20,18 @@ async function updateLeaderboardMeta(day) {
 }
 
 // Reference players used to verify the stored season ID is still live
-// (see erApi.getVerifiedSeasonId). Picked as currently-active, non-culled
-// players likely to have played recently — not load-bearing beyond that.
-async function pickReferenceNicknames(pool, limit = 3) {
+// (see erApi.getVerifiedSeasonId). Random, not "top N by mmr" — on a cold
+// start (nobody's mmr has been fetched yet, everyone's tied at 0) mmr
+// carries zero signal about who's actually got real season-40 data, so
+// "top 3 by mmr" was really "3 arbitrary tied players" and had a real
+// chance of unluckily picking 3 who genuinely haven't played yet,
+// permanently failing season verification (confirmed happening in
+// production — see er_api_findings memory). A bigger random pool makes
+// that failure mode very unlikely regardless of mmr state: isSeasonLive
+// only needs ONE of these to have real data.
+async function pickReferenceNicknames(pool, limit = 10) {
   const { rows } = await pool.query(
-    `SELECT name FROM players WHERE culled = false ORDER BY mmr DESC LIMIT $1`,
+    `SELECT name FROM players WHERE culled = false ORDER BY random() LIMIT $1`,
     [limit],
   );
   return rows.map((r) => r.name);
