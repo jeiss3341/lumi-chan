@@ -395,6 +395,27 @@ module.exports = {
     ],
   },
 
+  READDEPLOYMENT: {
+    // index.js → the /readdeployment command's embed.
+    title: '📋 Coastal Clash Deploy Commands',
+    description: [
+      'Run each of these once, in whichever channel you want that board to live — they auto-update from then on, no need to re-run unless you want to move a board to a different channel.',
+      '',
+      '🏆 **`/deployproleaderboard`** / **`/deploycasualleaderboard`**',
+      '> Posts that bracket\'s live standings. Refreshes every 10 minutes (RP, in-danger warnings) and again at the daily cutoff (11:59 PM PDT) when eliminations happen.',
+      '',
+      '🔴 **`/deployislive`**',
+      '> Posts the "Live Now" board — everyone currently streaming Eternal Return specifically (not just live on Twitch playing anything). Refreshes every 3 minutes.',
+      '',
+      '🔴 **`/deployliveupdate`**',
+      '> Sets the channel for the "someone just went live" announcement feed — a fresh message per event, not an edited board. Immediately posts anyone already live in ER when you run it.',
+      '',
+      '⚠️ **Important — these settings are global, not per-server.** Running any of these in a test server points that board there instead of the real one, until it\'s deployed again in the right channel.',
+      '',
+      '🗑️ **Deleting a board message tells the bot to stop** — it won\'t auto-recreate itself there. Just re-run the matching `/deploy...` command wherever you want it back.',
+    ],
+  },
+
   // src/qanda.js → the Q&A board's dropdown (open to anyone, entirely
   // separate from the support-ticket system). Object keys become the
   // dropdown's option values; insertion order is the order topics appear in
@@ -600,7 +621,7 @@ module.exports = {
       command: 'Post a new alert here whenever a player switches into Eternal Return on Twitch.',
     },
     readDeployment: {
-      command: 'Show which channels/messages the Coastal Clash boards are currently pointed at (staff only).',
+      command: 'How the Coastal Clash deploy commands work (staff only).',
     },
     dayChange: {
       command: 'TEST ONLY: advance the simulated Coastal Clash day by one and refresh the live board.',
