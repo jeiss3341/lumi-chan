@@ -19,13 +19,25 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Node's native fetch has NO default timeout — if the API ever accepts a
+// connection but never responds, the call hangs forever with no error,
+// silently stalling whatever awaited it (confirmed live: this is what was
+// leaving leaderboard_meta stuck for 25+ minutes at a time in production,
+// surviving even a container restart, since it can happen again on any
+// boot). AbortSignal.timeout forces a clean rejection instead.
+const FETCH_TIMEOUT_MS = 10000;
+
+function fetchWithTimeout(url, options = {}) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+}
+
 // Looks up a player's current userId by nickname. Per the game's own
 // changelog, this value is NOT stable — querying the same nickname again
 // later can return a different userId (both still resolve to the same
 // player, by design, for anti-stalking reasons). Never persist this value
 // long-term; look it up fresh each time it's needed.
 async function fetchUserId(nickname) {
-  const res = await fetch(`${API_URL}/user/nickname?query=${encodeURIComponent(nickname)}`, {
+  const res = await fetchWithTimeout(`${API_URL}/user/nickname?query=${encodeURIComponent(nickname)}`, {
     headers: { 'x-api-key': API_KEY },
   });
   const data = await res.json();
@@ -36,7 +48,7 @@ async function fetchUserId(nickname) {
 // Fetches raw rank data for a player at a given season. matchingTeamMode 3
 // is squad/trio ranked, matching hanabi.js's prior convention.
 async function fetchRankRaw(userId, seasonId, matchingTeamMode = 3) {
-  const res = await fetch(`${API_URL}/rank/uid/${userId}/${seasonId}/${matchingTeamMode}`, {
+  const res = await fetchWithTimeout(`${API_URL}/rank/uid/${userId}/${seasonId}/${matchingTeamMode}`, {
     headers: { accept: 'application/json', 'x-api-key': API_KEY },
   });
   return res.json();
@@ -123,9 +135,15 @@ const MAX_SEASON_PROBE_STEPS = 5;
 
 async function isSeasonLive(seasonId, referenceNicknames) {
   for (const nickname of referenceNicknames) {
-    const userRank = await fetchUserRank(nickname, seasonId);
+    try {
+      const userRank = await fetchUserRank(nickname, seasonId);
+      if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
+    } catch (err) {
+      // A single flaky/timed-out reference player shouldn't sink the
+      // whole verification pass — move on to the next candidate.
+      console.error(`Coastal Clash: season-verification fetch threw for ${nickname}:`, err.message);
+    }
     await sleep(CALL_SPACING_MS);
-    if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
   }
   return false;
 }

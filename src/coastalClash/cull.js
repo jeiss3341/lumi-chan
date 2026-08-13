@@ -67,16 +67,26 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
   const results = { updated: 0, failed: [], notPlayedYet: [] };
 
   for (const { name } of active) {
-    const { rp, notPlayedYet } = await erApi.fetchPlayerRP(name, seasonId);
-    if (rp !== null) {
-      if (!dryRun) await pool.query(`UPDATE players SET mmr = $2 WHERE name = $1`, [name, rp]);
-      results.updated++;
-    } else if (notPlayedYet) {
-      // Normal and expected, NOT a failure — leave their mmr as-is
-      // (stays at the N/A sentinel until they actually queue this
-      // season) and don't count it toward the DM-alert-worthy failed list.
-      results.notPlayedYet.push(name);
-    } else {
+    try {
+      const { rp, notPlayedYet } = await erApi.fetchPlayerRP(name, seasonId);
+      if (rp !== null) {
+        if (!dryRun) await pool.query(`UPDATE players SET mmr = $2 WHERE name = $1`, [name, rp]);
+        results.updated++;
+      } else if (notPlayedYet) {
+        // Normal and expected, NOT a failure — leave their mmr as-is
+        // (stays at the N/A sentinel until they actually queue this
+        // season) and don't count it toward the DM-alert-worthy failed list.
+        results.notPlayedYet.push(name);
+      } else {
+        results.failed.push(name);
+      }
+    } catch (err) {
+      // A timed-out/network-failed fetch (see erApi.fetchWithTimeout)
+      // shouldn't take down the whole pass — one player's bad request
+      // used to leave everyone else's RP unrefreshed AND leaderboard_meta
+      // unwritten for that entire cycle. Log it, count it as failed, and
+      // keep going.
+      console.error(`Coastal Clash: RP fetch threw for ${name}:`, err.message);
       results.failed.push(name);
     }
     await erApi.sleep(erApi.CALL_SPACING_MS);
