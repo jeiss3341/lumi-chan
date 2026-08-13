@@ -258,13 +258,6 @@ const commands = [
     .setDescription(TEXT.COMMANDS.deployLiveUpdate.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
-  // Static explainer for the Coastal Clash deploy commands — same idea
-  // as /readme, just scoped to this system (TEXT.READDEPLOYMENT).
-  new SlashCommandBuilder()
-    .setName('readdeployment')
-    .setDescription(TEXT.COMMANDS.readDeployment.command)
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .toJSON(),
   // Testing-only: advances the simulated Coastal Clash day counter by one
   // and immediately refreshes whichever live leaderboard message(s) are
   // deployed, so a day-change can actually be watched in Discord instead

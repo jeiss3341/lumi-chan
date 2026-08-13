@@ -1318,20 +1318,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // /readdeployment  →  static explainer for the Coastal Clash deploy
-    // commands, same pattern as /readme above but scoped to just this
-    // system (TEXT.READDEPLOYMENT, src/text.js).
-    if (interaction.isChatInputCommand() && interaction.commandName === 'readdeployment') {
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.brand)
-        .setTitle(TEXT.READDEPLOYMENT.title)
-        .setDescription(TEXT.READDEPLOYMENT.description.join('\n'))
-        .setFooter({ text: TEXT.FOOTER });
-
-      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      return;
-    }
-
     // Posts (first time) or edits-in-place (every time after) the shared
     // /daychange + /dayprevious status message. Unlike an interaction
     // reply, this is a REGULAR channel message — that's required for a
@@ -1429,16 +1415,51 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-// /readme  →  how the system works (staff only)
-    if (interaction.isChatInputCommand() && interaction.commandName === 'readme') {
-      const embed = new EmbedBuilder()
+// /readme  →  how the system works (staff only), 3 pages navigated with
+// Previous/Next buttons. buildReadmePage/buildReadmeRow are also used by
+// the readme_page_ button handler below to redraw the same message on a
+// different page — kept as named functions (not inlined) so both places
+// build the embed/row identically.
+    function buildReadmePage(pageIndex) {
+      const page = TEXT.README.pages[pageIndex];
+      return new EmbedBuilder()
         .setColor(COLORS.brand)
-        .setTitle(TEXT.README.title)
-        .setDescription(TEXT.README.description.join('\n'))
+        .setTitle(page.title)
+        .setDescription(page.description.join('\n'))
         .setImage(BANNER_URL)
         .setFooter({ text: TEXT.FOOTER });
+    }
 
-      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    function buildReadmeRow(pageIndex) {
+      return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`readme_page_${pageIndex - 1}`)
+          .setLabel('◀ Previous')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(pageIndex === 0),
+        new ButtonBuilder()
+          .setCustomId(`readme_page_${pageIndex + 1}`)
+          .setLabel('Next ▶')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(pageIndex === TEXT.README.pages.length - 1),
+      );
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'readme') {
+      await interaction.reply({
+        embeds: [buildReadmePage(0)],
+        components: [buildReadmeRow(0)],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('readme_page_')) {
+      const pageIndex = parseInt(interaction.customId.replace('readme_page_', ''), 10);
+      await interaction.update({
+        embeds: [buildReadmePage(pageIndex)],
+        components: [buildReadmeRow(pageIndex)],
+      });
       return;
     }
 
