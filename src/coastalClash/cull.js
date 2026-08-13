@@ -42,7 +42,7 @@ async function updateLeaderboardMeta(day) {
 async function pickReferenceNicknames(pool, limit = 40) {
   const { rows } = await pool.query(
     `SELECT COALESCE(en.ign, p.name) AS ign FROM players p
-     LEFT JOIN er_nicknames en ON en.name = p.name
+     LEFT JOIN player_igns en ON en.name = p.name
      WHERE p.culled = false ORDER BY (p.mmr > 0) DESC, random() LIMIT $1`,
     [limit],
   );
@@ -67,10 +67,10 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
 
   // ign is the actual Eternal Return nickname to query the API with — for
   // almost everyone this is identical to their display name, but see
-  // er_nicknames (src/db.js) for players where those two differ.
+  // player_igns (src/db.js) for players where those two differ.
   const { rows: active } = await pool.query(
     `SELECT p.name, COALESCE(en.ign, p.name) AS ign FROM players p
-     LEFT JOIN er_nicknames en ON en.name = p.name
+     LEFT JOIN player_igns en ON en.name = p.name
      WHERE p.culled = false ORDER BY p.name`,
   );
   const results = { updated: 0, failed: [], notPlayedYet: [] };

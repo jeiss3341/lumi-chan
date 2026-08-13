@@ -207,16 +207,19 @@
     // added since (players isn't exclusively managed by this bot's code —
     // see comment above).
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS er_nicknames (
+      CREATE TABLE IF NOT EXISTS player_igns (
         name TEXT PRIMARY KEY,
         ign  TEXT NOT NULL
       );
     `);
     await pool.query(`
-      INSERT INTO er_nicknames (name, ign)
+      INSERT INTO player_igns (name, ign)
       SELECT name, name FROM players
       ON CONFLICT (name) DO NOTHING;
     `);
+    // Renamed from er_nicknames right after introducing it, before it had
+    // any real data — drop the old empty one so it doesn't linger.
+    await pool.query(`DROP TABLE IF EXISTS er_nicknames;`);
 
     // Single-row table exposing the schedule/countdown data that ONLY
     // lives inside this bot process's own code (src/coastalClash/schedule.js)
