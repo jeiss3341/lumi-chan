@@ -33,7 +33,23 @@ function buildBracketEmbed(pool, isPro, day) {
 
       const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
 
-      let description = activeLines.join('\n') || '*No active players.*';
+      const bracket = isPro ? 'pro' : 'casual';
+      const nextThreshold = schedule.getNextCullThreshold(bracket, day);
+      const nextCullDay = schedule.getNextCullDay(bracket, day);
+
+      // Discord's <t:UNIX:R> tag renders as a live, auto-updating relative
+      // countdown ("in 5 hours") for every viewer regardless of their own
+      // timezone — this only works in the embed DESCRIPTION/fields, never
+      // the footer (footers are plain text, no Discord markup renders
+      // there at all), which is why this is prepended here and not part
+      // of footerText below.
+      let countdownLine = '';
+      if (nextCullDay !== null) {
+        const unixSeconds = Math.floor(schedule.cullMomentForDay(nextCullDay).getTime() / 1000);
+        countdownLine = `⏰ **Next cull in:** <t:${unixSeconds}:R>\n\n`;
+      }
+
+      let description = countdownLine + (activeLines.join('\n') || '*No active players.*');
       if (culledLines.length) {
         description += `\n\n**Eliminated (${culledLines.length})**\n${culledLines.join('\n')}`;
       }
@@ -45,17 +61,15 @@ function buildBracketEmbed(pool, isPro, day) {
         description = description.slice(0, 4000) + '\n\n*(truncated — too many players to show in full)*';
       }
 
-      const nextThreshold = schedule.getNextCullThreshold(isPro ? 'pro' : 'casual', day);
-      const footerText = nextThreshold !== null
-        ? `Day ${day} of 17 · Next cull leaves top ${nextThreshold}`
-        : `Day ${day} of 17`;
+      // "Top N" info lives in the footer now, since the description's own
+      // headline is just the countdown per the user's requested wording.
+      const footerText = `Day ${day} of 17${nextThreshold !== null ? ` · Next cull: Top ${nextThreshold}` : ''}`;
 
       return new EmbedBuilder()
         .setTitle(`${isPro ? '🏆 Pro' : '🎮 Casual'} Bracket — Day ${day}`)
         .setColor(isPro ? VISUALS.COLORS.brand : VISUALS.COLORS.sand)
         .setDescription(description)
-        .setFooter({ text: footerText })
-        .setTimestamp();
+        .setFooter({ text: footerText });
     });
 }
 

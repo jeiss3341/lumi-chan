@@ -49,6 +49,23 @@ function getNextCullThreshold(bracket, afterDay) {
   return null;
 }
 
+// Same scan as getNextCullThreshold, but returns WHICH day the next real
+// cull actually lands on (not its threshold) — needed to compute a
+// countdown timestamp for it. Returns null once past the finale.
+function getNextCullDay(bracket, afterDay) {
+  for (let day = afterDay + 1; day <= 17; day++) {
+    if (getThreshold(bracket, day) !== null) return day;
+  }
+  return null;
+}
+
+// The actual moment (as a real Date) a given day's cull fires — 11:59 PM
+// PDT of that day. dateForSimulatedDay gives midnight; add 23h59m.
+function cullMomentForDay(day) {
+  const midnight = dateForSimulatedDay(day).getTime();
+  return new Date(midnight + (23 * 60 + 59) * 60 * 1000);
+}
+
 // True on every day that actually culls someone (4-13, 15-17) — including
 // the Day-17 finale, which now has a real Top-1 threshold.
 function isCullDay(day) {
@@ -84,6 +101,8 @@ module.exports = {
   getEventDay,
   getThreshold,
   getNextCullThreshold,
+  getNextCullDay,
+  cullMomentForDay,
   isCullDay,
   getNonCullReason,
   dateForSimulatedDay,
