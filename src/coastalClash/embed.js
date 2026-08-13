@@ -66,7 +66,7 @@ function buildBracketEmbed(pool, isPro, day) {
 
       // "Top N" info lives in the footer now, since the description's own
       // headline is just the countdown per the user's requested wording.
-      const footerText = `Day ${day} of 17${nextThreshold !== null ? ` · Top ${nextThreshold} survive` : ''}`;
+      const footerText = `Day ${day} of 17${nextThreshold !== null ? ` · Next cutoff: Top ${nextThreshold}` : ''}`;
 
       return new EmbedBuilder()
         .setTitle(`${isPro ? '🔱 Pro' : '⚔️ Casual'} Bracket — Day ${day}`)
