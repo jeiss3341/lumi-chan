@@ -53,6 +53,9 @@ async function runDailyCullWithRetry(client) {
       if (result.refresh?.failed?.length) {
         await dmAlert(client, `⚠️ Coastal Clash: today's cull (day ${result.day}) completed, but RP fetch failed for ${result.refresh.failed.length} player(s): ${result.refresh.failed.join(', ')}. Their culled/indanger status may be stale.`);
       }
+      if (result.twitchRefresh?.error) {
+        console.error('Coastal Clash: Twitch refresh failed:', result.twitchRefresh.error);
+      }
       console.log(`Coastal Clash: day ${result.day} cull complete. Pro culled: ${result.proCulled?.length ?? 0}, Casual culled: ${result.casualCulled?.length ?? 0}.`);
       try {
         await postOrUpdateLeaderboard(client, db);
@@ -98,6 +101,9 @@ function startCoastalClashTimers(client) {
         lastRefreshMinuteKey = minuteKey;
         try {
           const refreshResult = await refreshLeaderboardOnly();
+          if (refreshResult.twitchRefresh?.error) {
+            console.error('Coastal Clash: Twitch refresh failed:', refreshResult.twitchRefresh.error);
+          }
           await postOrUpdateLeaderboard(client, db);
           await postOrUpdateLiveNow(client, db);
           await postLiveAnnouncements(client, db, refreshResult.twitchRefresh?.toAnnounce ?? []);
