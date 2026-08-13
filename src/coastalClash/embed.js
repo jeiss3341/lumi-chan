@@ -22,6 +22,13 @@ function buildBracketEmbed(pool, isPro, day) {
       const active = rows.filter((p) => !p.culled);
       const culled = rows.filter((p) => p.culled);
 
+      // active is already sorted mmr DESC, so in-danger players (the
+      // lowest-ranked, below the next cull threshold) are always
+      // contiguous at the bottom — findIndex finds exactly where safe
+      // ends and danger begins, to draw one divider line there. No
+      // divider at all on a grace day (nobody in danger yet) or in the
+      // edge case where literally everyone is.
+      const firstDangerIndex = active.findIndex((p) => p.indanger);
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
         const status = p.indanger ? '⚠️' : '✅';
@@ -29,7 +36,8 @@ function buildBracketEmbed(pool, isPro, day) {
         // db.getSeasonLive() — the ER API isn't being queried yet), so it
         // displays as N/A instead of a misleadingly literal "0 RP".
         const rpDisplay = p.mmr === 0 ? 'N/A' : `${p.mmr} RP`;
-        return `${i + 1}. **${region}${p.name}** — ${rpDisplay} ${status}`;
+        const line = `${i + 1}. **${region}${p.name}** — ${rpDisplay} ${status}`;
+        return i === firstDangerIndex && firstDangerIndex > 0 ? `⚠️ **— Danger Zone —**\n${line}` : line;
       });
 
       const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
@@ -128,42 +136,82 @@ async function postOrUpdateLeaderboard(client, db, now = new Date()) {
   return { pro: proResult, casual: casualResult };
 }
 
-// "Live Now" — one message (not per-bracket) listing everyone currently
-// streaming, refreshed by the same cycle that updates twitchlive
-// (src/coastalClash/cull.js refreshTwitchLiveStatus). Culled players are
-// included if they're live — streaming status isn't tied to elimination.
+// Active: Region | Twitch name (linked) | Dak.gg: [player IGN, linked] · #rank · RP.
+// Eliminated (showStats: false): just Region | Twitch name (linked) — no
+// Dak.gg, rank, or RP, none of which mean anything post-elimination.
+// Dak.gg itself is a plain label, not a link — only the name next to it
+// links out, to that player's actual dak.gg profile.
+function buildLiveStreamerLine(p, { showStats } = {}) {
+  const region = p.region ? `${p.region} | ` : '';
+  const bracket = p.ispro ? '🔱' : '⚔️';
+  const login = twitchApi.extractTwitchLogin(p.twitch);
+  const twitchLink = login ? `https://twitch.tv/${login}` : null;
+  const twitchPart = twitchLink ? `[${p.name}](${twitchLink})` : p.name;
+  let nameLine = `${bracket} **${region}${twitchPart}**`;
+  if (showStats) {
+    const dakggLink = `https://dak.gg/er/players/${encodeURIComponent(p.name)}`;
+    const rpDisplay = p.mmr === 0 ? 'N/A' : `${p.mmr} RP`;
+    nameLine += ` | Dak.gg: [${p.name}](${dakggLink}) · #${p.bracket_rank} · ${rpDisplay}`;
+  }
+  return p.title ? `${nameLine}\n> ${p.title}` : nameLine;
+}
+
+// twitchlive alone only means "live on Twitch, some game" — both boards
+// below are specifically an Eternal Return watch list, so both also
+// require last_game to match, same filter /deployliveupdate already uses
+// (index.js) to find who's already live in ER. Without this, someone live
+// but playing something else (or who just tabbed out of ER while staying
+// live) would incorrectly stay listed.
+const LIVE_IN_ER_JOIN = `JOIN twitch_status s ON s.name = p.name WHERE p.twitchlive = true AND s.last_game = $1`;
+
+// "Live Now" — active (non-culled) players currently streaming ER. Split
+// out from eliminated streamers into its own separate board/message/
+// channel (rather than one embed with two sections) — see
+// buildEliminatedLiveNowEmbed below.
 async function buildLiveNowEmbed(pool) {
-  // twitchlive alone only means "live on Twitch, some game" — this board
-  // is specifically an Eternal Return watch list, so it also requires
-  // last_game to match, same filter /deployliveupdate already uses
-  // (index.js) to find who's already live in ER. Without this, someone
-  // live but playing something else (or who just tabbed out of ER while
-  // staying live) would incorrectly stay listed.
+  // bracket_rank: this player's 1-indexed standing among active players in
+  // their own bracket, same ordering (mmr DESC, name DESC tiebreak) as the
+  // main leaderboard embed above — counts how many active bracket-mates
+  // outrank them, +1.
   const { rows } = await pool.query(
-    `SELECT p.name, p.region, p.twitch, p.ispro, p.culled, s.title
+    `SELECT p.name, p.region, p.twitch, p.mmr, p.ispro, s.title,
+       (SELECT COUNT(*) + 1 FROM players p2
+        WHERE p2.ispro = p.ispro AND p2.culled = false
+          AND (p2.mmr > p.mmr OR (p2.mmr = p.mmr AND p2.name > p.name))) AS bracket_rank
      FROM players p
-     JOIN twitch_status s ON s.name = p.name
-     WHERE p.twitchlive = true AND s.last_game = $1
+     ${LIVE_IN_ER_JOIN} AND p.culled = false
      ORDER BY p.ispro DESC, p.name ASC`,
     [twitchApi.ETERNAL_RETURN_GAME_ID],
   );
 
-  const lines = rows.map((p) => {
-    const region = p.region ? `${p.region} | ` : '';
-    const bracket = p.ispro ? '🔱' : '⚔️';
-    const login = twitchApi.extractTwitchLogin(p.twitch);
-    const link = login ? `https://twitch.tv/${login}` : null;
-    const eliminated = p.culled ? ' ☠️' : '';
-    const nameLine = link
-      ? `${bracket} **${region}[${p.name}](${link})**${eliminated}`
-      : `${bracket} **${region}${p.name}**${eliminated}`;
-    return p.title ? `${nameLine}\n> ${p.title}` : nameLine;
-  });
-
+  const lines = rows.map((p) => buildLiveStreamerLine(p, { showStats: true }));
   const description = lines.length ? lines.join('\n') : '*Nobody is live right now.*';
 
   return new EmbedBuilder()
     .setTitle('🔴 Live Now')
+    .setColor(VISUALS.COLORS.denied)
+    .setDescription(description)
+    .setFooter({ text: `${rows.length} streamer${rows.length === 1 ? '' : 's'} live` });
+}
+
+// Same idea as buildLiveNowEmbed, but for eliminated players — culled
+// status doesn't stop someone from streaming, this just tracks them on a
+// separate board instead of mixing them into the active one. No rank/RP,
+// since neither means anything post-elimination.
+async function buildEliminatedLiveNowEmbed(pool) {
+  const { rows } = await pool.query(
+    `SELECT p.name, p.region, p.twitch, p.mmr, p.ispro, s.title
+     FROM players p
+     ${LIVE_IN_ER_JOIN} AND p.culled = true
+     ORDER BY p.ispro DESC, p.name ASC`,
+    [twitchApi.ETERNAL_RETURN_GAME_ID],
+  );
+
+  const lines = rows.map((p) => buildLiveStreamerLine(p, { showStats: false }));
+  const description = lines.length ? lines.join('\n') : '*No eliminated players are live right now.*';
+
+  return new EmbedBuilder()
+    .setTitle('☠️ Eliminated — Live Now')
     .setColor(VISUALS.COLORS.denied)
     .setDescription(description)
     .setFooter({ text: `${rows.length} streamer${rows.length === 1 ? '' : 's'} live` });
@@ -191,6 +239,30 @@ async function postOrUpdateLiveNow(client, db) {
 
   const message = await channel.send({ embeds: [embed] });
   await db.setLiveNowMessageId(message.id);
+  return { posted: true, edited: false };
+}
+
+// Same edit-in-place pattern, for the separate eliminated-players board.
+async function postOrUpdateEliminatedLiveNow(client, db) {
+  const channelId = await db.getEliminatedLiveNowChannel();
+  if (!channelId) return { posted: false, reason: 'no channel configured' };
+
+  const channel = await client.channels.fetch(channelId);
+  const embed = await buildEliminatedLiveNowEmbed(db.pool);
+
+  const existingMessageId = await db.getEliminatedLiveNowMessageId();
+  if (existingMessageId) {
+    try {
+      const message = await channel.messages.fetch(existingMessageId);
+      await message.edit({ embeds: [embed] });
+      return { posted: true, edited: true };
+    } catch (err) {
+      console.warn('Coastal Clash: could not edit existing Eliminated Live Now message, posting a new one:', err.message);
+    }
+  }
+
+  const message = await channel.send({ embeds: [embed] });
+  await db.setEliminatedLiveNowMessageId(message.id);
   return { posted: true, edited: false };
 }
 
@@ -229,5 +301,7 @@ module.exports = {
   postOrUpdateLeaderboard,
   buildLiveNowEmbed,
   postOrUpdateLiveNow,
+  buildEliminatedLiveNowEmbed,
+  postOrUpdateEliminatedLiveNow,
   postLiveAnnouncements,
 };
