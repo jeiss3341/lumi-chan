@@ -136,10 +136,9 @@ async function postOrUpdateLeaderboard(client, db, now = new Date()) {
 }
 
 // Active: Region | Twitch name (linked) | Dak.gg: [player IGN, linked] · #rank · RP.
-// Eliminated (showStats: false): just Region | Twitch name (linked) — no
-// Dak.gg, rank, or RP, none of which mean anything post-elimination.
-// Dak.gg itself is a plain label, not a link — only the name next to it
-// links out, to that player's actual dak.gg profile.
+// Region | Twitch name (linked) · #rank · RP. Eliminated (showStats:
+// false) drops rank/RP, neither of which mean anything post-elimination.
+// Dak.gg link dropped — too much per line stacked with everything else.
 function buildLiveStreamerLine(p, { showStats } = {}) {
   const region = p.region ? `${p.region} | ` : '';
   const bracket = p.ispro ? '🔱' : '⚔️';
@@ -148,9 +147,8 @@ function buildLiveStreamerLine(p, { showStats } = {}) {
   const twitchPart = twitchLink ? `[${p.name}](${twitchLink})` : p.name;
   let nameLine = `${bracket} **${region}${twitchPart}**`;
   if (showStats) {
-    const dakggLink = `https://dak.gg/er/players/${encodeURIComponent(p.name)}`;
     const rpDisplay = p.mmr === 0 ? 'N/A' : `${p.mmr} RP`;
-    nameLine += ` | Dak.gg: [${p.name}](${dakggLink}) · #${p.bracket_rank} · ${rpDisplay}`;
+    nameLine += ` · #${p.bracket_rank} · ${rpDisplay}`;
   }
   return p.title ? `${nameLine}\n> ${p.title}` : nameLine;
 }
