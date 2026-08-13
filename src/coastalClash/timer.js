@@ -4,9 +4,11 @@
 // Discord bot process; no separate hosting/cron needed.
 //
 //   - Every 10 minutes: RP refresh + indanger recompute (no culling).
+//   - Every 3 minutes: Twitch live-status refresh, on its own faster
+//     cadence since it doesn't depend on the ER API at all.
 //   - Once/day at 11:59 PM PDT: the real cull (src/coastalClash/cull.js
 //     runDailyCull), auto-retried on failure, with a DM alert either way.
-const { runDailyCull, refreshLeaderboardOnly } = require('./cull');
+const { runDailyCull, refreshLeaderboardOnly, refreshTwitchOnly } = require('./cull');
 const { postOrUpdateLeaderboard, postOrUpdateLiveNow, postLiveAnnouncements } = require('./embed');
 const db = require('../db');
 
@@ -21,6 +23,11 @@ const ALERT_USER_ID = '220690226752913418';
 // storm could still push a pass long enough to risk overlap, and the
 // guard costs nothing when passes finish on time.
 const REFRESH_INTERVAL_MINUTES = 10;
+// Twitch status has zero dependency on the ER API, and a single batched
+// Helix call for the whole roster is cheap/fast (no per-player spacing
+// needed, unlike ER) — so it runs on its own much faster cadence,
+// completely decoupled from the ER-bound refresh above.
+const TWITCH_REFRESH_INTERVAL_MINUTES = 3;
 const CULL_RETRY_DELAY_MS = 5 * 60 * 1000; // 5 min
 const CULL_MAX_RETRIES = 6; // spans ~30 min of retrying before giving up
 
@@ -79,6 +86,7 @@ async function runDailyCullWithRetry(client) {
 let timerInterval = null;
 let lastCullDateKey = null;
 let lastRefreshMinuteKey = null;
+let lastTwitchRefreshMinuteKey = null;
 
 function startCoastalClashTimers(client) {
   if (timerInterval) clearInterval(timerInterval);
@@ -100,15 +108,27 @@ function startCoastalClashTimers(client) {
       if (lastRefreshMinuteKey !== minuteKey) {
         lastRefreshMinuteKey = minuteKey;
         try {
-          const refreshResult = await refreshLeaderboardOnly();
-          if (refreshResult.twitchRefresh?.error) {
-            console.error('Coastal Clash: Twitch refresh failed:', refreshResult.twitchRefresh.error);
-          }
+          await refreshLeaderboardOnly();
           await postOrUpdateLeaderboard(client, db);
-          await postOrUpdateLiveNow(client, db);
-          await postLiveAnnouncements(client, db, refreshResult.twitchRefresh?.toAnnounce ?? []);
         } catch (err) {
-          console.error('Coastal Clash: 30-min refresh failed:', err);
+          console.error('Coastal Clash: 10-min refresh failed:', err);
+        }
+      }
+    }
+
+    if (m % TWITCH_REFRESH_INTERVAL_MINUTES === 0) {
+      const twitchMinuteKey = `${dateKey}T${h}:${m}`;
+      if (lastTwitchRefreshMinuteKey !== twitchMinuteKey) {
+        lastTwitchRefreshMinuteKey = twitchMinuteKey;
+        try {
+          const twitchResult = await refreshTwitchOnly(db.pool);
+          if (twitchResult.error) {
+            console.error('Coastal Clash: Twitch refresh failed:', twitchResult.error);
+          }
+          await postOrUpdateLiveNow(client, db);
+          await postLiveAnnouncements(client, db, twitchResult.toAnnounce ?? []);
+        } catch (err) {
+          console.error('Coastal Clash: 3-min Twitch refresh failed:', err);
         }
       }
     }

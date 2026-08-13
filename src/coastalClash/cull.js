@@ -323,7 +323,10 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   const refreshResult = seasonVerificationFailed
     ? { updated: 0, failed: [], skipped: true, reason: 'could not verify a live ER season ID this cycle (external API issue?) — RP fetch skipped, will retry next cycle' }
     : await refreshAllRP(db.pool, seasonId, dryRun);
-  const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
+  // Twitch status has its own dedicated, much faster timer now (see
+  // refreshTwitchOnly below + timer.js) — it doesn't belong in this
+  // ER-bound cycle at all, since it has zero dependency on season
+  // verification and was getting needlessly delayed behind it.
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun);
   if (!dryRun) await updateLeaderboardMeta(day);
@@ -334,14 +337,21 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
     seasonIdCorrected: corrected,
     seasonVerificationFailed,
     refresh: refreshResult,
-    twitchRefresh: twitchResult,
     proIndanger: proDanger.dangerNames,
     casualIndanger: casualDanger.dangerNames,
   };
 }
 
+// Standalone Twitch-only pass for its own fast, ER-independent timer
+// (timer.js) — just refreshTwitchLiveStatus, nothing else, so it never
+// waits behind the ER season-verification retry loop.
+async function refreshTwitchOnly(pool, dryRun = false) {
+  return refreshTwitchLiveStatus(pool, dryRun);
+}
+
 module.exports = {
   pickReferenceNicknames,
+  refreshTwitchOnly,
   refreshAllRP,
   refreshTwitchLiveStatus,
   updateIndangerForBracket,
