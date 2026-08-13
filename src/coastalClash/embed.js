@@ -133,12 +133,19 @@ async function postOrUpdateLeaderboard(client, db, now = new Date()) {
 // (src/coastalClash/cull.js refreshTwitchLiveStatus). Culled players are
 // included if they're live — streaming status isn't tied to elimination.
 async function buildLiveNowEmbed(pool) {
+  // twitchlive alone only means "live on Twitch, some game" — this board
+  // is specifically an Eternal Return watch list, so it also requires
+  // last_game to match, same filter /deployliveupdate already uses
+  // (index.js) to find who's already live in ER. Without this, someone
+  // live but playing something else (or who just tabbed out of ER while
+  // staying live) would incorrectly stay listed.
   const { rows } = await pool.query(
     `SELECT p.name, p.region, p.twitch, p.ispro, p.culled, s.title
      FROM players p
-     LEFT JOIN twitch_status s ON s.name = p.name
-     WHERE p.twitchlive = true
+     JOIN twitch_status s ON s.name = p.name
+     WHERE p.twitchlive = true AND s.last_game = $1
      ORDER BY p.ispro DESC, p.name ASC`,
+    [twitchApi.ETERNAL_RETURN_GAME_ID],
   );
 
   const lines = rows.map((p) => {
