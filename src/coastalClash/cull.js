@@ -29,9 +29,19 @@ async function updateLeaderboardMeta(day) {
 // production — see er_api_findings memory). A bigger random pool makes
 // that failure mode very unlikely regardless of mmr state: isSeasonLive
 // only needs ONE of these to have real data.
-async function pickReferenceNicknames(pool, limit = 10) {
+//
+// Confirmed happening AGAIN in production once real RP tracking started:
+// with only a handful of players having actually played the new season
+// out of the full roster, a random sample of 10 had a coin-flip-or-worse
+// chance of missing all of them every single cycle. Two changes: (1)
+// mmr > 0 first — a player who's ever had a real RP written is a
+// guaranteed-good reference, checked before anyone else, so once even one
+// write ever succeeds, every later cycle verifies almost immediately
+// instead of gambling again from scratch; (2) bigger pool (40, up from
+// 10) for the bootstrap case before any confirmed players exist yet.
+async function pickReferenceNicknames(pool, limit = 40) {
   const { rows } = await pool.query(
-    `SELECT name FROM players WHERE culled = false ORDER BY random() LIMIT $1`,
+    `SELECT name FROM players WHERE culled = false ORDER BY (mmr > 0) DESC, random() LIMIT $1`,
     [limit],
   );
   return rows.map((r) => r.name);
