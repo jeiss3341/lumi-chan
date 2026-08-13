@@ -31,13 +31,12 @@ function buildBracketEmbed(pool, isPro, day) {
       const firstDangerIndex = active.findIndex((p) => p.indanger);
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
-        const status = p.indanger ? '⚠️' : '✅';
         // 0 is the "not fetched yet" sentinel, not a real RP value (see
         // db.getSeasonLive() — the ER API isn't being queried yet), so it
         // displays as N/A instead of a misleadingly literal "0 RP".
         const rpDisplay = p.mmr === 0 ? 'N/A' : `${p.mmr} RP`;
-        const line = `${i + 1}. **${region}${p.name}** — ${rpDisplay} ${status}`;
-        return i === firstDangerIndex && firstDangerIndex > 0 ? `⚠️ **— Danger Zone —**\n${line}` : line;
+        const line = `${i + 1}. **${region}${p.name}** — ${rpDisplay}`;
+        return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
       const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
