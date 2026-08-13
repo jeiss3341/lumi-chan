@@ -156,35 +156,35 @@ function buildLiveStreamerLine(p, { showStats } = {}) {
   return p.title ? `${nameLine}\n> ${p.title}` : nameLine;
 }
 
-// twitchlive alone only means "live on Twitch, some game" — both boards
-// below are specifically an Eternal Return watch list, so both also
-// require last_game to match, same filter /deployliveupdate already uses
-// (index.js) to find who's already live in ER. Without this, someone live
-// but playing something else (or who just tabbed out of ER while staying
-// live) would incorrectly stay listed.
+// twitchlive alone only means "live on Twitch, some game" — this board
+// is specifically an Eternal Return watch list, so it also requires
+// last_game to match, same filter /deployliveupdate already uses
+// (index.js) to find who's already live in ER. Without this, someone
+// live but playing something else (or who just tabbed out of ER while
+// staying live) would incorrectly stay listed.
 const LIVE_IN_ER_JOIN = `JOIN twitch_status s ON s.name = p.name WHERE p.twitchlive = true AND s.last_game = $1`;
 
-// "Live Now" — active (non-culled) players currently streaming ER. Split
-// out from eliminated streamers into its own separate board/message/
-// channel (rather than one embed with two sections) — see
-// buildEliminatedLiveNowEmbed below.
+// "Live Now" — everyone currently streaming ER, active and eliminated
+// together (culled status doesn't stop someone from streaming). Rank/RP
+// only shown for active players — neither means anything post-elimination.
 async function buildLiveNowEmbed(pool) {
   // bracket_rank: this player's 1-indexed standing among active players in
   // their own bracket, same ordering (mmr DESC, name DESC tiebreak) as the
   // main leaderboard embed above — counts how many active bracket-mates
-  // outrank them, +1.
+  // outrank them, +1. Meaningless (and not computed relative to) culled
+  // players, who don't get it displayed anyway.
   const { rows } = await pool.query(
-    `SELECT p.name, p.region, p.twitch, p.mmr, p.ispro, s.title,
+    `SELECT p.name, p.region, p.twitch, p.mmr, p.ispro, p.culled, s.title,
        (SELECT COUNT(*) + 1 FROM players p2
         WHERE p2.ispro = p.ispro AND p2.culled = false
           AND (p2.mmr > p.mmr OR (p2.mmr = p.mmr AND p2.name > p.name))) AS bracket_rank
      FROM players p
-     ${LIVE_IN_ER_JOIN} AND p.culled = false
-     ORDER BY p.ispro DESC, p.name ASC`,
+     ${LIVE_IN_ER_JOIN}
+     ORDER BY p.culled ASC, p.ispro DESC, p.name ASC`,
     [twitchApi.ETERNAL_RETURN_GAME_ID],
   );
 
-  const lines = rows.map((p) => buildLiveStreamerLine(p, { showStats: true }));
+  const lines = rows.map((p) => buildLiveStreamerLine(p, { showStats: !p.culled }));
   const description = lines.length ? lines.join('\n') : '*Nobody is live right now.*';
 
   return new EmbedBuilder()
@@ -197,7 +197,12 @@ async function buildLiveNowEmbed(pool) {
 // Same idea as buildLiveNowEmbed, but for eliminated players — culled
 // status doesn't stop someone from streaming, this just tracks them on a
 // separate board instead of mixing them into the active one. No rank/RP,
-// since neither means anything post-elimination.
+// since neither means anything post-elimination. NOT currently wired up
+// to any command — index.js/db.js/deploy-commands.js/text.js changes for
+// a real /deployeliminatedlive command are still sitting uncommitted,
+// left unfinished on purpose (see conversation — undecided whether to
+// ship a separate board at all). This function is unreachable dead code
+// until/unless that gets finished and committed too.
 async function buildEliminatedLiveNowEmbed(pool) {
   const { rows } = await pool.query(
     `SELECT p.name, p.region, p.twitch, p.mmr, p.ispro, s.title
