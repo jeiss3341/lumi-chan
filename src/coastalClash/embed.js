@@ -46,7 +46,10 @@ function buildBracketEmbed(pool, isPro, day) {
       let countdownLine = '';
       if (nextCullDay !== null) {
         const unixSeconds = Math.floor(schedule.cullMomentForDay(nextCullDay).getTime() / 1000);
-        countdownLine = `⏰ **Next cull in:** <t:${unixSeconds}:R>\n\n`;
+        // No trailing "in" here — Discord's :R tag already renders its own
+        // "in 3 days" / "in 5 hours", so "Next cull in: in 3 days" would
+        // double up.
+        countdownLine = `⏰ **Next cull:** <t:${unixSeconds}:R>\n\n`;
       }
 
       let description = countdownLine + (activeLines.join('\n') || '*No active players.*');
@@ -63,11 +66,11 @@ function buildBracketEmbed(pool, isPro, day) {
 
       // "Top N" info lives in the footer now, since the description's own
       // headline is just the countdown per the user's requested wording.
-      const footerText = `Day ${day} of 17${nextThreshold !== null ? ` · Next cull: Top ${nextThreshold}` : ''}`;
+      const footerText = `Day ${day} of 17${nextThreshold !== null ? ` · Top ${nextThreshold} survive` : ''}`;
 
       return new EmbedBuilder()
-        .setTitle(`${isPro ? '🏆 Pro' : '🎮 Casual'} Bracket — Day ${day}`)
-        .setColor(isPro ? VISUALS.COLORS.brand : VISUALS.COLORS.sand)
+        .setTitle(`${isPro ? '🔱 Pro' : '⚔️ Casual'} Bracket — Day ${day}`)
+        .setColor(isPro ? VISUALS.COLORS.sand : VISUALS.COLORS.brand)
         .setDescription(description)
         .setFooter({ text: footerText });
     });
