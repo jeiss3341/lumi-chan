@@ -104,11 +104,19 @@ async function fetchPlayerRP(nickname, seasonId, maxRetries = 5) {
 // value, but verify it against real reference players before each use, and
 // self-correct (walking forward a few IDs) if it looks stale.
 //
-// A season that hasn't started yet returns completely zeroed data (mmr=0
-// too, not just rank=0) for every player. A season that's live — even one
-// that JUST started, with no ranked games played yet — still carries each
-// player's previous-season MMR as a soft-reset baseline (rank/serverRank
-// are 0, but mmr is not). That distinction is what isSeasonLive checks.
+// Originally checked mmr > 0 alone (a season that hasn't started returns
+// completely zeroed data, including mmr, so any nonzero mmr looked like a
+// live season's soft-reset baseline). That broke in practice: a dead
+// season some players never actually played (confirmed live — see
+// er_api_findings memory) can still return a nonzero, stale, carried-over
+// mmr with rank/serverRank both 0, which the old check couldn't tell
+// apart from a real one. Fixed to require rank or serverRank > 0 instead —
+// actual played-this-season activity — same signal fetchPlayerRP already
+// uses for "has this specific player played yet". By the time this
+// verification runs at all (days into a live event, checking 10 random
+// active players), real activity from at least one of them is a safe
+// assumption — this isn't trying to catch "season live, zero games played
+// by anyone yet" anymore, which was the point of the old mmr-only check.
 // ─────────────────────────────────────────────────────────────────────────
 const SEASON_SETTING_KEY = 'er_season_id';
 const MAX_SEASON_PROBE_STEPS = 5;
@@ -117,7 +125,7 @@ async function isSeasonLive(seasonId, referenceNicknames) {
   for (const nickname of referenceNicknames) {
     const userRank = await fetchUserRank(nickname, seasonId);
     await sleep(CALL_SPACING_MS);
-    if (userRank && (userRank.mmr ?? 0) > 0) return true;
+    if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
   }
   return false;
 }
