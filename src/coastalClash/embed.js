@@ -9,7 +9,7 @@ const { VISUALS } = require('../text');
 const schedule = require('./schedule');
 const twitchApi = require('./twitchApi');
 
-function buildBracketEmbed(pool, isPro, day) {
+function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
   return pool
     // name DESC mirrors the ASC-ordered queries in cull.js (mmr ASC, name
     // ASC) so ties resolve as true opposite ends of the same list — while
@@ -58,10 +58,19 @@ function buildBracketEmbed(pool, isPro, day) {
         // No trailing "in" here — Discord's :R tag already renders its own
         // "in 3 days" / "in 5 hours", so "Next cull in: in 3 days" would
         // double up.
-        countdownLine = `⏰ **Next cull:** <t:${unixSeconds}:R>\n\n`;
+        countdownLine = `⏰ **Next cull:** <t:${unixSeconds}:R>\n`;
       }
 
-      let description = countdownLine + (activeLines.join('\n') || '*No active players.*');
+      // Same <t:UNIX:...> trick as the countdown above — each viewer's
+      // Discord client renders this in their own local timezone/format
+      // automatically, no manual conversion needed on our end.
+      let lastUpdatedLine = '';
+      if (lastUpdatedAt) {
+        const unixSeconds = Math.floor(new Date(lastUpdatedAt).getTime() / 1000);
+        lastUpdatedLine = `🕐 **Last updated:** <t:${unixSeconds}:R>\n`;
+      }
+
+      let description = countdownLine + lastUpdatedLine + (countdownLine || lastUpdatedLine ? '\n' : '') + (activeLines.join('\n') || '*No active players.*');
       if (culledLines.length) {
         description += `\n\n**Eliminated (${culledLines.length})**\n${culledLines.join('\n')}`;
       }
@@ -87,9 +96,11 @@ function buildBracketEmbed(pool, isPro, day) {
 
 async function buildLeaderboardEmbeds(pool, now = new Date()) {
   const day = schedule.getEventDay(now);
+  const { rows: metaRows } = await pool.query('SELECT last_updated_at FROM leaderboard_meta WHERE id = 1');
+  const lastUpdatedAt = metaRows[0]?.last_updated_at ?? null;
   const [proEmbed, casualEmbed] = await Promise.all([
-    buildBracketEmbed(pool, true, day),
-    buildBracketEmbed(pool, false, day),
+    buildBracketEmbed(pool, true, day, lastUpdatedAt),
+    buildBracketEmbed(pool, false, day, lastUpdatedAt),
   ]);
   return { pro: proEmbed, casual: casualEmbed };
 }
