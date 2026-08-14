@@ -69,9 +69,19 @@ async function fetchRankRaw(userId, seasonId, matchingTeamMode = 3) {
 // (nickname not found, non-retryable error). This is the shared fetch —
 // fetchPlayerRP and isSeasonLive each apply a DIFFERENT interpretation of
 // the result below, so neither filter lives in here.
+// Small gap between the nickname lookup and the rank lookup below — these
+// are two separate HTTP requests to the API with zero delay between them
+// otherwise, regardless of how much spacing sits between different players'
+// calls. If the API's limit is sensitive to back-to-back bursts (not just
+// average rate over time), this pair firing instantly, every single player,
+// could be tripping it independent of CALL_SPACING_MS/
+// SEASON_VERIFICATION_SPACING_MS above.
+const INTER_CALL_GAP_MS = 500;
+
 async function fetchUserRank(nickname, seasonId, maxRetries = 5) {
   const userId = await fetchUserId(nickname);
   if (!userId) return null;
+  await sleep(INTER_CALL_GAP_MS);
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const data = await fetchRankRaw(userId, seasonId);
