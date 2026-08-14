@@ -79,10 +79,17 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
   // ign is the actual Eternal Return nickname to query the API with — for
   // almost everyone this is identical to their display name, but see
   // player_igns (src/db.js) for players where those two differ.
+  //
+  // Order: casual bracket before pro (ispro ASC — false sorts first),
+  // ascending RP within each bracket — bottom-most, most at-risk players
+  // refreshed first. If a cycle ever fails partway through, the players
+  // closest to elimination are the ones already caught up, not whichever
+  // names happen to come first alphabetically (the old order, unrelated
+  // to fairness at all).
   const { rows: active } = await pool.query(
     `SELECT p.name, COALESCE(en.ign, p.name) AS ign FROM players p
      LEFT JOIN player_igns en ON en.name = p.name
-     WHERE p.culled = false ORDER BY p.name`,
+     WHERE p.culled = false ORDER BY p.ispro ASC, p.mmr ASC`,
   );
   const results = { updated: 0, failed: [], notPlayedYet: [] };
 
