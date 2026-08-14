@@ -118,6 +118,33 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
   return results;
 }
 
+// Runs ONLY when season verification already failed this cycle (see the
+// seasonVerificationFailed branch in runDailyCull/refreshLeaderboardOnly
+// below) — in that case refreshAllRP never runs at all, so without this,
+// er_api_call_log only ever sees the ~15 reference players used for
+// verification, repeated forever, no matter how long an outage lasts.
+// This sweeps every active player's nickname lookup ONLY (the step that's
+// actually been failing — see tonight's 403 investigation) purely so the
+// log has full-roster coverage during an outage. Deliberately does NOT
+// call fetchRankRaw or write any mmr value — there's no verified season to
+// trust the data against, and if nickname lookups are already failing,
+// rank lookups can't succeed either (confirmed: 0/40 in tonight's log).
+async function logDiagnosticNicknameSweep(pool) {
+  const { rows: active } = await pool.query(
+    `SELECT COALESCE(en.ign, p.name) AS ign FROM players p
+     LEFT JOIN player_igns en ON en.name = p.name
+     WHERE p.culled = false ORDER BY p.name`,
+  );
+  for (const { ign } of active) {
+    try {
+      await erApi.fetchUserId(ign);
+    } catch (err) {
+      console.error(`Coastal Clash: diagnostic nickname sweep threw for ${ign}:`, err.message);
+    }
+    await erApi.sleep(erApi.CALL_SPACING_MS);
+  }
+}
+
 // Announcements re-fire if the same player's last announcement was more
 // than this long ago — a stream that crashes and restarts within the
 // window is treated as the SAME session continuing, not a new one worth
@@ -365,9 +392,16 @@ async function runDailyCull(now = new Date(), dryRun = false) {
     if (seasonId === null) seasonVerificationFailed = true;
   }
 
-  const refreshResult = seasonVerificationFailed
-    ? { updated: 0, failed: [], skipped: true, reason: 'could not verify a live ER season ID this cycle (external API issue?) — RP fetch skipped, will retry next cycle' }
-    : await refreshAllRP(db.pool, seasonId, dryRun);
+  let refreshResult;
+  if (seasonVerificationFailed) {
+    refreshResult = { updated: 0, failed: [], skipped: true, reason: 'could not verify a live ER season ID this cycle (external API issue?) — RP fetch skipped, will retry next cycle' };
+    // See logDiagnosticNicknameSweep's own comment — this is what gives
+    // er_api_call_log full-roster coverage during an outage instead of
+    // just the ~15 reference players, repeated forever.
+    if (!dryRun) await logDiagnosticNicknameSweep(db.pool);
+  } else {
+    refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
+  }
   const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
 
   let proCull = { culled: [] };
@@ -430,9 +464,15 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
     if (seasonId === null) seasonVerificationFailed = true;
   }
 
-  const refreshResult = seasonVerificationFailed
-    ? { updated: 0, failed: [], skipped: true, reason: 'could not verify a live ER season ID this cycle (external API issue?) — RP fetch skipped, will retry next cycle' }
-    : await refreshAllRP(db.pool, seasonId, dryRun);
+  let refreshResult;
+  if (seasonVerificationFailed) {
+    refreshResult = { updated: 0, failed: [], skipped: true, reason: 'could not verify a live ER season ID this cycle (external API issue?) — RP fetch skipped, will retry next cycle' };
+    // See logDiagnosticNicknameSweep's own comment — full-roster log
+    // coverage during an outage instead of just the reference players.
+    if (!dryRun) await logDiagnosticNicknameSweep(db.pool);
+  } else {
+    refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
+  }
   console.log('[CC refresh] RP refresh done:', JSON.stringify({ updated: refreshResult.updated, failed: refreshResult.failed?.length }));
   // Twitch status has its own dedicated, much faster timer now (see
   // refreshTwitchOnly below + timer.js) — it doesn't belong in this
