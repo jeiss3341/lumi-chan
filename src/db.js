@@ -615,12 +615,19 @@
   // "last updated" and an accurate "next cull" to count down to, both
   // sourced from this bot's own schedule logic that the site otherwise
   // has no visibility into at all.
-  async function setLeaderboardMeta(nextCullAt) {
+  // startedAt is the cycle's START time, not "now" — the caller only
+  // invokes this once the cycle has actually finished successfully (see
+  // updateLeaderboardMeta in cull.js), but the timestamp stored reflects
+  // when data-gathering began, not when it wrapped up. A full cycle takes
+  // several minutes now, so stamping the finish time would overstate
+  // freshness — the earliest players fetched are already that many
+  // minutes stale by the time the cycle completes.
+  async function setLeaderboardMeta(nextCullAt, startedAt) {
     await pool.query(
       `INSERT INTO leaderboard_meta (id, last_updated_at, next_cull_at)
-       VALUES (1, NOW(), $1)
-       ON CONFLICT (id) DO UPDATE SET last_updated_at = NOW(), next_cull_at = EXCLUDED.next_cull_at`,
-      [nextCullAt],
+       VALUES (1, $2, $1)
+       ON CONFLICT (id) DO UPDATE SET last_updated_at = EXCLUDED.last_updated_at, next_cull_at = EXCLUDED.next_cull_at`,
+      [nextCullAt, startedAt],
     );
   }
 
