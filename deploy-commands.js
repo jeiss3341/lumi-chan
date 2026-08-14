@@ -289,6 +289,19 @@ const commands = [
     .setDescription(TEXT.COMMANDS.endSubmissions.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
+  // Diagnostic: fires a raw, unthrottled burst of ER API calls (no spacing
+  // at all between them) from wherever this bot process is actually
+  // running — i.e. Railway's real outbound IP, not a local machine. Exists
+  // to test whether the API's rate limit is tied to that specific IP
+  // (Ilyfue's theory: Railway IPs aren't static without the Pro plan,
+  // which would explain "works right after a redeploy, degrades later" in
+  // a way the shared-API-key theory alone doesn't). Read-only, no DB
+  // writes — safe to run any time. Remove once the IP theory is settled.
+  new SlashCommandBuilder()
+    .setName('apiburst')
+    .setDescription('DIAGNOSTIC: fire an unthrottled burst of ER API calls to test rate-limit behavior.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
 ];
 
 // Coastal Clash testing tools (daychange/dayprevious) directly manipulate
