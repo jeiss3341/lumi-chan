@@ -103,7 +103,13 @@ function startCoastalClashTimers(client) {
       return;
     }
 
-    if (m % REFRESH_INTERVAL_MINUTES === 0) {
+    // Offset 4 minutes off the round marks (:56/:06/:16/:26/:36/:46 instead
+    // of :00/:10/:20/:30/:40/:50) — round clock marks are the conventional
+    // default for cron-like jobs generally, so anything else hitting the
+    // same ER API on its own schedule is more likely to land exactly there
+    // too. Sitting off that beat reduces the odds of an exact-same-instant
+    // collision with an unrelated process, without changing the interval.
+    if (m % REFRESH_INTERVAL_MINUTES === 6) {
       const minuteKey = `${dateKey}T${h}:${m}`;
       if (lastRefreshMinuteKey !== minuteKey) {
         lastRefreshMinuteKey = minuteKey;
