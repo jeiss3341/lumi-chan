@@ -2420,6 +2420,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // tight loop, since the whole point is a RAW, unthrottled burst —
     // wrapping it in the normal spaced-out helper would defeat the test.
     if (interaction.isChatInputCommand() && interaction.commandName === 'apiburst') {
+      // Refuse to run within 2 minutes of a real refresh mark (:56/:06/
+      // :16/:26/:36/:46 — see timer.js) so this deliberately-unthrottled
+      // burst can't accidentally overlap the bot's own cycle, which can
+      // itself run up to 90s on a slow/bailout verification pass.
+      const nowMin = new Date().getUTCMinutes();
+      const offsetFromMark = ((nowMin - 6) % 10 + 10) % 10;
+      const distToNearestMark = Math.min(offsetFromMark, 10 - offsetFromMark);
+      if (distToNearestMark <= 2) {
+        await interaction.reply({
+          content: `⏳ Too close to a real refresh cycle (within 2 min of :56/:06/:16/:26/:36/:46) — try again in a few minutes so this doesn't overlap the bot's own calls.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const referenceNicknames = await pickReferenceNicknames(db.pool, 15);
