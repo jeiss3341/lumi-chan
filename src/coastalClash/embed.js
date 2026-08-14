@@ -32,11 +32,7 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
         const status = p.indanger ? '⚠️' : '✅';
-        // 0 is the "not fetched yet" sentinel, not a real RP value (see
-        // db.getSeasonLive() — the ER API isn't being queried yet), so it
-        // displays as N/A instead of a misleadingly literal "0 RP".
-        const rpDisplay = p.mmr === 0 ? 'N/A' : `${p.mmr} RP`;
-        const line = `${i + 1}. **${region}${p.name}** — ${rpDisplay} ${status}`;
+        const line = `${i + 1}. **${region}${p.name}** — ${p.mmr} RP ${status}`;
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
@@ -159,8 +155,7 @@ function buildLiveStreamerLine(p, { showStats } = {}) {
   const twitchPart = twitchLink ? `[${p.name}](${twitchLink})` : p.name;
   let nameLine = `${bracket} **${region}${twitchPart}**`;
   if (showStats) {
-    const rpDisplay = p.mmr === 0 ? 'N/A' : `${p.mmr} RP`;
-    nameLine += ` · #${p.bracket_rank} · ${rpDisplay}`;
+    nameLine += ` · #${p.bracket_rank} · ${p.mmr} RP`;
   }
   return p.title ? `${nameLine}\n> ${p.title}` : nameLine;
 }
