@@ -196,6 +196,26 @@
         announced_at TIMESTAMPTZ
       );
     `);
+    // live_twitch_url: whichever of a player's channels (players.twitch, or
+    // their player_extra_twitch row below) was actually detected live on
+    // the most recent check — the Live Now board/announcements link to
+    // THIS, not blindly to players.twitch, so a player streaming on their
+    // secondary channel gets linked correctly instead of to their (offline)
+    // primary one. Null until the first check that finds them live.
+    await pool.query(`ALTER TABLE twitch_status ADD COLUMN IF NOT EXISTS live_twitch_url TEXT;`);
+
+    // A second Twitch channel for players who stream from more than one
+    // account (e.g. Neotep). Same reasoning as player_igns — kept as its
+    // own table rather than a second column on players, since that
+    // table's schema is project-lumi's read contract. Optional: most
+    // players have no row here at all, and refreshTwitchLiveStatus treats
+    // that as "no secondary channel", not an error.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS player_extra_twitch (
+        name   TEXT PRIMARY KEY,
+        twitch TEXT NOT NULL
+      );
+    `);
 
     // Maps a player's display name (players.name — shown everywhere,
     // including project-lumi's site) to their actual Eternal Return IGN,

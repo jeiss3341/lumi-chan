@@ -184,7 +184,7 @@ async function buildLiveNowEmbed(pool) {
   // main leaderboard embed above — counts how many active bracket-mates
   // outrank them, +1.
   const { rows } = await pool.query(
-    `SELECT p.name, p.region, p.twitch, p.mmr, p.ispro, p.culled, s.title,
+    `SELECT p.name, p.region, COALESCE(s.live_twitch_url, p.twitch) AS twitch, p.mmr, p.ispro, p.culled, s.title,
        (SELECT COUNT(*) + 1 FROM players p2
         WHERE p2.ispro = p.ispro AND p2.culled = false
           AND (p2.mmr > p.mmr OR (p2.mmr = p.mmr AND p2.name > p.name))) AS bracket_rank
@@ -223,7 +223,7 @@ async function buildLiveNowEmbed(pool) {
 // until/unless that gets finished and committed too.
 async function buildEliminatedLiveNowEmbed(pool) {
   const { rows } = await pool.query(
-    `SELECT p.name, p.region, p.twitch, p.mmr, p.ispro, s.title
+    `SELECT p.name, p.region, COALESCE(s.live_twitch_url, p.twitch) AS twitch, p.mmr, p.ispro, s.title
      FROM players p
      ${LIVE_IN_ER_JOIN} AND p.culled = true
      ORDER BY p.ispro DESC, p.name ASC`,

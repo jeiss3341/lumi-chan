@@ -137,36 +137,55 @@ const LIVE_ANNOUNCE_COOLDOWN_MS = 30 * 60 * 1000;
 // announced_at regardless of brief drops, per LIVE_ANNOUNCE_COOLDOWN_MS.
 async function refreshTwitchLiveStatus(pool, dryRun = false) {
   const { rows } = await pool.query(
-    `SELECT p.name, p.twitch, s.last_game, s.announced_at
+    `SELECT p.name, p.twitch, x.twitch AS extra_twitch, s.last_game, s.announced_at
      FROM players p
+     LEFT JOIN player_extra_twitch x ON x.name = p.name
      LEFT JOIN twitch_status s ON s.name = p.name
-     WHERE p.twitch != ''`,
+     WHERE p.twitch != '' OR x.twitch IS NOT NULL`,
   );
   const results = { updated: 0, failed: [], toAnnounce: [] };
   if (!rows.length) return results;
 
-  const rowsByLogin = new Map();
+  // Every distinct login across every player's primary + (optional)
+  // secondary channel, for ONE batched Helix call regardless of how many
+  // channels each individual player has.
+  const allLogins = new Set();
   for (const row of rows) {
-    const login = twitchApi.extractTwitchLogin(row.twitch);
-    if (!login) continue;
-    if (!rowsByLogin.has(login)) rowsByLogin.set(login, []);
-    rowsByLogin.get(login).push(row);
+    const primaryLogin = twitchApi.extractTwitchLogin(row.twitch);
+    if (primaryLogin) allLogins.add(primaryLogin);
+    const extraLogin = row.extra_twitch ? twitchApi.extractTwitchLogin(row.extra_twitch) : null;
+    if (extraLogin) allLogins.add(extraLogin);
   }
+  if (!allLogins.size) return results;
 
   let liveLogins;
   try {
-    liveLogins = await twitchApi.fetchLiveLogins([...rowsByLogin.keys()]);
+    liveLogins = await twitchApi.fetchLiveLogins([...allLogins]);
   } catch (err) {
     // One failed batch call shouldn't crash the whole refresh cycle —
     // report it and leave twitchlive untouched until the next attempt.
-    results.failed = [...rowsByLogin.values()].flat().map((r) => r.name);
+    results.failed = rows.map((r) => r.name);
     results.error = err.message;
     return results;
   }
 
   const now = Date.now();
-  for (const [login, playerRows] of rowsByLogin) {
-    const liveInfo = liveLogins.get(login);
+  for (const row of rows) {
+    const primaryLogin = twitchApi.extractTwitchLogin(row.twitch);
+    const extraLogin = row.extra_twitch ? twitchApi.extractTwitchLogin(row.extra_twitch) : null;
+
+    // Whichever channel is actually live wins — primary checked first, so
+    // it's preferred if (rare, but possible) both are live at once.
+    let liveInfo = null;
+    let liveTwitchUrl = row.twitch || row.extra_twitch;
+    if (primaryLogin && liveLogins.has(primaryLogin)) {
+      liveInfo = liveLogins.get(primaryLogin);
+      liveTwitchUrl = row.twitch;
+    } else if (extraLogin && liveLogins.has(extraLogin)) {
+      liveInfo = liveLogins.get(extraLogin);
+      liveTwitchUrl = row.extra_twitch;
+    }
+
     const isLive = !!liveInfo;
     // Title cleared to '' when offline, same as it never having been set —
     // avoids showing a stale title from their last stream once they're
@@ -175,30 +194,28 @@ async function refreshTwitchLiveStatus(pool, dryRun = false) {
     const currentGameId = liveInfo?.gameId ?? '';
     const isEternalReturn = currentGameId === twitchApi.ETERNAL_RETURN_GAME_ID;
 
-    for (const row of playerRows) {
-      const wasEternalReturn = row.last_game === twitchApi.ETERNAL_RETURN_GAME_ID;
-      const justSwitchedIn = isEternalReturn && !wasEternalReturn;
-      const lastAnnouncedMs = row.announced_at ? new Date(row.announced_at).getTime() : 0;
-      const offCooldown = now - lastAnnouncedMs > LIVE_ANNOUNCE_COOLDOWN_MS;
-      const willAnnounce = justSwitchedIn && offCooldown;
+    const wasEternalReturn = row.last_game === twitchApi.ETERNAL_RETURN_GAME_ID;
+    const justSwitchedIn = isEternalReturn && !wasEternalReturn;
+    const lastAnnouncedMs = row.announced_at ? new Date(row.announced_at).getTime() : 0;
+    const offCooldown = now - lastAnnouncedMs > LIVE_ANNOUNCE_COOLDOWN_MS;
+    const willAnnounce = justSwitchedIn && offCooldown;
 
-      if (willAnnounce) results.toAnnounce.push({ name: row.name, twitch: row.twitch, title, gameName: liveInfo.gameName });
+    if (willAnnounce) results.toAnnounce.push({ name: row.name, twitch: liveTwitchUrl, title, gameName: liveInfo.gameName });
 
-      if (!dryRun) {
-        await pool.query(`UPDATE players SET twitchlive = $2 WHERE name = $1`, [row.name, isLive]);
-        // announced_at only advances when actually announcing — otherwise
-        // it stays whatever it already was (row.announced_at, already in
-        // hand from the earlier join, no extra query needed).
-        const announcedAt = willAnnounce ? new Date() : row.announced_at;
-        await pool.query(
-          `INSERT INTO twitch_status (name, title, last_game, announced_at)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (name) DO UPDATE SET title = EXCLUDED.title, last_game = EXCLUDED.last_game, announced_at = EXCLUDED.announced_at`,
-          [row.name, title, currentGameId, announcedAt],
-        );
-      }
-      results.updated++;
+    if (!dryRun) {
+      await pool.query(`UPDATE players SET twitchlive = $2 WHERE name = $1`, [row.name, isLive]);
+      // announced_at only advances when actually announcing — otherwise
+      // it stays whatever it already was (row.announced_at, already in
+      // hand from the earlier join, no extra query needed).
+      const announcedAt = willAnnounce ? new Date() : row.announced_at;
+      await pool.query(
+        `INSERT INTO twitch_status (name, title, last_game, announced_at, live_twitch_url)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (name) DO UPDATE SET title = EXCLUDED.title, last_game = EXCLUDED.last_game, announced_at = EXCLUDED.announced_at, live_twitch_url = EXCLUDED.live_twitch_url`,
+        [row.name, title, currentGameId, announcedAt, isLive ? liveTwitchUrl : null],
+      );
     }
+    results.updated++;
   }
 
   return results;
