@@ -87,18 +87,22 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
   const results = { updated: 0, failed: [], notPlayedYet: [] };
 
   for (const { name, ign } of active) {
+    const callStart = Date.now();
     try {
       const { rp, notPlayedYet } = await erApi.fetchPlayerRP(ign, seasonId);
       if (rp !== null) {
         if (!dryRun) await pool.query(`UPDATE players SET mmr = $2 WHERE name = $1`, [name, rp]);
         results.updated++;
+        db.logApiCall('rp_refresh', ign, 'ok', Date.now() - callStart);
       } else if (notPlayedYet) {
         // Normal and expected, NOT a failure — leave their mmr as-is
         // (stays at the N/A sentinel until they actually queue this
         // season) and don't count it toward the DM-alert-worthy failed list.
         results.notPlayedYet.push(name);
+        db.logApiCall('rp_refresh', ign, 'not_played_yet', Date.now() - callStart);
       } else {
         results.failed.push(name);
+        db.logApiCall('rp_refresh', ign, 'fetch_failed', Date.now() - callStart);
       }
     } catch (err) {
       // A timed-out/network-failed fetch (see erApi.fetchWithTimeout)
@@ -108,6 +112,7 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
       // keep going.
       console.error(`Coastal Clash: RP fetch threw for ${name} (ign: ${ign}):`, err.message);
       results.failed.push(name);
+      db.logApiCall('rp_refresh', ign, `error: ${err.message}`, Date.now() - callStart);
     }
     await erApi.sleep(erApi.CALL_SPACING_MS);
   }

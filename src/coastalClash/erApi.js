@@ -10,6 +10,12 @@
 const API_URL = 'https://open-api.bser.io/v1';
 const API_KEY = process.env.ER_API_KEY;
 
+// Passive diagnostic logging only (er_api_call_log — see src/db.js). This
+// is the one deliberate exception to erApi.js otherwise having zero DB
+// coupling — scoped narrowly to logging calls this module already makes,
+// never used to gate/alter any actual API call behavior.
+const db = require('../db');
+
 // Empirically hit "Too Many Requests" after ~5 rapid calls with no delay.
 // This spacing matches hanabi.js's own proven 2.5s convention, rounded up
 // slightly for headroom.
@@ -173,16 +179,20 @@ async function isSeasonLive(seasonId, referenceNicknames, deadline) {
       console.error(`Coastal Clash: season-verification time budget exceeded (${SEASON_VERIFICATION_BUDGET_MS}ms) — bailing out early this cycle.`);
       return false;
     }
+    const callStart = Date.now();
     try {
       // maxRetries=1 (no 429 backoff retries) — this only needs ANY one
       // of up to 40 candidates to answer, so failing fast and moving to
       // the next candidate beats burning up to 50s retrying one of them.
       const userRank = await fetchUserRank(nickname, seasonId, 1);
+      const outcome = userRank ? 'ok' : 'no_userrank';
+      db.logApiCall('season_verification', nickname, outcome, Date.now() - callStart);
       if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
     } catch (err) {
       // A single flaky/timed-out reference player shouldn't sink the
       // whole verification pass — move on to the next candidate.
       console.error(`Coastal Clash: season-verification fetch threw for ${nickname}:`, err.message);
+      db.logApiCall('season_verification', nickname, `error: ${err.message}`, Date.now() - callStart);
     }
     await sleep(SEASON_VERIFICATION_SPACING_MS);
   }

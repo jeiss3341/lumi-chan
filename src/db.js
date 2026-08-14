@@ -204,6 +204,25 @@
     // primary one. Null until the first check that finds them live.
     await pool.query(`ALTER TABLE twitch_status ADD COLUMN IF NOT EXISTS live_twitch_url TEXT;`);
 
+    // Passive diagnostic log for the ER API rate-limit investigation —
+    // records every REAL call the bot already makes (season verification +
+    // RP refresh), not extra probing traffic. Ilyfue's suggestion for his
+    // own bot was a flat errorlog.txt, checked back on after a few hours;
+    // a table does the same job here without extra API calls, and survives
+    // Railway's ephemeral filesystem across redeploys (a flat file
+    // wouldn't). Temporary — meant to be queried by hand while diagnosing,
+    // not a permanent feature. Safe to drop once the investigation's done.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS er_api_call_log (
+        id          SERIAL PRIMARY KEY,
+        called_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        call_type   TEXT NOT NULL,
+        nickname    TEXT,
+        outcome     TEXT NOT NULL,
+        duration_ms INTEGER
+      );
+    `);
+
     // A second Twitch channel for players who stream from more than one
     // account (e.g. Neotep). Same reasoning as player_igns — kept as its
     // own table rather than a second column on players, since that
@@ -618,6 +637,21 @@
     );
   }
 
+  // See er_api_call_log's CREATE TABLE comment above for why this exists.
+  // Fire-and-forget by design — a logging failure should never break the
+  // actual API call it's describing, so callers don't need to await this
+  // strictly or wrap it in their own try/catch.
+  async function logApiCall(callType, nickname, outcome, durationMs) {
+    try {
+      await pool.query(
+        `INSERT INTO er_api_call_log (call_type, nickname, outcome, duration_ms) VALUES ($1, $2, $3, $4)`,
+        [callType, nickname, outcome, durationMs],
+      );
+    } catch (err) {
+      console.error('Failed to write er_api_call_log row:', err.message);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Coastal Clash players (admin site — src/styleGuide/leaderboardRoutes.js)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -933,6 +967,7 @@
     setLiveAnnounceChannel,
     setLeaderboardMeta,
     setPlayerExtraTwitch,
+    logApiCall,
     getSeasonLive,
     setSeasonLive,
     getDayChangeStatusMessage,
