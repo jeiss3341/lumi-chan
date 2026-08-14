@@ -46,11 +46,15 @@ async function updateLeaderboardMeta(day) {
 // much smaller pool is still reliable (mmr > 0 players are tried first)
 // while cutting API call volume — worth minimizing given the live
 // process's own outbound calls appear to be under some rate pressure.
+// Still prefers players who've actually played this season (mmr > 0) —
+// isSeasonLive needs an active player to get a "yes" signal at all — but
+// orders bottom-up within that group (lowest RP first, working toward the
+// top of the leaderboard) instead of random, per the user's request.
 async function pickReferenceNicknames(pool, limit = 15) {
   const { rows } = await pool.query(
     `SELECT COALESCE(en.ign, p.name) AS ign FROM players p
      LEFT JOIN player_igns en ON en.name = p.name
-     WHERE p.culled = false ORDER BY (p.mmr > 0) DESC, random() LIMIT $1`,
+     WHERE p.culled = false ORDER BY (p.mmr > 0) DESC, p.mmr ASC LIMIT $1`,
     [limit],
   );
   return rows.map((r) => r.ign);

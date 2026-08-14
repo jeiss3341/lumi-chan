@@ -15,6 +15,15 @@ const API_KEY = process.env.ER_API_KEY;
 // slightly for headroom.
 const CALL_SPACING_MS = 3000;
 
+// Slightly wider spacing used ONLY by season verification below — that step
+// is the one that's actually been bailing out intermittently in production,
+// and unlike the main RP-refresh loop it has slack to spare (a 90s budget
+// for at most 15 candidates), so trading a bit more time for a bit more
+// margin costs nothing there. Left the main loop's CALL_SPACING_MS alone —
+// widening that would slow down every single refresh cycle for no evidence
+// of benefit, since the main loop isn't the one that's been failing.
+const SEASON_VERIFICATION_SPACING_MS = 4000;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -165,7 +174,7 @@ async function isSeasonLive(seasonId, referenceNicknames, deadline) {
       // whole verification pass — move on to the next candidate.
       console.error(`Coastal Clash: season-verification fetch threw for ${nickname}:`, err.message);
     }
-    await sleep(CALL_SPACING_MS);
+    await sleep(SEASON_VERIFICATION_SPACING_MS);
   }
   return false;
 }
