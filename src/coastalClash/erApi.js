@@ -133,10 +133,30 @@ async function fetchPlayerRP(nickname, seasonId, maxRetries = 5) {
 const SEASON_SETTING_KEY = 'er_season_id';
 const MAX_SEASON_PROBE_STEPS = 5;
 
+// Confirmed live in production: fetchUserRank's own 429 retry loop (up to
+// 5 attempts, 5s/10s/15s/20s backoff = up to 50s) compounds badly across
+// up to 40 reference nicknames when the API is under sustained load —
+// deploy logs showed verification stuck on the same step for 10+ minutes
+// straight, across multiple separate refresh cycles, never completing.
+// A hard time budget here caps the damage regardless of the underlying
+// cause: if verification can't get a clean answer within it, bail out and
+// let the caller treat this cycle as "couldn't verify, try again next
+// time" (already a handled, graceful path) instead of blocking for
+// potentially tens of minutes.
+const SEASON_VERIFICATION_BUDGET_MS = 90 * 1000;
+
 async function isSeasonLive(seasonId, referenceNicknames) {
+  const deadline = Date.now() + SEASON_VERIFICATION_BUDGET_MS;
   for (const nickname of referenceNicknames) {
+    if (Date.now() > deadline) {
+      console.error(`Coastal Clash: season-verification time budget exceeded (${SEASON_VERIFICATION_BUDGET_MS}ms) — bailing out early this cycle.`);
+      return false;
+    }
     try {
-      const userRank = await fetchUserRank(nickname, seasonId);
+      // maxRetries=1 (no 429 backoff retries) — this only needs ANY one
+      // of up to 40 candidates to answer, so failing fast and moving to
+      // the next candidate beats burning up to 50s retrying one of them.
+      const userRank = await fetchUserRank(nickname, seasonId, 1);
       if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
     } catch (err) {
       // A single flaky/timed-out reference player shouldn't sink the
