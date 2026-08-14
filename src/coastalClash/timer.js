@@ -39,6 +39,24 @@ function nowInPDT(date = new Date()) {
   return new Date(date.getTime() - 7 * 60 * 60 * 1000);
 }
 
+// Same reasoning as nowInPDT above — fixed UTC-4 (EDT) offset is safe for
+// the whole event window (Aug 12-28, no DST transition inside it). Used
+// only for the quiet-hours RP-refresh pause below.
+function nowInET(date = new Date()) {
+  return new Date(date.getTime() - 4 * 60 * 60 * 1000);
+}
+
+// No automatic RP refresh between 5am-11am ET — the user's explicit call,
+// a quiet window with nothing to watch, so there's no reason to keep
+// calling the ER API during it. Does NOT affect Twitch refresh (zero
+// dependency on the ER API) or the daily cull (fixed at 11:59 PM PDT,
+// outside this window anyway).
+function isRefreshQuietHours(date = new Date()) {
+  const et = nowInET(date);
+  const h = et.getUTCHours();
+  return h >= 5 && h < 11;
+}
+
 async function dmAlert(client, message) {
   try {
     const user = await client.users.fetch(ALERT_USER_ID);
@@ -109,7 +127,7 @@ function startCoastalClashTimers(client) {
     // same ER API on its own schedule is more likely to land exactly there
     // too. Sitting off that beat reduces the odds of an exact-same-instant
     // collision with an unrelated process, without changing the interval.
-    if (m % REFRESH_INTERVAL_MINUTES === 6) {
+    if (m % REFRESH_INTERVAL_MINUTES === 6 && !isRefreshQuietHours()) {
       const minuteKey = `${dateKey}T${h}:${m}`;
       if (lastRefreshMinuteKey !== minuteKey) {
         lastRefreshMinuteKey = minuteKey;
