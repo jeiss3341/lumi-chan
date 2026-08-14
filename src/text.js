@@ -52,11 +52,13 @@ module.exports = {
       // ocean/racing mood board — for spreadsheet exports, future embeds, etc.
       sand: 0xe4c9a0,
       navy: 0x123c54,
-      // Platform brand colors for the Live Now board / live announce feed
-      // — Twitch's official purple. YouTube's brand red can join here
-      // once YouTube live tracking is added, so each platform reads as
-      // itself at a glance instead of both sharing a generic color.
-      twitch: 0x9146ff,
+      // Platform accent for the Live Now board / live announce feed —
+      // muted mauve instead of Twitch's actual (much brighter) brand
+      // purple, to match this palette's softer beach/ocean/racing tones
+      // rather than standing out. YouTube's brand red can join here once
+      // YouTube live tracking is added, so each platform reads as itself
+      // at a glance instead of both sharing a generic color.
+      twitch: 0x8878a8,
     },
     // Shown inside panels and bounty/claim cards. 1500x500 — the original
     // banner size (not the 3000x1000 upscale).
