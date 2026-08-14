@@ -205,21 +205,29 @@
     await pool.query(`ALTER TABLE twitch_status ADD COLUMN IF NOT EXISTS live_twitch_url TEXT;`);
 
     // Passive diagnostic log for the ER API rate-limit investigation —
-    // records every REAL call the bot already makes (season verification +
-    // RP refresh), not extra probing traffic. Ilyfue's suggestion for his
-    // own bot was a flat errorlog.txt, checked back on after a few hours;
-    // a table does the same job here without extra API calls, and survives
-    // Railway's ephemeral filesystem across redeploys (a flat file
-    // wouldn't). Temporary — meant to be queried by hand while diagnosing,
-    // not a permanent feature. Safe to drop once the investigation's done.
+    // records the raw request + response for every REAL call the bot
+    // already makes (any fetchUserId/fetchRankRaw call, wherever it comes
+    // from — the automatic timer, /apiburst, or the manual scripts), not
+    // extra probing traffic. Matches Ilyfue's suggestion for his own bot
+    // (flat errorlog.txt, 2 lines per call — request then response,
+    // checked back on after a few hours) but as a table instead of a
+    // file, since Railway's filesystem is ephemeral across redeploys and
+    // a flat file wouldn't survive that. response_headers is included
+    // specifically in case the API sends a rate-limit header we haven't
+    // been looking at (e.g. a remaining-quota or retry-after value).
+    // request_headers deliberately excludes the actual x-api-key value —
+    // never log secrets. Temporary — meant to be queried by hand while
+    // diagnosing, safe to drop once the investigation's done.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS er_api_call_log (
-        id          SERIAL PRIMARY KEY,
-        called_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        call_type   TEXT NOT NULL,
-        nickname    TEXT,
-        outcome     TEXT NOT NULL,
-        duration_ms INTEGER
+        id               SERIAL PRIMARY KEY,
+        called_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        endpoint         TEXT NOT NULL,
+        response_status  INTEGER,
+        response_headers JSONB,
+        response_body    JSONB,
+        error_message    TEXT,
+        duration_ms      INTEGER
       );
     `);
 
@@ -641,11 +649,12 @@
   // Fire-and-forget by design — a logging failure should never break the
   // actual API call it's describing, so callers don't need to await this
   // strictly or wrap it in their own try/catch.
-  async function logApiCall(callType, nickname, outcome, durationMs) {
+  async function logApiCall({ endpoint, responseStatus, responseHeaders, responseBody, errorMessage, durationMs }) {
     try {
       await pool.query(
-        `INSERT INTO er_api_call_log (call_type, nickname, outcome, duration_ms) VALUES ($1, $2, $3, $4)`,
-        [callType, nickname, outcome, durationMs],
+        `INSERT INTO er_api_call_log (endpoint, response_status, response_headers, response_body, error_message, duration_ms)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [endpoint, responseStatus ?? null, responseHeaders ?? null, responseBody ?? null, errorMessage ?? null, durationMs],
       );
     } catch (err) {
       console.error('Failed to write er_api_call_log row:', err.message);

@@ -46,16 +46,40 @@ function fetchWithTimeout(url, options = {}) {
   return fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 }
 
+// Passive diagnostic logging (er_api_call_log — see src/db.js) for the ER
+// rate-limit investigation. Wired in at this lowest level, not at each
+// higher-level caller, specifically so it automatically covers every real
+// call anywhere in the codebase (the automatic timer, /apiburst, the
+// manual scripts) with no per-call-site wiring needed. Never awaited by
+// callers — logging failures must never affect the actual API call.
+function logRawCall(endpoint, res, body, durationMs, errorMessage = null) {
+  db.logApiCall({
+    endpoint,
+    responseStatus: res?.status ?? null,
+    responseHeaders: res ? Object.fromEntries(res.headers.entries()) : null,
+    responseBody: body ?? null,
+    errorMessage,
+    durationMs,
+  });
+}
+
 // Looks up a player's current userId by nickname. Per the game's own
 // changelog, this value is NOT stable — querying the same nickname again
 // later can return a different userId (both still resolve to the same
 // player, by design, for anti-stalking reasons). Never persist this value
 // long-term; look it up fresh each time it's needed.
 async function fetchUserId(nickname) {
-  const res = await fetchWithTimeout(`${API_URL}/user/nickname?query=${encodeURIComponent(nickname)}`, {
-    headers: { 'x-api-key': API_KEY },
-  });
-  const data = await res.json();
+  const endpoint = `/user/nickname?query=${encodeURIComponent(nickname)}`;
+  const callStart = Date.now();
+  let res, data;
+  try {
+    res = await fetchWithTimeout(`${API_URL}${endpoint}`, { headers: { 'x-api-key': API_KEY } });
+    data = await res.json();
+    logRawCall(endpoint, res, data, Date.now() - callStart);
+  } catch (err) {
+    logRawCall(endpoint, res, null, Date.now() - callStart, err.message);
+    throw err;
+  }
   if (data.code !== 200 || !data.user) return null;
   return data.user.userId;
 }
@@ -63,10 +87,18 @@ async function fetchUserId(nickname) {
 // Fetches raw rank data for a player at a given season. matchingTeamMode 3
 // is squad/trio ranked, matching hanabi.js's prior convention.
 async function fetchRankRaw(userId, seasonId, matchingTeamMode = 3) {
-  const res = await fetchWithTimeout(`${API_URL}/rank/uid/${userId}/${seasonId}/${matchingTeamMode}`, {
-    headers: { accept: 'application/json', 'x-api-key': API_KEY },
-  });
-  return res.json();
+  const endpoint = `/rank/uid/${userId}/${seasonId}/${matchingTeamMode}`;
+  const callStart = Date.now();
+  let res, data;
+  try {
+    res = await fetchWithTimeout(`${API_URL}${endpoint}`, { headers: { accept: 'application/json', 'x-api-key': API_KEY } });
+    data = await res.json();
+    logRawCall(endpoint, res, data, Date.now() - callStart);
+  } catch (err) {
+    logRawCall(endpoint, res, null, Date.now() - callStart, err.message);
+    throw err;
+  }
+  return data;
 }
 
 // Fetches raw userRank data for a player at a given season, with retry on
@@ -179,20 +211,19 @@ async function isSeasonLive(seasonId, referenceNicknames, deadline) {
       console.error(`Coastal Clash: season-verification time budget exceeded (${SEASON_VERIFICATION_BUDGET_MS}ms) — bailing out early this cycle.`);
       return false;
     }
-    const callStart = Date.now();
     try {
       // maxRetries=1 (no 429 backoff retries) — this only needs ANY one
       // of up to 40 candidates to answer, so failing fast and moving to
       // the next candidate beats burning up to 50s retrying one of them.
+      // (Raw request/response logging for this call happens automatically
+      // one level down, inside fetchUserId/fetchRankRaw — see erApi.js's
+      // logRawCall.)
       const userRank = await fetchUserRank(nickname, seasonId, 1);
-      const outcome = userRank ? 'ok' : 'no_userrank';
-      db.logApiCall('season_verification', nickname, outcome, Date.now() - callStart);
       if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
     } catch (err) {
       // A single flaky/timed-out reference player shouldn't sink the
       // whole verification pass — move on to the next candidate.
       console.error(`Coastal Clash: season-verification fetch threw for ${nickname}:`, err.message);
-      db.logApiCall('season_verification', nickname, `error: ${err.message}`, Date.now() - callStart);
     }
     await sleep(SEASON_VERIFICATION_SPACING_MS);
   }
