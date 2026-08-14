@@ -210,12 +210,25 @@
     // table's schema is project-lumi's read contract. Optional: most
     // players have no row here at all, and refreshTwitchLiveStatus treats
     // that as "no secondary channel", not an error.
+    //
+    // primary_twitch: a STABLE copy of the player's real primary channel,
+    // captured once when their secondary channel is registered. Needed
+    // because refreshTwitchLiveStatus now actively overwrites players.twitch
+    // itself (swapping it to the secondary URL while that's the one live,
+    // and back again otherwise) — project-lumi's site reads players.twitch
+    // directly with no changes on their end, so making that field the
+    // "correct channel right now" was the only way to get the live channel
+    // to show there without touching their code. Once players.twitch can
+    // be swapped, it's no longer safe to treat it as "the real primary" —
+    // this column is the actual source of truth for that.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS player_extra_twitch (
-        name   TEXT PRIMARY KEY,
-        twitch TEXT NOT NULL
+        name           TEXT PRIMARY KEY,
+        twitch         TEXT NOT NULL,
+        primary_twitch TEXT
       );
     `);
+    await pool.query(`ALTER TABLE player_extra_twitch ADD COLUMN IF NOT EXISTS primary_twitch TEXT;`);
 
     // Maps a player's display name (players.name — shown everywhere,
     // including project-lumi's site) to their actual Eternal Return IGN,
@@ -584,6 +597,27 @@
     );
   }
 
+  // The only supported way to register a player's secondary Twitch
+  // channel — always captures primary_twitch atomically from their
+  // CURRENT players.twitch at the same time. That capture is load-bearing
+  // (refreshTwitchLiveStatus actively overwrites players.twitch once a
+  // secondary exists, and needs a stable, never-overwritten copy of the
+  // real primary to swap back to) — doing this by hand risks skipping it,
+  // which silently corrupts players.twitch after the first live-on-
+  // secondary cycle (confirmed happening in testing). COALESCE on
+  // primary_twitch means calling this again later to update just the
+  // secondary channel won't clobber an already-captured primary.
+  async function setPlayerExtraTwitch(name, secondaryTwitch) {
+    await pool.query(
+      `INSERT INTO player_extra_twitch (name, twitch, primary_twitch)
+       SELECT $1, $2, twitch FROM players WHERE name = $1
+       ON CONFLICT (name) DO UPDATE SET
+         twitch = EXCLUDED.twitch,
+         primary_twitch = COALESCE(player_extra_twitch.primary_twitch, EXCLUDED.primary_twitch)`,
+      [name, secondaryTwitch],
+    );
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Coastal Clash players (admin site — src/styleGuide/leaderboardRoutes.js)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -898,6 +932,7 @@
     getLiveAnnounceChannel,
     setLiveAnnounceChannel,
     setLeaderboardMeta,
+    setPlayerExtraTwitch,
     getSeasonLive,
     setSeasonLive,
     getDayChangeStatusMessage,

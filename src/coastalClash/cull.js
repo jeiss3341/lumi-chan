@@ -137,7 +137,8 @@ const LIVE_ANNOUNCE_COOLDOWN_MS = 30 * 60 * 1000;
 // announced_at regardless of brief drops, per LIVE_ANNOUNCE_COOLDOWN_MS.
 async function refreshTwitchLiveStatus(pool, dryRun = false) {
   const { rows } = await pool.query(
-    `SELECT p.name, p.twitch, x.twitch AS extra_twitch, s.last_game, s.announced_at
+    `SELECT p.name, p.twitch, x.twitch AS extra_twitch, x.primary_twitch,
+       s.last_game, s.announced_at
      FROM players p
      LEFT JOIN player_extra_twitch x ON x.name = p.name
      LEFT JOIN twitch_status s ON s.name = p.name
@@ -146,12 +147,26 @@ async function refreshTwitchLiveStatus(pool, dryRun = false) {
   const results = { updated: 0, failed: [], toAnnounce: [] };
   if (!rows.length) return results;
 
+  // Deliberately NOT falling back to p.twitch when primary_twitch is
+  // missing — p.twitch gets actively overwritten for players with a
+  // secondary channel (see below), so trusting it as "the real primary"
+  // here would self-corrupt after the first swap (confirmed live in
+  // testing: it got stuck on the secondary forever). A row with an
+  // extra_twitch but no primary_twitch is treated as incomplete —
+  // db.setPlayerExtraTwitch is the only supported way to add one, and it
+  // always captures both atomically.
+  const hasIncompleteSecondary = rows.some((row) => row.extra_twitch && !row.primary_twitch);
+  if (hasIncompleteSecondary) {
+    console.error('Coastal Clash: found a player_extra_twitch row missing primary_twitch — skipping dynamic-swap logic entirely this cycle to avoid corrupting players.twitch.');
+  }
+
   // Every distinct login across every player's primary + (optional)
   // secondary channel, for ONE batched Helix call regardless of how many
-  // channels each individual player has.
+  // channels each individual player has. primary_twitch (the stable
+  // captured value), never the possibly-already-swapped p.twitch.
   const allLogins = new Set();
   for (const row of rows) {
-    const primaryLogin = twitchApi.extractTwitchLogin(row.twitch);
+    const primaryLogin = twitchApi.extractTwitchLogin(row.primary_twitch || row.twitch);
     if (primaryLogin) allLogins.add(primaryLogin);
     const extraLogin = row.extra_twitch ? twitchApi.extractTwitchLogin(row.extra_twitch) : null;
     if (extraLogin) allLogins.add(extraLogin);
@@ -171,19 +186,25 @@ async function refreshTwitchLiveStatus(pool, dryRun = false) {
 
   const now = Date.now();
   for (const row of rows) {
-    const primaryLogin = twitchApi.extractTwitchLogin(row.twitch);
+    // Only trust primary_twitch (the stable captured value) for a player
+    // who actually has a secondary channel — for everyone else this is
+    // just their one and only players.twitch, same as always.
+    const stablePrimary = row.primary_twitch || row.twitch;
+    const primaryLogin = twitchApi.extractTwitchLogin(stablePrimary);
     const extraLogin = row.extra_twitch ? twitchApi.extractTwitchLogin(row.extra_twitch) : null;
 
     // Whichever channel is actually live wins — primary checked first, so
     // it's preferred if (rare, but possible) both are live at once.
     let liveInfo = null;
-    let liveTwitchUrl = row.twitch || row.extra_twitch;
+    let liveTwitchUrl = stablePrimary || row.extra_twitch;
+    let liveOnSecondary = false;
     if (primaryLogin && liveLogins.has(primaryLogin)) {
       liveInfo = liveLogins.get(primaryLogin);
-      liveTwitchUrl = row.twitch;
+      liveTwitchUrl = stablePrimary;
     } else if (extraLogin && liveLogins.has(extraLogin)) {
       liveInfo = liveLogins.get(extraLogin);
       liveTwitchUrl = row.extra_twitch;
+      liveOnSecondary = true;
     }
 
     const isLive = !!liveInfo;
@@ -203,6 +224,22 @@ async function refreshTwitchLiveStatus(pool, dryRun = false) {
     if (willAnnounce) results.toAnnounce.push({ name: row.name, twitch: liveTwitchUrl, title, gameName: liveInfo.gameName });
 
     if (!dryRun) {
+      // players.twitch itself only ever changes for players with a
+      // registered secondary channel — everyone else is left completely
+      // untouched. project-lumi's site reads players.twitch directly with
+      // no code changes on their end, so this is the only way to get the
+      // actually-live channel to show there: swap it to the secondary
+      // while that's the one live, and back to the real primary
+      // (row.primary_twitch) the rest of the time (primary live, or
+      // nobody live). Gated on row.primary_twitch specifically (not just
+      // extra_twitch) — see the incomplete-row check above.
+      if (row.extra_twitch && row.primary_twitch) {
+        const desiredTwitch = liveOnSecondary ? row.extra_twitch : row.primary_twitch;
+        if (desiredTwitch !== row.twitch) {
+          await pool.query(`UPDATE players SET twitch = $2 WHERE name = $1`, [row.name, desiredTwitch]);
+        }
+      }
+
       await pool.query(`UPDATE players SET twitchlive = $2 WHERE name = $1`, [row.name, isLive]);
       // announced_at only advances when actually announcing — otherwise
       // it stays whatever it already was (row.announced_at, already in
