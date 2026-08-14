@@ -376,7 +376,12 @@ async function runDailyCull(now = new Date(), dryRun = false) {
 
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun, proCull.culled);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun, casualCull.culled);
-  if (!dryRun) await updateLeaderboardMeta(day);
+  // Only stamp last_updated_at when RP actually got refreshed this cycle —
+  // writing it unconditionally made "last updated" mean "the loop ran",
+  // not "player data is current", which is misleading during a stretch of
+  // season-verification bailouts (RP frozen for real, but the timestamp
+  // kept ticking forward every 10 min regardless).
+  if (!dryRun && !seasonVerificationFailed) await updateLeaderboardMeta(day);
 
   return {
     day,
@@ -433,8 +438,10 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun);
   console.log('[CC refresh] indanger updated for both brackets');
-  if (!dryRun) await updateLeaderboardMeta(day);
-  console.log('[CC refresh] leaderboard_meta written — done');
+  // Only stamp last_updated_at when RP actually got refreshed this cycle —
+  // see the matching comment in runDailyCull above.
+  if (!dryRun && !seasonVerificationFailed) await updateLeaderboardMeta(day);
+  console.log('[CC refresh] leaderboard_meta written:', !seasonVerificationFailed, '— done');
 
   return {
     day,
