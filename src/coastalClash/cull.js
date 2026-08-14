@@ -419,6 +419,7 @@ async function runDailyCull(now = new Date(), dryRun = false) {
   // season-verification bailouts (RP frozen for real, but the timestamp
   // kept ticking forward every 10 min regardless).
   if (!dryRun && !seasonVerificationFailed) await updateLeaderboardMeta(day);
+  if (!dryRun) await db.pruneApiCallLog();
 
   return {
     day,
@@ -485,6 +486,7 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   // see the matching comment in runDailyCull above.
   if (!dryRun && !seasonVerificationFailed) await updateLeaderboardMeta(day);
   console.log('[CC refresh] leaderboard_meta written:', !seasonVerificationFailed, '— done');
+  if (!dryRun) await db.pruneApiCallLog();
 
   return {
     day,

@@ -661,6 +661,40 @@
     }
   }
 
+  // Keeps er_api_call_log from growing unbounded now that a failed cycle
+  // sweeps the full active roster (~74 rows) instead of just the ~15
+  // reference players. "Cycle" is detected by time gaps — a new one starts
+  // whenever more than 2 minutes pass between consecutive logged calls
+  // (real cycles are 10 min apart and internally rapid-fire, so this
+  // cleanly separates them without needing to pass a cycle ID around).
+  // Called at the end of each refresh cycle — never awaited strictly by
+  // callers, same fire-and-forget reasoning as logApiCall above.
+  async function pruneApiCallLog(keepCycles = 3) {
+    try {
+      await pool.query(
+        `WITH gapped AS (
+           SELECT id, called_at,
+             called_at - LAG(called_at) OVER (ORDER BY called_at) AS gap
+           FROM er_api_call_log
+         ),
+         cycled AS (
+           SELECT id,
+             SUM(CASE WHEN gap IS NULL OR gap > INTERVAL '2 minutes' THEN 1 ELSE 0 END)
+               OVER (ORDER BY called_at) AS cycle_num
+           FROM gapped
+         ),
+         keep_cycles AS (
+           SELECT DISTINCT cycle_num FROM cycled ORDER BY cycle_num DESC LIMIT $1
+         )
+         DELETE FROM er_api_call_log
+         WHERE id NOT IN (SELECT id FROM cycled WHERE cycle_num IN (SELECT cycle_num FROM keep_cycles))`,
+        [keepCycles],
+      );
+    } catch (err) {
+      console.error('Failed to prune er_api_call_log:', err.message);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Coastal Clash players (admin site — src/styleGuide/leaderboardRoutes.js)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -977,6 +1011,7 @@
     setLeaderboardMeta,
     setPlayerExtraTwitch,
     logApiCall,
+    pruneApiCallLog,
     getSeasonLive,
     setSeasonLive,
     getDayChangeStatusMessage,
