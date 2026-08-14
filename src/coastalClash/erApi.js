@@ -142,11 +142,13 @@ const MAX_SEASON_PROBE_STEPS = 5;
 // cause: if verification can't get a clean answer within it, bail out and
 // let the caller treat this cycle as "couldn't verify, try again next
 // time" (already a handled, graceful path) instead of blocking for
-// potentially tens of minutes.
+// potentially tens of minutes. Shared ACROSS the whole getVerifiedSeasonId
+// call (every candidate season probed, not just one isSeasonLive call) —
+// confirmed live that without this, a bad stretch chains multiple ~90s
+// bailouts back to back (one per candidate season) into several minutes.
 const SEASON_VERIFICATION_BUDGET_MS = 90 * 1000;
 
-async function isSeasonLive(seasonId, referenceNicknames) {
-  const deadline = Date.now() + SEASON_VERIFICATION_BUDGET_MS;
+async function isSeasonLive(seasonId, referenceNicknames, deadline) {
   for (const nickname of referenceNicknames) {
     if (Date.now() > deadline) {
       console.error(`Coastal Clash: season-verification time budget exceeded (${SEASON_VERIFICATION_BUDGET_MS}ms) — bailing out early this cycle.`);
@@ -168,6 +170,16 @@ async function isSeasonLive(seasonId, referenceNicknames) {
   return false;
 }
 
+// Confirmed via direct testing that a healthy call resolves in well under
+// a second — the season itself doesn't change cycle-to-cycle, so
+// re-verifying from scratch with up to 40 API calls every single 10-min
+// refresh is pure waste (and, per the theory above, likely a real
+// contributor to whatever's rate-limiting Railway's outbound IP). Cache a
+// confirmed-live result for a while and skip re-verification entirely
+// until it goes stale.
+const VERIFICATION_CACHE_MS = 20 * 60 * 1000;
+let cachedVerification = null; // { seasonId, verifiedAt }
+
 // Returns { seasonId, corrected }. `corrected` is true if the stored value
 // was stale and this call updated it — callers should treat that as
 // alert-worthy (DM the DM alert path we already wired for fetch failures).
@@ -175,14 +187,23 @@ async function getVerifiedSeasonId(db, referenceNicknames, dryRun = false) {
   const stored = await db.getSetting(SEASON_SETTING_KEY);
   let seasonId = stored ? parseInt(stored, 10) : 40;
 
-  if (await isSeasonLive(seasonId, referenceNicknames)) {
+  if (cachedVerification && cachedVerification.seasonId === seasonId && Date.now() - cachedVerification.verifiedAt < VERIFICATION_CACHE_MS) {
+    return { seasonId, corrected: false };
+  }
+
+  const deadline = Date.now() + SEASON_VERIFICATION_BUDGET_MS;
+
+  if (await isSeasonLive(seasonId, referenceNicknames, deadline)) {
+    cachedVerification = { seasonId, verifiedAt: Date.now() };
     return { seasonId, corrected: false };
   }
 
   for (let step = 1; step <= MAX_SEASON_PROBE_STEPS; step++) {
+    if (Date.now() > deadline) break;
     const candidate = seasonId + step;
-    if (await isSeasonLive(candidate, referenceNicknames)) {
+    if (await isSeasonLive(candidate, referenceNicknames, deadline)) {
       if (!dryRun) await db.setSetting(SEASON_SETTING_KEY, String(candidate));
+      cachedVerification = { seasonId: candidate, verifiedAt: Date.now() };
       return { seasonId: candidate, corrected: true };
     }
   }

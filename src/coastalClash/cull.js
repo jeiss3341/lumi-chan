@@ -39,7 +39,14 @@ async function updateLeaderboardMeta(day) {
 // write ever succeeds, every later cycle verifies almost immediately
 // instead of gambling again from scratch; (2) bigger pool (40, up from
 // 10) for the bootstrap case before any confirmed players exist yet.
-async function pickReferenceNicknames(pool, limit = 40) {
+// limit was widened to 40 earlier in the event, when almost nobody had
+// played yet and a small random sample risked missing every confirmed
+// player. Now that most of the roster has real season activity (and
+// verification results get cached — see erApi.getVerifiedSeasonId), a
+// much smaller pool is still reliable (mmr > 0 players are tried first)
+// while cutting API call volume — worth minimizing given the live
+// process's own outbound calls appear to be under some rate pressure.
+async function pickReferenceNicknames(pool, limit = 15) {
   const { rows } = await pool.query(
     `SELECT COALESCE(en.ign, p.name) AS ign FROM players p
      LEFT JOIN player_igns en ON en.name = p.name
