@@ -80,7 +80,13 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
 
       // "Top N" info lives in the footer now, since the description's own
       // headline is just the countdown per the user's requested wording.
-      const footerText = `Day ${day} of 17${nextThreshold !== null ? ` · Next cutoff: Top ${nextThreshold}` : ''}`;
+      // Grace (days 1-3) / patch (day 14) days don't cull anyone even
+      // though a future cutoff is still shown — flagging that explicitly
+      // so "Next cutoff: Top 45" doesn't read as "today culls to 45".
+      const nonCullNote = !schedule.isCullDay(day)
+        ? ` · ${schedule.getNonCullReason(day).replace(/\b\w/g, (c) => c.toUpperCase())}`
+        : '';
+      const footerText = `Day ${day} of 17${nonCullNote}${nextThreshold !== null ? ` · Next cutoff: Top ${nextThreshold}` : ''}`;
 
       return new EmbedBuilder()
         .setTitle(`${isPro ? '🔱 Pro' : '⚔️ Casual'} Bracket — Day ${day}`)
