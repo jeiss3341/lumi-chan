@@ -189,7 +189,15 @@ async function buildLiveNowEmbed(pool) {
   );
 
   const lines = rows.map((p) => buildLiveStreamerLine(p, { showStats: true }));
-  const description = lines.length ? lines.join('\n') : '*Nobody is live right now.*';
+  let description = lines.length ? lines.join('\n') : '*Nobody is live right now.*';
+
+  // Same 4096-char hard cap as buildBracketEmbed above — with enough
+  // people live at once this can genuinely exceed it (confirmed live:
+  // was throwing and crashing the 3-min Twitch refresh cycle every time
+  // instead of just this one post failing).
+  if (description.length > 4000) {
+    description = description.slice(0, 4000) + '\n\n*(truncated — too many streamers to show in full)*';
+  }
 
   return new EmbedBuilder()
     .setTitle('🔴 Live Now')
