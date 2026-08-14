@@ -28,7 +28,7 @@ const CALL_SPACING_MS = 3000;
 // margin costs nothing there. Left the main loop's CALL_SPACING_MS alone —
 // widening that would slow down every single refresh cycle for no evidence
 // of benefit, since the main loop isn't the one that's been failing.
-const SEASON_VERIFICATION_SPACING_MS = 4000;
+const SEASON_VERIFICATION_SPACING_MS = 3000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -114,12 +114,21 @@ async function fetchRankRaw(userId, seasonId, matchingTeamMode = 3) {
 // average rate over time), this pair firing instantly, every single player,
 // could be tripping it independent of CALL_SPACING_MS/
 // SEASON_VERIFICATION_SPACING_MS above.
-const INTER_CALL_GAP_MS = 500;
+const INTER_CALL_GAP_MS = 1000;
 
-async function fetchUserRank(nickname, seasonId, maxRetries = 5) {
-  const userId = await fetchUserId(nickname);
+// cachedUserId lets callers that already resolved this nickname (e.g.
+// isSeasonLive probing multiple candidate seasons for the SAME reference
+// players) skip the redundant nickname lookup entirely — fetchUserId
+// doesn't depend on season, so re-resolving it per candidate wastes a full
+// extra API call for no new information. null is a valid cached value
+// (nickname genuinely not found) and short-circuits immediately below.
+async function fetchUserRank(nickname, seasonId, maxRetries = 5, cachedUserId = undefined) {
+  let userId = cachedUserId;
+  if (userId === undefined) {
+    userId = await fetchUserId(nickname);
+    await sleep(INTER_CALL_GAP_MS);
+  }
   if (!userId) return null;
-  await sleep(INTER_CALL_GAP_MS);
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const data = await fetchRankRaw(userId, seasonId);
@@ -205,20 +214,32 @@ const MAX_SEASON_PROBE_STEPS = 5;
 // bailouts back to back (one per candidate season) into several minutes.
 const SEASON_VERIFICATION_BUDGET_MS = 90 * 1000;
 
-async function isSeasonLive(seasonId, referenceNicknames, deadline) {
+// userIdCache is shared ACROSS every candidate season probed within one
+// getVerifiedSeasonId call — a nickname's userId doesn't change based on
+// which season is being checked, so resolving it once per verification
+// pass (instead of once per candidate, up to 6x redundant) cuts real,
+// avoidable call volume during exactly the scenario (repeated bailouts)
+// that generates the most traffic. Found via tonight's ER API investigation.
+async function isSeasonLive(seasonId, referenceNicknames, deadline, userIdCache) {
   for (const nickname of referenceNicknames) {
     if (Date.now() > deadline) {
       console.error(`Coastal Clash: season-verification time budget exceeded (${SEASON_VERIFICATION_BUDGET_MS}ms) — bailing out early this cycle.`);
       return false;
     }
     try {
+      let userId = userIdCache.get(nickname);
+      if (userId === undefined) {
+        userId = await fetchUserId(nickname);
+        userIdCache.set(nickname, userId);
+        await sleep(INTER_CALL_GAP_MS);
+      }
       // maxRetries=1 (no 429 backoff retries) — this only needs ANY one
       // of up to 40 candidates to answer, so failing fast and moving to
       // the next candidate beats burning up to 50s retrying one of them.
       // (Raw request/response logging for this call happens automatically
       // one level down, inside fetchUserId/fetchRankRaw — see erApi.js's
       // logRawCall.)
-      const userRank = await fetchUserRank(nickname, seasonId, 1);
+      const userRank = await fetchUserRank(nickname, seasonId, 1, userId);
       if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
     } catch (err) {
       // A single flaky/timed-out reference player shouldn't sink the
@@ -252,8 +273,9 @@ async function getVerifiedSeasonId(db, referenceNicknames, dryRun = false) {
   }
 
   const deadline = Date.now() + SEASON_VERIFICATION_BUDGET_MS;
+  const userIdCache = new Map();
 
-  if (await isSeasonLive(seasonId, referenceNicknames, deadline)) {
+  if (await isSeasonLive(seasonId, referenceNicknames, deadline, userIdCache)) {
     cachedVerification = { seasonId, verifiedAt: Date.now() };
     return { seasonId, corrected: false };
   }
@@ -261,7 +283,7 @@ async function getVerifiedSeasonId(db, referenceNicknames, dryRun = false) {
   for (let step = 1; step <= MAX_SEASON_PROBE_STEPS; step++) {
     if (Date.now() > deadline) break;
     const candidate = seasonId + step;
-    if (await isSeasonLive(candidate, referenceNicknames, deadline)) {
+    if (await isSeasonLive(candidate, referenceNicknames, deadline, userIdCache)) {
       if (!dryRun) await db.setSetting(SEASON_SETTING_KEY, String(candidate));
       cachedVerification = { seasonId: candidate, verifiedAt: Date.now() };
       return { seasonId: candidate, corrected: true };
