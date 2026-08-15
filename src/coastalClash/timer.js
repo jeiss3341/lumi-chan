@@ -3,14 +3,15 @@
 // things at two different cadences. Runs inside the already-always-on
 // Discord bot process; no separate hosting/cron needed.
 //
-//   - Every 10 minutes: RP refresh + indanger recompute (no culling).
+//   - Every 20 minutes: RP refresh + indanger recompute (no culling).
 //   - Every 3 minutes: Twitch live-status refresh, on its own faster
 //     cadence since it doesn't depend on the ER API at all.
 //   - Once/day at 11:59 PM PDT: the real cull (src/coastalClash/cull.js
-//     runDailyCull), auto-retried on failure, with a DM alert either way.
+//     runDailyCull), auto-retried on failure, with an alert either way.
 const { runDailyCull, refreshLeaderboardOnly, refreshTwitchOnly } = require('./cull');
 const { postOrUpdateLeaderboard, postOrUpdateLiveNow, postLiveAnnouncements } = require('./embed');
 const db = require('../db');
+const erApi = require('./erApi');
 
 // People to DM on cull failure/retry/self-correction and on the RP-refresh
 // auto-pause below. Hardcoded per the user's explicit instruction — these
@@ -58,12 +59,12 @@ async function alert(client, message) {
 // A full 74-player refresh pass takes ~8-9 min in practice (real network
 // time + season verification, confirmed by measuring an actual cycle —
 // the old "~3.7 min" estimate only ever counted the artificial spacing
-// sleeps, never the real thing). Against a 10-min cadence that left only
-// ~1-1.5 min of buffer — too tight. 15 min gives ~6 min of comfortable
-// slack instead. Still keeping the isRefreshing guard below regardless: a
-// retry storm could still push a pass long enough to risk overlap, and
-// the guard costs nothing when passes finish on time.
-const REFRESH_INTERVAL_MINUTES = 15;
+// sleeps, never the real thing). Widened from 15 to 20 min alongside the
+// erApi.js circuit-breaker rewrite — a HALF_OPEN probe attempt or a
+// circuit trip mid-pass can both add real time on top of that baseline,
+// and 20 min (round marks :00/:20/:40) gives more comfortable margin than
+// 15 did without meaningfully slowing down how fresh the board looks.
+const REFRESH_INTERVAL_MINUTES = 20;
 // Twitch status has zero dependency on the ER API, and a single batched
 // Helix call for the whole roster is cheap/fast (no per-player spacing
 // needed, unlike ER) — so it runs on its own much faster cadence,
@@ -169,6 +170,15 @@ let lastTwitchRefreshMinuteKey = null;
 const REFRESH_FAILURE_AUTO_PAUSE_THRESHOLD = 3;
 const REFRESH_FAILURE_COUNT_KEY = 'coastal_clash_refresh_failure_count';
 
+// Tracks the retryAt of the last circuit-open state actually alerted on,
+// so a circuit that stays OPEN across several refresh cycles (up to
+// FORBIDDEN_COOLDOWN_MS = 30 min, i.e. up to 2 cycles at the 20-min
+// cadence) only pings once per trip instead of once per cycle. A NEW
+// retryAt (the circuit reopening after a failed HALF_OPEN probe) alerts
+// again, since that's genuinely new information. Persisted in settings,
+// same reasoning as REFRESH_FAILURE_COUNT_KEY above — survives redeploys.
+const CIRCUIT_ALERT_KEY = 'coastal_clash_last_circuit_alert_retry_at';
+
 async function getRefreshFailureCount() {
   const stored = await db.getSetting(REFRESH_FAILURE_COUNT_KEY);
   return stored ? parseInt(stored, 10) : 0;
@@ -193,12 +203,13 @@ function startCoastalClashTimers(client) {
       return;
     }
 
-    // Round marks (:00/:15/:30/:45) — the user's explicit request. This
-    // replaces the earlier deliberate 4-min offset (:56/:06/:16/:26/:36/:46)
-    // that existed specifically to avoid round-mark collisions with other
-    // processes; that reasoning turned out not to matter for tonight's
-    // actual issue (an account-level 403, unrelated to timing/collisions),
-    // so there's no longer a reason to prefer the offset over round marks.
+    // Round marks (:00/:20/:40 at the current 20-min cadence) — the
+    // user's explicit request. This replaces the earlier deliberate 4-min
+    // offset (:56/:06/:16/...) that existed specifically to avoid
+    // round-mark collisions with other processes; that reasoning turned
+    // out not to matter for the actual issue (an account-level 403,
+    // unrelated to timing/collisions), so there's no longer a reason to
+    // prefer an offset over round marks.
     if (m % REFRESH_INTERVAL_MINUTES === 0 && !isRefreshQuietHours()) {
       const minuteKey = `${dateKey}T${h}:${m}`;
       if (lastRefreshMinuteKey !== minuteKey) {
@@ -250,7 +261,36 @@ function startCoastalClashTimers(client) {
             await setRefreshFailureCount(0);
           }
         } catch (err) {
-          console.error('Coastal Clash: 10-min refresh failed:', err);
+          // A tripped circuit breaker throws out of refreshLeaderboardOnly
+          // entirely (see erApi.js/cull.js) rather than returning a clean
+          // result object — the existing seasonVerificationFailed branch
+          // above never runs in that case, so without this, a circuit
+          // trip would only ever show up as a silent console.error, the
+          // exact failure mode that left this whole system unmonitored
+          // for hours on 2026-08-14. Alert once per trip (see
+          // CIRCUIT_ALERT_KEY above), not once per cycle it stays open.
+          // Deliberately does NOT call db.setSeasonLive(false) here, unlike
+          // the seasonVerificationFailed auto-pause below. The circuit
+          // breaker itself already stops every further call while OPEN —
+          // there's nothing left to "stop hammering." Leaving season_live
+          // untouched means it stays true, so once FORBIDDEN_COOLDOWN_MS
+          // elapses, the circuit's own HALF_OPEN probe (erApi.js) fires
+          // automatically on the very next refresh cycle with no human
+          // needing to flip anything back on — real self-healing instead
+          // of a permanent pause that waits for someone to notice.
+          if (erApi.isCircuitBreakerError(err)) {
+            const state = erApi.getCircuitBreakerState();
+            const alreadyAlertedRetryAt = await db.getSetting(CIRCUIT_ALERT_KEY);
+            if (alreadyAlertedRetryAt !== state.retryAt) {
+              await db.setSetting(CIRCUIT_ALERT_KEY, state.retryAt ?? '');
+              await alert(
+                client,
+                `🔌 Coastal Clash: ER API circuit breaker is OPEN (${state.reason ?? 'repeated 401/403'}) — blocking every further ER call until ${state.retryAt ?? 'unknown'} so it stops hammering a possibly-blocked key. This resolves itself automatically (one probe request after cooldown); nothing needs doing unless it's still open well past that time.`,
+              );
+            }
+          } else {
+            console.error('Coastal Clash: refresh cycle failed:', err);
+          }
         }
       }
     }
