@@ -12,10 +12,10 @@ const { runDailyCull, refreshLeaderboardOnly, refreshTwitchOnly } = require('./c
 const { postOrUpdateLeaderboard, postOrUpdateLiveNow, postLiveAnnouncements } = require('./embed');
 const db = require('../db');
 
-// Person to DM on cull failure/retry/self-correction. Hardcoded per the
-// user's explicit instruction — this is a single specific person, not a
-// configurable setting.
-const ALERT_USER_ID = '220690226752913418';
+// People to DM on cull failure/retry/self-correction and on the RP-refresh
+// auto-pause below. Hardcoded per the user's explicit instruction — these
+// are specific people, not a configurable setting.
+const ALERT_USER_IDS = ['220690226752913418', '212368573669048330'];
 
 // A full 74-player refresh pass takes ~8-9 min in practice (real network
 // time + season verification, confirmed by measuring an actual cycle —
@@ -61,13 +61,17 @@ function isRefreshQuietHours(date = new Date()) {
 }
 
 async function dmAlert(client, message) {
-  try {
-    const user = await client.users.fetch(ALERT_USER_ID);
-    await user.send(message);
-  } catch (err) {
-    // A failed DM (privacy settings, etc.) shouldn't crash the retry loop —
-    // log loudly so it's at least visible in Railway's logs.
-    console.error('Coastal Clash: failed to DM alert user:', err);
+  // Each recipient independent — one person having DMs closed shouldn't
+  // stop the other from getting the alert.
+  for (const userId of ALERT_USER_IDS) {
+    try {
+      const user = await client.users.fetch(userId);
+      await user.send(message);
+    } catch (err) {
+      // A failed DM (privacy settings, etc.) shouldn't crash the retry loop —
+      // log loudly so it's at least visible in Railway's logs.
+      console.error(`Coastal Clash: failed to DM alert user ${userId}:`, err);
+    }
   }
 }
 
@@ -152,7 +156,38 @@ function startCoastalClashTimers(client) {
             consecutiveRefreshFailures++;
             if (consecutiveRefreshFailures >= REFRESH_FAILURE_AUTO_PAUSE_THRESHOLD) {
               await db.setSeasonLive(false);
-              await dmAlert(client, `🚨 Coastal Clash: RP refresh failed ${consecutiveRefreshFailures} cycles in a row (season verification couldn't get a live season — likely the ER API rejecting calls again). I've automatically paused RP refresh (season_live set to false) so it stops hammering a possibly-blocked key. Turn it back on when you're ready to check.`);
+
+              // Pull the last known-good update time AND the actual most
+              // recent API response — real data instead of assuming it's
+              // the same 403 issue as earlier tonight, since the whole
+              // point of tonight was discovering the failure mode wasn't
+              // what we first assumed (429) either.
+              let staleness = '';
+              let lastErrorDetail = '';
+              try {
+                const metaRes = await db.pool.query('SELECT last_updated_at FROM leaderboard_meta WHERE id = 1');
+                if (metaRes.rows[0]?.last_updated_at) {
+                  const lastGood = new Date(metaRes.rows[0].last_updated_at);
+                  const minsStale = Math.round((Date.now() - lastGood.getTime()) / 60000);
+                  staleness = ` Last successful update was ${minsStale} min ago (${lastGood.toISOString()}).`;
+                }
+                const lastCallRes = await db.pool.query(
+                  `SELECT response_status, response_body, error_message FROM er_api_call_log ORDER BY called_at DESC LIMIT 1`,
+                );
+                const lastCall = lastCallRes.rows[0];
+                if (lastCall) {
+                  const bodyMsg = lastCall.response_body?.message ?? lastCall.error_message ?? 'no message';
+                  lastErrorDetail = ` Most recent API response: \`${lastCall.response_status ?? 'no status'}\` — "${bodyMsg}".`;
+                }
+              } catch (err) {
+                console.error('Coastal Clash: failed to read diagnostics for alert:', err);
+              }
+
+              const failWindowMin = consecutiveRefreshFailures * REFRESH_INTERVAL_MINUTES;
+              await dmAlert(
+                client,
+                `🚨 Coastal Clash: RP refresh failed ${consecutiveRefreshFailures} cycles in a row (~${failWindowMin} min) — season verification couldn't get a live season each time.${lastErrorDetail}${staleness} I've automatically set season_live to false so it stops hammering a possibly-blocked key. Check \`er_api_call_log\` for the full picture, and turn season_live back on once you've confirmed the API is responding again.`,
+              );
               consecutiveRefreshFailures = 0;
             }
           } else {
@@ -185,4 +220,4 @@ function startCoastalClashTimers(client) {
   console.log('✅ Coastal Clash leaderboard timers started.');
 }
 
-module.exports = { startCoastalClashTimers, ALERT_USER_ID };
+module.exports = { startCoastalClashTimers, ALERT_USER_IDS };
