@@ -54,6 +54,11 @@
       );
     `);
 
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS er_api_call_log_called_at_idx
+      ON er_api_call_log (called_at);
+    `);
+
     // Every bounty request. Approver + approved_at are the fields /allbounties wants.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS bounties (
@@ -684,27 +689,12 @@
   // cleanly separates them without needing to pass a cycle ID around).
   // Called at the end of each refresh cycle — never awaited strictly by
   // callers, same fire-and-forget reasoning as logApiCall above.
-  async function pruneApiCallLog(keepCycles = 3) {
+  async function pruneApiCallLog() {
     try {
-      await pool.query(
-        `WITH gapped AS (
-           SELECT id, called_at,
-             called_at - LAG(called_at) OVER (ORDER BY called_at) AS gap
-           FROM er_api_call_log
-         ),
-         cycled AS (
-           SELECT id,
-             SUM(CASE WHEN gap IS NULL OR gap > INTERVAL '2 minutes' THEN 1 ELSE 0 END)
-               OVER (ORDER BY called_at) AS cycle_num
-           FROM gapped
-         ),
-         keep_cycles AS (
-           SELECT DISTINCT cycle_num FROM cycled ORDER BY cycle_num DESC LIMIT $1
-         )
-         DELETE FROM er_api_call_log
-         WHERE id NOT IN (SELECT id FROM cycled WHERE cycle_num IN (SELECT cycle_num FROM keep_cycles))`,
-        [keepCycles],
-      );
+      await pool.query(`
+        DELETE FROM er_api_call_log
+        WHERE called_at < NOW() - INTERVAL '24 hours'
+      `);
     } catch (err) {
       console.error('Failed to prune er_api_call_log:', err.message);
     }
