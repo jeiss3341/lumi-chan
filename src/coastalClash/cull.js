@@ -80,16 +80,17 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
   // almost everyone this is identical to their display name, but see
   // player_igns (src/db.js) for players where those two differ.
   //
-  // Order: casual bracket before pro (ispro ASC — false sorts first),
-  // ascending RP within each bracket — bottom-most, most at-risk players
-  // refreshed first. If a cycle ever fails partway through, the players
-  // closest to elimination are the ones already caught up, not whichever
-  // names happen to come first alphabetically (the old order, unrelated
-  // to fairness at all).
+  // Order: currently-flagged in-danger players first (either bracket,
+  // combined — not casual-then-pro anymore), then everyone else ascending
+  // by RP, also combined across both brackets. The most at-risk players
+  // across the WHOLE tournament get refreshed earliest in any cycle, not
+  // grouped by bracket first. `indanger` is last cycle's computed flag
+  // (recalculated fresh after this refresh finishes), so it's a slightly
+  // stale but reasonable proxy for "who's actually on the cull bubble".
   const { rows: active } = await pool.query(
     `SELECT p.name, COALESCE(en.ign, p.name) AS ign FROM players p
      LEFT JOIN player_igns en ON en.name = p.name
-     WHERE p.culled = false ORDER BY p.ispro ASC, p.mmr ASC`,
+     WHERE p.culled = false ORDER BY p.indanger DESC, p.mmr ASC`,
   );
   const results = { updated: 0, failed: [], notPlayedYet: [] };
 
