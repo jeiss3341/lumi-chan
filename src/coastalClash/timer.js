@@ -109,6 +109,16 @@ let lastCullDateKey = null;
 let lastRefreshMinuteKey = null;
 let lastTwitchRefreshMinuteKey = null;
 
+// Auto-pause after repeated season-verification failures, instead of
+// relying on someone noticing and manually flipping season_live off (what
+// happened twice on 2026-08-14 — both times only because it happened to
+// be actively watched). Resets to 0 on any successful cycle. Threshold of
+// 3 is ~45 min of sustained failure at the 15-min cadence — long enough
+// to rule out one-off blips, short enough to not sit broken for hours
+// unnoticed.
+let consecutiveRefreshFailures = 0;
+const REFRESH_FAILURE_AUTO_PAUSE_THRESHOLD = 3;
+
 function startCoastalClashTimers(client) {
   if (timerInterval) clearInterval(timerInterval);
 
@@ -135,8 +145,19 @@ function startCoastalClashTimers(client) {
       if (lastRefreshMinuteKey !== minuteKey) {
         lastRefreshMinuteKey = minuteKey;
         try {
-          await refreshLeaderboardOnly();
+          const result = await refreshLeaderboardOnly();
           await postOrUpdateLeaderboard(client, db);
+
+          if (result.seasonVerificationFailed) {
+            consecutiveRefreshFailures++;
+            if (consecutiveRefreshFailures >= REFRESH_FAILURE_AUTO_PAUSE_THRESHOLD) {
+              await db.setSeasonLive(false);
+              await dmAlert(client, `🚨 Coastal Clash: RP refresh failed ${consecutiveRefreshFailures} cycles in a row (season verification couldn't get a live season — likely the ER API rejecting calls again). I've automatically paused RP refresh (season_live set to false) so it stops hammering a possibly-blocked key. Turn it back on when you're ready to check.`);
+              consecutiveRefreshFailures = 0;
+            }
+          } else {
+            consecutiveRefreshFailures = 0;
+          }
         } catch (err) {
           console.error('Coastal Clash: 10-min refresh failed:', err);
         }
