@@ -15,6 +15,22 @@ const API_KEY = process.env.ER_API_KEY;
 // circuit-breaker state (see the circuit breaker section further down) so
 // it survives a Railway redeploy instead of silently resetting.
 const db = require('../db');
+const os = require('os');
+
+// Confirmed live on 2026-08-14/15: the ER API block is ORIGIN-specific —
+// Railway's outbound IP gets 403 while the exact same key succeeds from a
+// developer's own machine at the same moment, every time. That makes
+// CALL_ORIGIN load-bearing, not cosmetic: circuit-breaker state (below)
+// MUST be scoped per origin, or a trip on Railway's real, blocked IP
+// would incorrectly persist into a manual script run from an unblocked
+// machine and refuse to even attempt a call that would actually succeed
+// — confirmed happening live tonight (scripts/checkStragglers.js run
+// from a Mac refused outright, reading Railway's OPEN circuit from the
+// shared settings table, despite the Mac never having been blocked once
+// all night). RAILWAY_ENVIRONMENT_NAME is auto-injected into every
+// Railway-deployed service; its absence means this process is running
+// somewhere else.
+const CALL_ORIGIN = process.env.RAILWAY_ENVIRONMENT_NAME ? 'railway' : `manual:${os.hostname()}`;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -85,7 +101,10 @@ let circuitState = CIRCUIT_STATE.CLOSED;
 let circuitOpenUntil = 0;
 let circuitReason = null;
 
-const CIRCUIT_STATE_KEY = 'coastal_clash_circuit_state';
+// Scoped by CALL_ORIGIN — see its own comment above for why this must
+// not be a single shared key across every process that requires this
+// file.
+const CIRCUIT_STATE_KEY = `coastal_clash_circuit_state:${CALL_ORIGIN}`;
 
 // Loaded lazily (not at module-require time) because db.initDb() may not
 // have run yet when this file is first required — index.js/cull.js
