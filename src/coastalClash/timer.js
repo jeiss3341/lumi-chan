@@ -3,7 +3,7 @@
 // things at two different cadences. Runs inside the already-always-on
 // Discord bot process; no separate hosting/cron needed.
 //
-//   - Every 20 minutes: RP refresh + indanger recompute (no culling).
+//   - Every 10 minutes: RP refresh + indanger recompute (no culling).
 //   - Every 3 minutes: Twitch live-status refresh, on its own faster
 //     cadence since it doesn't depend on the ER API at all.
 //   - Once/day at 11:59 PM PDT: the real cull (src/coastalClash/cull.js
@@ -67,15 +67,17 @@ async function alert(client, message) {
   await webhookAlert(message);
 }
 
-// A full 74-player refresh pass takes ~8-9 min in practice (real network
-// time + season verification, confirmed by measuring an actual cycle —
-// the old "~3.7 min" estimate only ever counted the artificial spacing
-// sleeps, never the real thing). Widened from 15 to 20 min alongside the
-// erApi.js circuit-breaker rewrite — a HALF_OPEN probe attempt or a
-// circuit trip mid-pass can both add real time on top of that baseline,
-// and 20 min (round marks :00/:20/:40) gives more comfortable margin than
-// 15 did without meaningfully slowing down how fresh the board looks.
-const REFRESH_INTERVAL_MINUTES = 20;
+// 10 min (round marks :00/:10/:20/:30/:40/:50) — the user's explicit call
+// on 2026-08-15, paired with erApi.js's MIN_REQUEST_GAP_MS at 1500ms (see
+// that file). Landed here after discovering ER_API_KEY may have been
+// missing from Railway's environment this whole time (not an actual
+// origin block) — if that's the real cause, there's no behavioral limit
+// to stay cautious against. At 1500ms spacing a full ~74-90 player pass
+// is roughly ~3.5-4.5 min, so 10 min still leaves a comfortable ~5.5-6.5
+// min of slack — unlike the earlier attempt at 10 min paired with 3000ms
+// spacing (only ~1-2 min slack, real overlap risk), the faster spacing
+// here is what makes 10 min safe again.
+const REFRESH_INTERVAL_MINUTES = 10;
 // Twitch status has zero dependency on the ER API, and a single batched
 // Helix call for the whole roster is cheap/fast (no per-player spacing
 // needed, unlike ER) — so it runs on its own much faster cadence,
@@ -167,9 +169,9 @@ let lastTwitchRefreshMinuteKey = null;
 // relying on someone noticing and manually flipping season_live off (what
 // happened multiple times on 2026-08-14 — every time only because it
 // happened to be actively watched). Resets to 0 on any successful cycle.
-// Threshold of 3 is ~45 min of sustained failure at the 15-min cadence —
-// long enough to rule out one-off blips, short enough to not sit broken
-// for hours unnoticed.
+// Threshold of 3 is ~30 min of sustained failure at the current 10-min
+// cadence — long enough to rule out one-off blips, short enough to not
+// sit broken for hours unnoticed.
 //
 // Persisted in the settings table, NOT an in-memory variable — confirmed
 // live on 2026-08-14 that an in-memory counter never actually got the
@@ -183,7 +185,7 @@ const REFRESH_FAILURE_COUNT_KEY = 'coastal_clash_refresh_failure_count';
 
 // Tracks the retryAt of the last circuit-open state actually alerted on,
 // so a circuit that stays OPEN across several refresh cycles (up to
-// FORBIDDEN_COOLDOWN_MS = 30 min, i.e. up to 2 cycles at the 20-min
+// FORBIDDEN_COOLDOWN_MS = 30 min, i.e. up to 3 cycles at the 10-min
 // cadence) only pings once per trip instead of once per cycle. A NEW
 // retryAt (the circuit reopening after a failed HALF_OPEN probe) alerts
 // again, since that's genuinely new information. Persisted in settings,
@@ -214,9 +216,9 @@ function startCoastalClashTimers(client) {
       return;
     }
 
-    // Round marks (:00/:20/:40 at the current 20-min cadence) — the
-    // user's explicit request. This replaces the earlier deliberate 4-min
-    // offset (:56/:06/:16/...) that existed specifically to avoid
+    // Round marks (:00/:10/:20/:30/:40/:50 at the current 10-min cadence)
+    // — the user's explicit request. This replaces the earlier deliberate
+    // 4-min offset (:56/:06/:16/...) that existed specifically to avoid
     // round-mark collisions with other processes; that reasoning turned
     // out not to matter for the actual issue (an account-level 403,
     // unrelated to timing/collisions), so there's no longer a reason to

@@ -91,17 +91,20 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
   // almost everyone this is identical to their display name, but see
   // player_igns (src/db.js) for players where those two differ.
   //
-  // Order: interleaved bottom-up between brackets — lowest-RP casual
-  // player, then lowest-RP pro player, then 2nd-lowest casual, 2nd-lowest
-  // pro, and so on. rn = each player's ascending-RP rank WITHIN their own
-  // bracket (1 = bracket's own lowest RP); sorting by (rn, ispro) then
-  // visits both brackets' rank-1 before either bracket's rank-2, etc.
-  // — the "zipper" pattern the user asked for, replacing the earlier
-  // in-danger-first / combined-ascending schemes tried tonight.
+  // Order: interleaved TOP-DOWN between brackets — reversed 2026-08-15 per
+  // the user's explicit call, from the original bottom-up zipper. Highest-
+  // RP casual player, then highest-RP pro player, then 2nd-highest casual,
+  // 2nd-highest pro, and so on. rn = each player's descending-RP rank
+  // WITHIN their own bracket (1 = bracket's own leader); sorting by
+  // (rn, ispro) then visits both brackets' rank-1 before either bracket's
+  // rank-2, etc. Same zipper interleaving as before, just walking from the
+  // top of each bracket instead of the bottom — trades away the original
+  // reasoning (protect players nearest the cutoff first, in case a pass
+  // gets interrupted) for refreshing bracket leaders first instead.
   const { rows: active } = await pool.query(
     `SELECT name, ign FROM (
        SELECT p.name, COALESCE(en.ign, p.name) AS ign, p.ispro,
-         ROW_NUMBER() OVER (PARTITION BY p.ispro ORDER BY p.mmr ASC) AS rn
+         ROW_NUMBER() OVER (PARTITION BY p.ispro ORDER BY p.mmr DESC) AS rn
        FROM players p
        LEFT JOIN player_igns en ON en.name = p.name
        WHERE p.culled = false

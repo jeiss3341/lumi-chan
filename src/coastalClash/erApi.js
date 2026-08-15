@@ -61,15 +61,21 @@ const FETCH_TIMEOUT_MS = 10000;
 // circuit breaker sit in exactly one place instead of needing to be
 // threaded through every caller.
 //
-// MIN_REQUEST_GAP_MS stays at 3000 (NOT tightened to push requests out
-// faster) — we don't know whether the block is a flat origin ban (where
-// pacing is irrelevant either way) or a volume/pattern-triggered flag
-// (where going FASTER is the wrong direction). 3000ms matches the spacing
-// this file used before, already proven not to be the cause of anything,
-// and there's no time pressure forcing a faster number — a full refresh
-// pass comfortably finishes inside the refresh timer's cadence at this
-// pace.
-const MIN_REQUEST_GAP_MS = 3000;
+// MIN_REQUEST_GAP_MS — the user's explicit call on 2026-08-15, settled at
+// 1500 (tried 3000, then 2000, before landing here). The original 3000
+// was chosen out of caution while the 403s looked like they might be a
+// volume/pattern-triggered block — going faster would have been the
+// wrong direction under that theory. Since then, ER_API_KEY was found to
+// be missing from Railway's own environment entirely, which is a much
+// simpler explanation for every 403 seen (missing/empty key returns the
+// identical 403 Forbidden this API returns for a real block — confirmed
+// by testing both cases directly). If that's the actual cause, there was
+// never a real behavioral limit to be cautious against. 1500ms brings a
+// full ~74-90 player pass down to roughly ~3.5-4.5 min, close to the
+// historical timing this used to take (per the user's own observed
+// "last updated" timing) before the circuit-breaker rewrite widened
+// every gap — same-player and between-player alike — to a uniform 3000ms.
+const MIN_REQUEST_GAP_MS = 1500;
 
 // How long the circuit stays OPEN (refusing all calls) after a 401/403.
 // 30 minutes is long enough that a real block has a real chance to lift
