@@ -17,6 +17,44 @@ const db = require('../db');
 // are specific people, not a configurable setting.
 const ALERT_USER_IDS = ['220690226752913418', '212368573669048330'];
 
+// Channel-webhook alert, alongside the DM above — added after DMs proved
+// unreliable in production (Discord rejected every DM attempt on
+// 2026-08-14 with DiscordAPIError[50278] "no mutual guilds", despite
+// shared servers; the user's own DM TO the bot also failed to deliver,
+// pointing at a Discord-level setting, not this code). A webhook has no
+// dependency on the bot's own permission/relationship state — it's a
+// plain HTTP POST to a channel — so it can't fail the same way. Pings
+// only the one person who asked for this alert, not the full
+// ALERT_USER_IDS list. URL lives in the environment (Railway Variables),
+// same as DISCORD_TOKEN — never hardcoded, since it's a bearer credential
+// for posting to that channel.
+const ALERT_WEBHOOK_URL = process.env.COASTAL_CLASH_ALERT_WEBHOOK;
+const WEBHOOK_PING_USER_ID = '220690226752913418';
+
+async function webhookAlert(message) {
+  if (!ALERT_WEBHOOK_URL) return;
+  try {
+    await fetch(ALERT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `<@${WEBHOOK_PING_USER_ID}> ${message}` }),
+    });
+  } catch (err) {
+    // A failed webhook post shouldn't crash the caller — this is a
+    // best-effort second channel alongside the DM, not the only one.
+    console.error('Coastal Clash: webhook alert failed:', err);
+  }
+}
+
+// Fires both alert channels together — DM (may silently fail, see above)
+// and webhook (should always land). Call sites use this instead of
+// dmAlert directly so every alert gets both without duplicating the
+// message text at each call site.
+async function alert(client, message) {
+  await dmAlert(client, message);
+  await webhookAlert(message);
+}
+
 // A full 74-player refresh pass takes ~8-9 min in practice (real network
 // time + season verification, confirmed by measuring an actual cycle —
 // the old "~3.7 min" estimate only ever counted the artificial spacing
@@ -80,10 +118,10 @@ async function runDailyCullWithRetry(client) {
     try {
       const result = await runDailyCull();
       if (result.seasonIdCorrected) {
-        await dmAlert(client, `⚠️ Coastal Clash: the stored ER season ID looked stale and was auto-corrected to ${result.seasonId} during today's cull. Worth double-checking this was right.`);
+        await alert(client, `⚠️ Coastal Clash: the stored ER season ID looked stale and was auto-corrected to ${result.seasonId} during today's cull. Worth double-checking this was right.`);
       }
       if (result.refresh?.failed?.length) {
-        await dmAlert(client, `⚠️ Coastal Clash: today's cull (day ${result.day}) completed, but RP fetch failed for ${result.refresh.failed.length} player(s): ${result.refresh.failed.join(', ')}. Their culled/indanger status may be stale.`);
+        await alert(client, `⚠️ Coastal Clash: today's cull (day ${result.day}) completed, but RP fetch failed for ${result.refresh.failed.length} player(s): ${result.refresh.failed.join(', ')}. Their culled/indanger status may be stale.`);
       }
       if (result.twitchRefresh?.error) {
         console.error('Coastal Clash: Twitch refresh failed:', result.twitchRefresh.error);
@@ -100,7 +138,7 @@ async function runDailyCullWithRetry(client) {
     } catch (err) {
       console.error(`Coastal Clash: cull attempt ${attempt}/${CULL_MAX_RETRIES} failed:`, err);
       if (attempt === CULL_MAX_RETRIES) {
-        await dmAlert(client, `🚨 Coastal Clash: today's cull FAILED after ${CULL_MAX_RETRIES} attempts and needs a manual re-run (\`node scripts/updateLeaderboard.js\`). Last error: ${err.message}`);
+        await alert(client, `🚨 Coastal Clash: today's cull FAILED after ${CULL_MAX_RETRIES} attempts and needs a manual re-run (\`node scripts/updateLeaderboard.js\`). Last error: ${err.message}`);
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, CULL_RETRY_DELAY_MS));
@@ -202,7 +240,7 @@ function startCoastalClashTimers(client) {
               }
 
               const failWindowMin = consecutiveRefreshFailures * REFRESH_INTERVAL_MINUTES;
-              await dmAlert(
+              await alert(
                 client,
                 `🚨 Coastal Clash: RP refresh failed ${consecutiveRefreshFailures} cycles in a row (~${failWindowMin} min) — season verification couldn't get a live season each time.${lastErrorDetail}${staleness} I've automatically set season_live to false so it stops hammering a possibly-blocked key. Check \`er_api_call_log\` for the full picture, and turn season_live back on once you've confirmed the API is responding again.`,
               );
