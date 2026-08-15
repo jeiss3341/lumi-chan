@@ -17,12 +17,15 @@ const db = require('../db');
 // configurable setting.
 const ALERT_USER_ID = '220690226752913418';
 
-// A full 74-player refresh pass takes ~3.7 min (74 x 3s API spacing) —
-// against a 10-min cadence that's a comfortable ~6.3 min of buffer. Still
-// keeping the isRefreshing guard below regardless: a rate-limit retry
-// storm could still push a pass long enough to risk overlap, and the
-// guard costs nothing when passes finish on time.
-const REFRESH_INTERVAL_MINUTES = 10;
+// A full 74-player refresh pass takes ~8-9 min in practice (real network
+// time + season verification, confirmed by measuring an actual cycle —
+// the old "~3.7 min" estimate only ever counted the artificial spacing
+// sleeps, never the real thing). Against a 10-min cadence that left only
+// ~1-1.5 min of buffer — too tight. 15 min gives ~6 min of comfortable
+// slack instead. Still keeping the isRefreshing guard below regardless: a
+// retry storm could still push a pass long enough to risk overlap, and
+// the guard costs nothing when passes finish on time.
+const REFRESH_INTERVAL_MINUTES = 15;
 // Twitch status has zero dependency on the ER API, and a single batched
 // Helix call for the whole roster is cheap/fast (no per-player spacing
 // needed, unlike ER) — so it runs on its own much faster cadence,
@@ -121,13 +124,13 @@ function startCoastalClashTimers(client) {
       return;
     }
 
-    // Offset 4 minutes off the round marks (:56/:06/:16/:26/:36/:46 instead
-    // of :00/:10/:20/:30/:40/:50) — round clock marks are the conventional
-    // default for cron-like jobs generally, so anything else hitting the
-    // same ER API on its own schedule is more likely to land exactly there
-    // too. Sitting off that beat reduces the odds of an exact-same-instant
-    // collision with an unrelated process, without changing the interval.
-    if (m % REFRESH_INTERVAL_MINUTES === 6 && !isRefreshQuietHours()) {
+    // Round marks (:00/:15/:30/:45) — the user's explicit request. This
+    // replaces the earlier deliberate 4-min offset (:56/:06/:16/:26/:36/:46)
+    // that existed specifically to avoid round-mark collisions with other
+    // processes; that reasoning turned out not to matter for tonight's
+    // actual issue (an account-level 403, unrelated to timing/collisions),
+    // so there's no longer a reason to prefer the offset over round marks.
+    if (m % REFRESH_INTERVAL_MINUTES === 0 && !isRefreshQuietHours()) {
       const minuteKey = `${dateKey}T${h}:${m}`;
       if (lastRefreshMinuteKey !== minuteKey) {
         lastRefreshMinuteKey = minuteKey;
