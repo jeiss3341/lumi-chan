@@ -169,9 +169,8 @@ const {
 } = require('./src/db');
 const { buildLeaderboardEmbeds, postOrUpdateLeaderboard, buildLiveNowEmbed, postLiveAnnouncements } = require('./src/coastalClash/embed');
 const { ETERNAL_RETURN_GAME_ID } = require('./src/coastalClash/twitchApi');
-const { runDailyCull, pickReferenceNicknames } = require('./src/coastalClash/cull');
+const { runDailyCull } = require('./src/coastalClash/cull');
 const { dateForSimulatedDay } = require('./src/coastalClash/schedule');
-const erApi = require('./src/coastalClash/erApi');
 const db = require('./src/db');
 
 // The ONLY guild /daychange is allowed to run in, regardless of which
@@ -2414,62 +2413,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // DIAGNOSTIC — see deploy-commands.js's comment on this command for
-    // why it exists. Deliberately bypasses fetchUserRank's built-in
-    // spacing/retry logic and calls fetchUserId/fetchRankRaw directly in a
-    // tight loop, since the whole point is a RAW, unthrottled burst —
-    // wrapping it in the normal spaced-out helper would defeat the test.
+    // Removed 2026-08-15 — this command's own comment said "remove once
+    // the IP theory is settled," and it now is (confirmed: Railway's
+    // outbound IP gets 403 from the ER API while the same key works fine
+    // from elsewhere — see er_api_findings memory). It also stopped doing
+    // what it claimed to do: erApi.js now routes every call through one
+    // shared request queue + circuit breaker, so "zero spacing between
+    // calls" is no longer true, and running this could trip the shared
+    // circuit and block the real refresh timer for 30 minutes while
+    // reporting misleadingly. Still registered as a slash command until
+    // `node deploy-commands.js` is run to actually remove it from Discord
+    // — see deploy-commands.js.
     if (interaction.isChatInputCommand() && interaction.commandName === 'apiburst') {
-      // Refuse to run within 2 minutes of a real refresh mark (:56/:06/
-      // :16/:26/:36/:46 — see timer.js) so this deliberately-unthrottled
-      // burst can't accidentally overlap the bot's own cycle, which can
-      // itself run up to 90s on a slow/bailout verification pass.
-      const nowMin = new Date().getUTCMinutes();
-      const offsetFromMark = ((nowMin - 6) % 10 + 10) % 10;
-      const distToNearestMark = Math.min(offsetFromMark, 10 - offsetFromMark);
-      if (distToNearestMark <= 2) {
-        await interaction.reply({
-          content: `⏳ Too close to a real refresh cycle (within 2 min of :56/:06/:16/:26/:36/:46) — try again in a few minutes so this doesn't overlap the bot's own calls.`,
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-      const referenceNicknames = await pickReferenceNicknames(db.pool, 15);
-      const seasonSetting = await db.getSetting(erApi.SEASON_SETTING_KEY);
-      const seasonId = parseInt(seasonSetting, 10);
-
-      const results = [];
-      const testStart = Date.now();
-      for (const nickname of referenceNicknames) {
-        const callStart = Date.now();
-        try {
-          const userId = await erApi.fetchUserId(nickname);
-          if (!userId) {
-            results.push({ nickname, ms: Date.now() - callStart, outcome: 'no userId' });
-            continue;
-          }
-          const raw = await erApi.fetchRankRaw(userId, seasonId);
-          results.push({ nickname, ms: Date.now() - callStart, outcome: raw.code === 200 ? 'ok' : (raw.message || `code ${raw.code}`) });
-        } catch (err) {
-          results.push({ nickname, ms: Date.now() - callStart, outcome: `error: ${err.message}` });
-        }
-        // No sleep here — zero spacing is the entire point of this test.
-      }
-      const totalMs = Date.now() - testStart;
-
-      const firstFailureIndex = results.findIndex((r) => r.outcome !== 'ok');
-      const summary = firstFailureIndex === -1
-        ? `✅ All ${results.length} calls (${results.length * 2} raw requests) succeeded with zero spacing.`
-        : `❌ First failure at call #${firstFailureIndex + 1}/${results.length}: "${results[firstFailureIndex].outcome}"`;
-
-      let detail = results.map((r, i) => `${i + 1}. ${r.nickname}: ${r.outcome} (${r.ms}ms)`).join('\n');
-      if (detail.length > 1500) detail = detail.slice(0, 1500) + '\n… (truncated)';
-
-      await interaction.editReply({
-        content: `**Raw API burst test** — Railway's outbound IP, zero delay between calls\nTotal time: ${totalMs}ms\n${summary}\n\`\`\`\n${detail}\n\`\`\``,
+      await interaction.reply({
+        content: '⚠️ `/apiburst` has been removed — it stopped being a true unthrottled test once a shared circuit breaker was added, and running it risks tripping that circuit for 30 minutes. See `er_api_findings.md`.',
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
