@@ -63,6 +63,13 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
     .addFields(
       { name: resolveText('CARD.claim.fieldClaimant'), value: `<@${claimant.id}>`, inline: true },
       { name: resolveText('CARD.claim.fieldReward'), value: formatAmount(bounty.reward), inline: true },
+      // Group Type shown here to match the submissions board card
+      // (buildLeaderboardEmbed below), which has always carried it — a claim
+      // card had no way to tell Solo Only from Premade Allowed before this.
+      // Sits third so the public claim-board card (which strips Original
+      // Requester — see index.js approve_claim) reads Claimant/Reward/Group
+      // Type on one row, leaving Teammates its own row underneath.
+      { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(bounty.group_type), inline: true },
       { name: resolveText('CARD.claim.fieldOriginalRequester'), value: `<@${bounty.requester_id}>`, inline: true },
     )
     .setImage(BANNER_URL)
