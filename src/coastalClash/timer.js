@@ -99,15 +99,15 @@ function nowInET(date = new Date()) {
   return new Date(date.getTime() - 4 * 60 * 60 * 1000);
 }
 
-// No automatic RP refresh between 5am-11am ET — the user's explicit call,
+// No automatic RP refresh between 5am-12pm ET — the user's explicit call,
 // a quiet window with nothing to watch, so there's no reason to keep
-// calling the ER API during it. Does NOT affect Twitch refresh (zero
-// dependency on the ER API) or the daily cull (fixed at 11:59 PM PDT,
-// outside this window anyway).
+// calling the ER API during it. Widened from 11am to 12pm on 2026-08-15.
+// Does NOT affect Twitch refresh (zero dependency on the ER API) or the
+// daily cull (fixed at 11:59 PM PDT, outside this window anyway).
 function isRefreshQuietHours(date = new Date()) {
   const et = nowInET(date);
   const h = et.getUTCHours();
-  return h >= 5 && h < 11;
+  return h >= 5 && h < 12;
 }
 
 async function dmAlert(client, message) {
