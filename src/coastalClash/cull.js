@@ -80,17 +80,22 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
   // almost everyone this is identical to their display name, but see
   // player_igns (src/db.js) for players where those two differ.
   //
-  // Order: currently-flagged in-danger players first (either bracket,
-  // combined — not casual-then-pro anymore), then everyone else ascending
-  // by RP, also combined across both brackets. The most at-risk players
-  // across the WHOLE tournament get refreshed earliest in any cycle, not
-  // grouped by bracket first. `indanger` is last cycle's computed flag
-  // (recalculated fresh after this refresh finishes), so it's a slightly
-  // stale but reasonable proxy for "who's actually on the cull bubble".
+  // Order: interleaved bottom-up between brackets — lowest-RP casual
+  // player, then lowest-RP pro player, then 2nd-lowest casual, 2nd-lowest
+  // pro, and so on. rn = each player's ascending-RP rank WITHIN their own
+  // bracket (1 = bracket's own lowest RP); sorting by (rn, ispro) then
+  // visits both brackets' rank-1 before either bracket's rank-2, etc.
+  // — the "zipper" pattern the user asked for, replacing the earlier
+  // in-danger-first / combined-ascending schemes tried tonight.
   const { rows: active } = await pool.query(
-    `SELECT p.name, COALESCE(en.ign, p.name) AS ign FROM players p
-     LEFT JOIN player_igns en ON en.name = p.name
-     WHERE p.culled = false ORDER BY p.indanger DESC, p.mmr ASC`,
+    `SELECT name, ign FROM (
+       SELECT p.name, COALESCE(en.ign, p.name) AS ign, p.ispro,
+         ROW_NUMBER() OVER (PARTITION BY p.ispro ORDER BY p.mmr ASC) AS rn
+       FROM players p
+       LEFT JOIN player_igns en ON en.name = p.name
+       WHERE p.culled = false
+     ) ranked
+     ORDER BY rn ASC, ispro ASC`,
   );
   const results = { updated: 0, failed: [], notPlayedYet: [] };
 
