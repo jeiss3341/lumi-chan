@@ -13,10 +13,21 @@ const schedule = require('./schedule');
 // different thresholds — see schedule.js's PRO/CASUAL_THRESHOLDS), so
 // "next cull" is the same moment for both; 'pro' is used as the lookup
 // bracket only because one had to be picked, not because it's special.
+// startedAt = null writes only next_cull_at and leaves last_updated_at
+// alone (see db.setLeaderboardMeta) — pass null whenever RP wasn't actually
+// fetched this cycle, so "Last updated" never claims freshness it doesn't
+// have.
 async function updateLeaderboardMeta(day, startedAt) {
   const nextCullDay = schedule.getNextCullDay('pro', day);
   const nextCullAt = nextCullDay !== null ? schedule.cullMomentForDay(nextCullDay) : null;
   await db.setLeaderboardMeta(nextCullAt, startedAt);
+}
+
+// True only if this cycle genuinely pulled RP from the ER API. A skipped
+// refresh (season_live paused) or a failed season verification both leave
+// player RP untouched, so neither may advance last_updated_at.
+function didRefreshRP(refreshResult, seasonVerificationFailed) {
+  return !seasonVerificationFailed && !refreshResult.skipped && refreshResult.updated > 0;
 }
 
 // Reference players used to verify the stored season ID is still live
@@ -412,7 +423,7 @@ async function runDailyCull(now = new Date(), dryRun = false) {
   // passed in) — stamped even though the write itself only happens here,
   // once the cycle has finished, so "last updated" reflects when data-
   // gathering began rather than overstating freshness with the finish time.
-  if (!dryRun && !seasonVerificationFailed) await updateLeaderboardMeta(day, now);
+  if (!dryRun) await updateLeaderboardMeta(day, didRefreshRP(refreshResult, seasonVerificationFailed) ? now : null);
   if (!dryRun) await db.pruneApiCallLog();
 
   return {
@@ -478,8 +489,9 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   // Only stamp last_updated_at when RP actually got refreshed this cycle —
   // see the matching comment in runDailyCull above. `now` is passed as the
   // START time being stamped, even though the write happens here at the end.
-  if (!dryRun && !seasonVerificationFailed) await updateLeaderboardMeta(day, now);
-  console.log('[CC refresh] leaderboard_meta written:', !seasonVerificationFailed, '— done');
+  const rpRefreshed = didRefreshRP(refreshResult, seasonVerificationFailed);
+  if (!dryRun) await updateLeaderboardMeta(day, rpRefreshed ? now : null);
+  console.log('[CC refresh] leaderboard_meta written — last_updated_at advanced:', rpRefreshed);
   if (!dryRun) await db.pruneApiCallLog();
 
   return {

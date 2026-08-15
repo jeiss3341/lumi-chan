@@ -622,11 +622,19 @@
   // several minutes now, so stamping the finish time would overstate
   // freshness — the earliest players fetched are already that many
   // minutes stale by the time the cycle completes.
+  // startedAt = null means "don't touch last_updated_at" — next_cull_at is
+  // pure calendar math and should always stay current, but last_updated_at
+  // must only advance when RP was ACTUALLY refreshed. Writing both together
+  // unconditionally made the leaderboard claim fresh data during an outage
+  // (and while season_live was paused), since the cycle still ran and still
+  // rewrote the timestamp without fetching anything.
   async function setLeaderboardMeta(nextCullAt, startedAt) {
     await pool.query(
       `INSERT INTO leaderboard_meta (id, last_updated_at, next_cull_at)
        VALUES (1, $2, $1)
-       ON CONFLICT (id) DO UPDATE SET last_updated_at = EXCLUDED.last_updated_at, next_cull_at = EXCLUDED.next_cull_at`,
+       ON CONFLICT (id) DO UPDATE SET
+         last_updated_at = COALESCE(EXCLUDED.last_updated_at, leaderboard_meta.last_updated_at),
+         next_cull_at = EXCLUDED.next_cull_at`,
       [nextCullAt, startedAt],
     );
   }
