@@ -24,13 +24,12 @@ const ALERT_USER_IDS = ['220690226752913418', '212368573669048330'];
 // shared servers; the user's own DM TO the bot also failed to deliver,
 // pointing at a Discord-level setting, not this code). A webhook has no
 // dependency on the bot's own permission/relationship state — it's a
-// plain HTTP POST to a channel — so it can't fail the same way. Pings
-// only the one person who asked for this alert, not the full
-// ALERT_USER_IDS list. URL lives in the environment (Railway Variables),
-// same as DISCORD_TOKEN — never hardcoded, since it's a bearer credential
-// for posting to that channel.
+// plain HTTP POST to a channel — so it can't fail the same way. Posts
+// plainly with no @mention — the user's explicit call, after having it
+// ping on the first real trip. URL lives in the environment (Railway
+// Variables), same as DISCORD_TOKEN — never hardcoded, since it's a
+// bearer credential for posting to that channel.
 const ALERT_WEBHOOK_URL = process.env.COASTAL_CLASH_ALERT_WEBHOOK;
-const WEBHOOK_PING_USER_ID = '220690226752913418';
 
 // Webhooks post under their own default identity ("Coastal Clash Alerts")
 // unless overridden per-message — username/avatar_url below make it show
@@ -47,7 +46,7 @@ async function webhookAlert(message) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        content: `<@${WEBHOOK_PING_USER_ID}> ${message}`,
+        content: message,
         username: 'Lumi-chan',
         avatar_url: LUMI_CHAN_AVATAR_URL,
       }),
