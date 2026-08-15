@@ -16,20 +16,6 @@ const API_KEY = process.env.ER_API_KEY;
 // never used to gate/alter any actual API call behavior.
 const db = require('../db');
 
-// Empirically hit "Too Many Requests" after ~5 rapid calls with no delay.
-// This spacing matches hanabi.js's own proven 2.5s convention, rounded up
-// slightly for headroom.
-const CALL_SPACING_MS = 3000;
-
-// Slightly wider spacing used ONLY by season verification below — that step
-// is the one that's actually been bailing out intermittently in production,
-// and unlike the main RP-refresh loop it has slack to spare (a 90s budget
-// for at most 15 candidates), so trading a bit more time for a bit more
-// margin costs nothing there. Left the main loop's CALL_SPACING_MS alone —
-// widening that would slow down every single refresh cycle for no evidence
-// of benefit, since the main loop isn't the one that's been failing.
-const SEASON_VERIFICATION_SPACING_MS = 3000;
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -42,8 +28,154 @@ function sleep(ms) {
 // boot). AbortSignal.timeout forces a clean rejection instead.
 const FETCH_TIMEOUT_MS = 10000;
 
+// ─────────────────────────────────────────────────────────────────────────
+// Request queue + circuit breaker
+//
+// Confirmed live on 2026-08-14/15 (see er_api_findings memory): the ER API
+// returned 403 Forbidden from Railway's outbound IP while the SAME key,
+// called from a developer's own machine at the same time, returned 200.
+// That rules out the key being invalid and rules out a normal per-key rate
+// limit (which would have also throttled the other machine) — it's an
+// origin-level block, and every call from the blocked origin fails, not
+// just some of them. The old design (manual per-call-site sleeps scattered
+// across this file) had a real gap: nothing enforced spacing BETWEEN two
+// different top-level phases (e.g. season verification finishing and RP
+// refresh starting), only within a single loop. Centralizing every raw
+// call through ONE queue closes that gap everywhere at once, and lets a
+// circuit breaker sit in exactly one place instead of needing to be
+// threaded through every caller.
+//
+// MIN_REQUEST_GAP_MS stays at 3000 (NOT tightened to push requests out
+// faster) — we don't know whether the block is a flat origin ban (where
+// pacing is irrelevant either way) or a volume/pattern-triggered flag
+// (where going FASTER is the wrong direction). 3000ms matches the spacing
+// this file used before, already proven not to be the cause of anything,
+// and there's no time pressure forcing a faster number — a full refresh
+// pass comfortably finishes inside the refresh timer's cadence at this
+// pace.
+const MIN_REQUEST_GAP_MS = 3000;
+
+// How long the circuit stays OPEN (refusing all calls) after a 401/403.
+// 30 minutes is long enough that a real block has a real chance to lift
+// before the next probe, short enough that a false-positive trip doesn't
+// sit broken for hours unnoticed. Overridable via env for testing without
+// a code change.
+const FORBIDDEN_COOLDOWN_MS = Number(process.env.ER_CIRCUIT_COOLDOWN_MS) || 30 * 60 * 1000;
+
+const CIRCUIT_STATE = Object.freeze({
+  CLOSED: 'CLOSED', // normal operation
+  OPEN: 'OPEN', // refusing all calls until circuitOpenUntil
+  HALF_OPEN: 'HALF_OPEN', // cooldown elapsed, one probe request in flight
+});
+
+// Plain in-memory state, NOT persisted to the settings table — deliberately
+// simple for now. This means a Railway redeploy (which happens on every
+// push) resets the circuit back to CLOSED, same class of issue the
+// refresh-failure counter hit before it was moved to the DB (see
+// coastal_clash_refresh_failure_count in timer.js). The consequence here
+// is mild rather than broken: a reset-to-CLOSED circuit just means the
+// next cycle makes one real call instead of skipping straight to a cached
+// "still blocked" — if the block is still active, that call 403s and the
+// circuit reopens immediately, so a redeploy costs at most one wasted
+// request, not a sustained hammering. Worth persisting properly if this
+// starts happening often enough to matter.
+let requestQueue = Promise.resolve();
+let lastRequestStartedAt = 0;
+let circuitState = CIRCUIT_STATE.CLOSED;
+let circuitOpenUntil = 0;
+let circuitReason = null;
+
+function openCircuit(reason) {
+  circuitState = CIRCUIT_STATE.OPEN;
+  circuitOpenUntil = Date.now() + FORBIDDEN_COOLDOWN_MS;
+  circuitReason = reason;
+  console.error(`[ER API] circuit OPEN (${reason}) until ${new Date(circuitOpenUntil).toISOString()}`);
+}
+
+function closeCircuit() {
+  const recovered = circuitState !== CIRCUIT_STATE.CLOSED;
+  circuitState = CIRCUIT_STATE.CLOSED;
+  circuitOpenUntil = 0;
+  circuitReason = null;
+  if (recovered) console.info('[ER API] circuit CLOSED; probe succeeded');
+}
+
+function makeCircuitOpenError() {
+  const error = new Error(`ER API circuit is open until ${new Date(circuitOpenUntil).toISOString()}`);
+  error.code = 'ER_CIRCUIT_OPEN';
+  error.retryAt = new Date(circuitOpenUntil).toISOString();
+  error.reason = circuitReason;
+  return error;
+}
+
+// Both codes mean "stop what you're doing, don't keep looping" — callers
+// (refreshAllRP, isSeasonLive) check this to bail out of a whole pass
+// immediately instead of continuing to iterate remaining players/candidates
+// once the circuit has tripped or a live 401/403 has been seen.
+function isCircuitBreakerError(error) {
+  return error?.code === 'ER_CIRCUIT_OPEN' || error?.code === 'ER_API_FORBIDDEN';
+}
+
+// Exposed for diagnostics (e.g. a manual dry-run script checking circuit
+// state before/after a pass) and for timer.js to describe *why* an alert
+// is firing.
+function getCircuitBreakerState() {
+  return {
+    state: circuitState,
+    reason: circuitReason,
+    retryAt: circuitOpenUntil ? new Date(circuitOpenUntil).toISOString() : null,
+  };
+}
+
+// Every raw HTTP call in this file goes through here — the single choke
+// point that makes the queue and circuit breaker apply uniformly, with no
+// per-call-site wiring needed. requestQueue is a promise chain: each call
+// attaches itself after the previous one settles (success OR failure,
+// via the .then(ok, ok) below), so calls are strictly serialized and each
+// one waits out MIN_REQUEST_GAP_MS from the previous call's START before
+// firing.
 function fetchWithTimeout(url, options = {}) {
-  return fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const request = requestQueue.then(async () => {
+    if (circuitState === CIRCUIT_STATE.OPEN) {
+      if (Date.now() < circuitOpenUntil) {
+        throw makeCircuitOpenError();
+      }
+      // Cooldown elapsed — allow exactly one request through as a probe.
+      // Its outcome (below) decides whether to close the circuit or
+      // reopen it for another full cooldown.
+      circuitState = CIRCUIT_STATE.HALF_OPEN;
+      console.warn('[ER API] circuit HALF_OPEN; allowing one probe request');
+    }
+
+    const elapsed = Date.now() - lastRequestStartedAt;
+    const waitMs = Math.max(0, MIN_REQUEST_GAP_MS - elapsed);
+    if (waitMs > 0) await sleep(waitMs);
+    lastRequestStartedAt = Date.now();
+
+    try {
+      const response = await fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (response.status === 401 || response.status === 403) {
+        openCircuit(`HTTP ${response.status}`);
+      } else if (circuitState === CIRCUIT_STATE.HALF_OPEN) {
+        closeCircuit();
+      }
+      return response;
+    } catch (error) {
+      // A network-level failure (timeout, DNS, etc.) during a probe is
+      // treated the same as a 401/403 probe result — re-open rather than
+      // silently leaving the circuit HALF_OPEN with no path back to
+      // either state.
+      if (circuitState === CIRCUIT_STATE.HALF_OPEN) {
+        openCircuit(`half-open probe failed: ${error.message}`);
+      }
+      throw error;
+    }
+  });
+
+  // Chain the NEXT call off this one regardless of outcome — a failed
+  // call must not break the queue for everyone behind it.
+  requestQueue = request.then(() => undefined, () => undefined);
+  return request;
 }
 
 // Passive diagnostic logging (er_api_call_log — see src/db.js) for the ER
@@ -63,25 +195,63 @@ function logRawCall(endpoint, res, body, durationMs, errorMessage = null) {
   });
 }
 
+// Turns a 401/403 response into a thrown, taggable error — the circuit
+// itself already opened inside fetchWithTimeout the moment the response
+// came back, this just stops the CALLER (fetchUserId/fetchRankRaw) from
+// treating a Forbidden body as if it were an ordinary "not found" result.
+function throwIfForbidden(res) {
+  if (!res || (res.status !== 401 && res.status !== 403)) return;
+  const error = new Error(`ER API returned HTTP ${res.status}`);
+  error.code = 'ER_API_FORBIDDEN';
+  error.status = res.status;
+  error.retryAt = new Date(circuitOpenUntil).toISOString();
+  throw error;
+}
+
 // Looks up a player's current userId by nickname. Per the game's own
 // changelog, this value is NOT stable — querying the same nickname again
 // later can return a different userId (both still resolve to the same
 // player, by design, for anti-stalking reasons). Never persist this value
 // long-term; look it up fresh each time it's needed.
-async function fetchUserId(nickname) {
+//
+// Retries on 429 (genuine rate-limiting, distinct from the circuit
+// breaker's 401/403 handling above) — this endpoint didn't retry at all
+// before, unlike fetchRankRaw below, which was an inconsistency rather
+// than a deliberate choice.
+async function fetchUserId(nickname, maxRetries = 5) {
   const endpoint = `/user/nickname?query=${encodeURIComponent(nickname)}`;
-  const callStart = Date.now();
-  let res, data;
-  try {
-    res = await fetchWithTimeout(`${API_URL}${endpoint}`, { headers: { 'x-api-key': API_KEY } });
-    data = await res.json();
-    logRawCall(endpoint, res, data, Date.now() - callStart);
-  } catch (err) {
-    logRawCall(endpoint, res, null, Date.now() - callStart, err.message);
-    throw err;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const callStart = Date.now();
+    let res, data;
+    try {
+      res = await fetchWithTimeout(`${API_URL}${endpoint}`, { headers: { 'x-api-key': API_KEY } });
+      data = await res.json();
+      logRawCall(endpoint, res, data, Date.now() - callStart);
+    } catch (err) {
+      // Don't log circuit-open rejections as if they were a real failed
+      // call — the request never actually went out.
+      if (err.code !== 'ER_CIRCUIT_OPEN') {
+        logRawCall(endpoint, res, null, Date.now() - callStart, err.message);
+      }
+      throw err;
+    }
+
+    throwIfForbidden(res);
+
+    if (res.status === 429 || data.message === 'Too Many Requests') {
+      if (attempt === maxRetries) return null;
+      const waitMs = 5000 * attempt;
+      console.warn(`[ER API] nickname lookup rate-limited for ${nickname}; retrying in ${waitMs}ms`);
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (data.code !== 200 || !data.user) return null;
+    return data.user.userId;
   }
-  if (data.code !== 200 || !data.user) return null;
-  return data.user.userId;
+
+  return null;
 }
 
 // Fetches raw rank data for a player at a given season. matchingTeamMode 3
@@ -95,9 +265,12 @@ async function fetchRankRaw(userId, seasonId, matchingTeamMode = 3) {
     data = await res.json();
     logRawCall(endpoint, res, data, Date.now() - callStart);
   } catch (err) {
-    logRawCall(endpoint, res, null, Date.now() - callStart, err.message);
+    if (err.code !== 'ER_CIRCUIT_OPEN') {
+      logRawCall(endpoint, res, null, Date.now() - callStart, err.message);
+    }
     throw err;
   }
+  throwIfForbidden(res);
   return data;
 }
 
@@ -107,15 +280,7 @@ async function fetchRankRaw(userId, seasonId, matchingTeamMode = 3) {
 // (nickname not found, non-retryable error). This is the shared fetch —
 // fetchPlayerRP and isSeasonLive each apply a DIFFERENT interpretation of
 // the result below, so neither filter lives in here.
-// Small gap between the nickname lookup and the rank lookup below — these
-// are two separate HTTP requests to the API with zero delay between them
-// otherwise, regardless of how much spacing sits between different players'
-// calls. If the API's limit is sensitive to back-to-back bursts (not just
-// average rate over time), this pair firing instantly, every single player,
-// could be tripping it independent of CALL_SPACING_MS/
-// SEASON_VERIFICATION_SPACING_MS above.
-const INTER_CALL_GAP_MS = 1000;
-
+//
 // cachedUserId lets callers that already resolved this nickname (e.g.
 // isSeasonLive probing multiple candidate seasons for the SAME reference
 // players) skip the redundant nickname lookup entirely — fetchUserId
@@ -126,7 +291,6 @@ async function fetchUserRank(nickname, seasonId, maxRetries = 5, cachedUserId = 
   let userId = cachedUserId;
   if (userId === undefined) {
     userId = await fetchUserId(nickname);
-    await sleep(INTER_CALL_GAP_MS);
   }
   if (!userId) return null;
 
@@ -156,10 +320,10 @@ async function fetchUserRank(nickname, seasonId, maxRetries = 5, cachedUserId = 
 // to tell "hasn't played enough games THIS season" (rp: null,
 // notPlayedYet: true — normal, expected, NOT alert-worthy) apart from an
 // actual fetch failure (rp: null, notPlayedYet: false — worth alerting
-// on). The API still returns a carried-over placeholder mmr from season
-// 39 even when nobody's queued yet this season (confirmed via live
-// testing — see er_api_findings memory), which would otherwise look like
-// a real current result. `rank`/`serverRank` both sitting at 0 is the
+// on). The API still returns a carried-over placeholder mmr from the
+// prior season even when nobody's queued yet this season (confirmed via
+// live testing — see er_api_findings memory), which would otherwise look
+// like a real current result. `rank`/`serverRank` both sitting at 0 is the
 // signal that nothing's actually been played yet; either going non-zero
 // means real games are in. This filter is deliberately NOT applied
 // inside fetchUserRank/isSeasonLive above — season DETECTION needs to
@@ -185,16 +349,12 @@ async function fetchPlayerRP(nickname, seasonId, maxRetries = 5) {
 // Originally checked mmr > 0 alone (a season that hasn't started returns
 // completely zeroed data, including mmr, so any nonzero mmr looked like a
 // live season's soft-reset baseline). That broke in practice: a dead
-// season some players never actually played (confirmed live — see
-// er_api_findings memory) can still return a nonzero, stale, carried-over
-// mmr with rank/serverRank both 0, which the old check couldn't tell
-// apart from a real one. Fixed to require rank or serverRank > 0 instead —
-// actual played-this-season activity — same signal fetchPlayerRP already
-// uses for "has this specific player played yet". By the time this
-// verification runs at all (days into a live event, checking 10 random
-// active players), real activity from at least one of them is a safe
-// assumption — this isn't trying to catch "season live, zero games played
-// by anyone yet" anymore, which was the point of the old mmr-only check.
+// season some players never actually played can still return a nonzero,
+// stale, carried-over mmr with rank/serverRank both 0, which the old
+// check couldn't tell apart from a real one. Fixed to require rank or
+// serverRank > 0 instead — actual played-this-season activity — same
+// signal fetchPlayerRP already uses for "has this specific player played
+// yet".
 // ─────────────────────────────────────────────────────────────────────────
 const SEASON_SETTING_KEY = 'er_season_id';
 const MAX_SEASON_PROBE_STEPS = 5;
@@ -203,15 +363,12 @@ const MAX_SEASON_PROBE_STEPS = 5;
 // 5 attempts, 5s/10s/15s/20s backoff = up to 50s) compounds badly across
 // up to 40 reference nicknames when the API is under sustained load —
 // deploy logs showed verification stuck on the same step for 10+ minutes
-// straight, across multiple separate refresh cycles, never completing.
-// A hard time budget here caps the damage regardless of the underlying
-// cause: if verification can't get a clean answer within it, bail out and
-// let the caller treat this cycle as "couldn't verify, try again next
-// time" (already a handled, graceful path) instead of blocking for
-// potentially tens of minutes. Shared ACROSS the whole getVerifiedSeasonId
-// call (every candidate season probed, not just one isSeasonLive call) —
-// confirmed live that without this, a bad stretch chains multiple ~90s
-// bailouts back to back (one per candidate season) into several minutes.
+// straight. A hard time budget here caps the damage regardless of the
+// underlying cause: if verification can't get a clean answer within it,
+// bail out and let the caller treat this cycle as "couldn't verify, try
+// again next time" instead of blocking for potentially tens of minutes.
+// Shared ACROSS the whole getVerifiedSeasonId call (every candidate season
+// probed, not just one isSeasonLive call).
 const SEASON_VERIFICATION_BUDGET_MS = 90 * 1000;
 
 // userIdCache is shared ACROSS every candidate season probed within one
@@ -219,7 +376,7 @@ const SEASON_VERIFICATION_BUDGET_MS = 90 * 1000;
 // which season is being checked, so resolving it once per verification
 // pass (instead of once per candidate, up to 6x redundant) cuts real,
 // avoidable call volume during exactly the scenario (repeated bailouts)
-// that generates the most traffic. Found via tonight's ER API investigation.
+// that generates the most traffic.
 async function isSeasonLive(seasonId, referenceNicknames, deadline, userIdCache) {
   for (const nickname of referenceNicknames) {
     if (Date.now() > deadline) {
@@ -229,41 +386,44 @@ async function isSeasonLive(seasonId, referenceNicknames, deadline, userIdCache)
     try {
       let userId = userIdCache.get(nickname);
       if (userId === undefined) {
-        userId = await fetchUserId(nickname);
+        // maxRetries=1 here specifically (not fetchUserId's own default
+        // of 5) — this loop only needs ANY one of up to 40 candidates to
+        // answer, so failing fast on a 429 and moving to the next
+        // candidate beats burning up to 50s of backoff retrying one of
+        // them, which could otherwise blow the whole 90s budget on a
+        // single nickname.
+        userId = await fetchUserId(nickname, 1);
         userIdCache.set(nickname, userId);
-        await sleep(INTER_CALL_GAP_MS);
       }
-      // maxRetries=1 (no 429 backoff retries) — this only needs ANY one
-      // of up to 40 candidates to answer, so failing fast and moving to
-      // the next candidate beats burning up to 50s retrying one of them.
-      // (Raw request/response logging for this call happens automatically
-      // one level down, inside fetchUserId/fetchRankRaw — see erApi.js's
-      // logRawCall.)
+      // Same reasoning: maxRetries=1 on the rank lookup too.
       const userRank = await fetchUserRank(nickname, seasonId, 1, userId);
       if (userRank && ((userRank.rank ?? 0) > 0 || (userRank.serverRank ?? 0) > 0)) return true;
     } catch (err) {
-      // A single flaky/timed-out reference player shouldn't sink the
-      // whole verification pass — move on to the next candidate.
+      // A tripped circuit means every remaining candidate would fail
+      // identically and instantly — no point looping through the rest,
+      // let it propagate so the caller (getVerifiedSeasonId → cull.js →
+      // timer.js) can alert immediately instead of silently exhausting
+      // the reference pool.
+      if (isCircuitBreakerError(err)) throw err;
+      // Any other single flaky/timed-out reference player shouldn't sink
+      // the whole verification pass — move on to the next candidate.
       console.error(`Coastal Clash: season-verification fetch threw for ${nickname}:`, err.message);
     }
-    await sleep(SEASON_VERIFICATION_SPACING_MS);
   }
   return false;
 }
 
 // Confirmed via direct testing that a healthy call resolves in well under
 // a second — the season itself doesn't change cycle-to-cycle, so
-// re-verifying from scratch with up to 40 API calls every single 10-min
-// refresh is pure waste (and, per the theory above, likely a real
-// contributor to whatever's rate-limiting Railway's outbound IP). Cache a
-// confirmed-live result for a while and skip re-verification entirely
-// until it goes stale.
+// re-verifying from scratch with up to 40 API calls every single refresh
+// is pure waste. Cache a confirmed-live result for a while and skip
+// re-verification entirely until it goes stale.
 const VERIFICATION_CACHE_MS = 20 * 60 * 1000;
 let cachedVerification = null; // { seasonId, verifiedAt }
 
 // Returns { seasonId, corrected }. `corrected` is true if the stored value
 // was stale and this call updated it — callers should treat that as
-// alert-worthy (DM the DM alert path we already wired for fetch failures).
+// alert-worthy.
 async function getVerifiedSeasonId(db, referenceNicknames, dryRun = false) {
   const stored = await db.getSetting(SEASON_SETTING_KEY);
   let seasonId = stored ? parseInt(stored, 10) : 40;
@@ -297,11 +457,12 @@ async function getVerifiedSeasonId(db, referenceNicknames, dryRun = false) {
 
 module.exports = {
   sleep,
-  CALL_SPACING_MS,
   fetchUserId,
   fetchRankRaw,
   fetchUserRank,
   fetchPlayerRP,
   SEASON_SETTING_KEY,
   getVerifiedSeasonId,
+  isCircuitBreakerError,
+  getCircuitBreakerState,
 };

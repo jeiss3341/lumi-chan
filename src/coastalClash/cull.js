@@ -128,6 +128,13 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
         results.failed.push(name);
       }
     } catch (err) {
+      // A tripped circuit breaker means every remaining player would fail
+      // identically and instantly — stop the loop and let it propagate so
+      // the caller can alert right away, instead of quietly finishing a
+      // pass where 70 players in a row show up as "failed" for the same
+      // one reason.
+      if (erApi.isCircuitBreakerError(err)) throw err;
+
       // A timed-out/network-failed fetch (see erApi.fetchWithTimeout)
       // shouldn't take down the whole pass — one player's bad request
       // used to leave everyone else's RP unrefreshed AND leaderboard_meta
@@ -136,7 +143,11 @@ async function refreshAllRP(pool, seasonId, dryRun = false) {
       console.error(`Coastal Clash: RP fetch threw for ${name} (ign: ${ign}):`, err.message);
       results.failed.push(name);
     }
-    await erApi.sleep(erApi.CALL_SPACING_MS);
+    // No sleep here anymore — erApi.js's fetchWithTimeout now enforces a
+    // minimum gap between every raw HTTP call through one shared queue,
+    // so spacing already happens inside fetchPlayerRP itself. A sleep
+    // here on top of that would double the effective spacing for no
+    // benefit (each player already makes 2 queued calls internally).
   }
 
   return results;
@@ -407,7 +418,23 @@ async function runDailyCull(now = new Date(), dryRun = false) {
 
   let proCull = { culled: [] };
   let casualCull = { culled: [] };
-  if (cullsToday) {
+
+  // Never cull on data that isn't known-good. Before this, cullsToday
+  // alone decided whether elimination ran — a scheduled cull day would
+  // execute against whatever RP happened to be sitting in the DB,
+  // refreshed or not, correct or not. Confirmed live on 2026-08-14/15:
+  // RP can sit frozen for hours (Railway IP block on the ER API — see
+  // er_api_findings memory) with nothing about `cullsToday` reflecting
+  // that. refreshHealthy requires verification to have succeeded, the
+  // fetch to not have been skipped, AND zero individual player failures
+  // — any of those failing means SOME player's RP this cycle is stale or
+  // missing, which is enough to eliminate the wrong person. A cull that
+  // doesn't run because data wasn't healthy is a late cull, not a wrong
+  // one; runDailyCullWithRetry (timer.js) already retries and alerts on
+  // exactly this outcome.
+  const refreshHealthy = !seasonVerificationFailed && !refreshResult.skipped && refreshResult.failed.length === 0;
+
+  if (cullsToday && refreshHealthy) {
     proCull = await executeCullForBracket(db.pool, true, day, dryRun);
     casualCull = await executeCullForBracket(db.pool, false, day, dryRun);
   }

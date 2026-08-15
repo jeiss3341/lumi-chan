@@ -56,7 +56,8 @@ async function main() {
     if (rp !== stored_mmr) {
       stragglers.push({ name, storedMmr: stored_mmr, liveRp: rp, reason: 'stale' });
     }
-    await erApi.sleep(erApi.CALL_SPACING_MS);
+    // No sleep here anymore — erApi.js's fetchWithTimeout now enforces
+    // spacing centrally via its own request queue.
   }
 
   if (stragglers.length === 0) {
