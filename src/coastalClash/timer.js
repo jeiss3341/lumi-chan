@@ -32,13 +32,25 @@ const ALERT_USER_IDS = ['220690226752913418', '212368573669048330'];
 const ALERT_WEBHOOK_URL = process.env.COASTAL_CLASH_ALERT_WEBHOOK;
 const WEBHOOK_PING_USER_ID = '220690226752913418';
 
+// Webhooks post under their own default identity ("Coastal Clash Alerts")
+// unless overridden per-message — username/avatar_url below make it show
+// up as Lumi-chan instead, so alerts read as coming from the bot itself
+// rather than a separate app. Hardcoded, not fetched live, since the
+// avatar only changes if someone deliberately changes the bot's profile
+// picture — not worth an extra API call on every single alert.
+const LUMI_CHAN_AVATAR_URL = 'https://cdn.discordapp.com/avatars/1535359066803544144/859567e9299eddf015da7375cada0bad.png';
+
 async function webhookAlert(message) {
   if (!ALERT_WEBHOOK_URL) return;
   try {
     await fetch(ALERT_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: `<@${WEBHOOK_PING_USER_ID}> ${message}` }),
+      body: JSON.stringify({
+        content: `<@${WEBHOOK_PING_USER_ID}> ${message}`,
+        username: 'Lumi-chan',
+        avatar_url: LUMI_CHAN_AVATAR_URL,
+      }),
     });
   } catch (err) {
     // A failed webhook post shouldn't crash the caller — this is a
