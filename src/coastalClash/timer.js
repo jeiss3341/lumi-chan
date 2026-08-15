@@ -115,13 +115,30 @@ let lastTwitchRefreshMinuteKey = null;
 
 // Auto-pause after repeated season-verification failures, instead of
 // relying on someone noticing and manually flipping season_live off (what
-// happened twice on 2026-08-14 — both times only because it happened to
-// be actively watched). Resets to 0 on any successful cycle. Threshold of
-// 3 is ~45 min of sustained failure at the 15-min cadence — long enough
-// to rule out one-off blips, short enough to not sit broken for hours
-// unnoticed.
-let consecutiveRefreshFailures = 0;
+// happened multiple times on 2026-08-14 — every time only because it
+// happened to be actively watched). Resets to 0 on any successful cycle.
+// Threshold of 3 is ~45 min of sustained failure at the 15-min cadence —
+// long enough to rule out one-off blips, short enough to not sit broken
+// for hours unnoticed.
+//
+// Persisted in the settings table, NOT an in-memory variable — confirmed
+// live on 2026-08-14 that an in-memory counter never actually got the
+// chance to reach the threshold, because Railway redeploys (which happen
+// on every commit push) restart the process and wipe it back to 0. On an
+// active dev night with frequent pushes, that meant the counter kept
+// resetting before ever firing, even though the underlying block was
+// sustained the whole time. A DB-backed counter survives redeploys.
 const REFRESH_FAILURE_AUTO_PAUSE_THRESHOLD = 3;
+const REFRESH_FAILURE_COUNT_KEY = 'coastal_clash_refresh_failure_count';
+
+async function getRefreshFailureCount() {
+  const stored = await db.getSetting(REFRESH_FAILURE_COUNT_KEY);
+  return stored ? parseInt(stored, 10) : 0;
+}
+
+async function setRefreshFailureCount(count) {
+  await db.setSetting(REFRESH_FAILURE_COUNT_KEY, String(count));
+}
 
 function startCoastalClashTimers(client) {
   if (timerInterval) clearInterval(timerInterval);
@@ -153,7 +170,8 @@ function startCoastalClashTimers(client) {
           await postOrUpdateLeaderboard(client, db);
 
           if (result.seasonVerificationFailed) {
-            consecutiveRefreshFailures++;
+            const consecutiveRefreshFailures = (await getRefreshFailureCount()) + 1;
+            await setRefreshFailureCount(consecutiveRefreshFailures);
             if (consecutiveRefreshFailures >= REFRESH_FAILURE_AUTO_PAUSE_THRESHOLD) {
               await db.setSeasonLive(false);
 
@@ -188,10 +206,10 @@ function startCoastalClashTimers(client) {
                 client,
                 `🚨 Coastal Clash: RP refresh failed ${consecutiveRefreshFailures} cycles in a row (~${failWindowMin} min) — season verification couldn't get a live season each time.${lastErrorDetail}${staleness} I've automatically set season_live to false so it stops hammering a possibly-blocked key. Check \`er_api_call_log\` for the full picture, and turn season_live back on once you've confirmed the API is responding again.`,
               );
-              consecutiveRefreshFailures = 0;
+              await setRefreshFailureCount(0);
             }
           } else {
-            consecutiveRefreshFailures = 0;
+            await setRefreshFailureCount(0);
           }
         } catch (err) {
           console.error('Coastal Clash: 10-min refresh failed:', err);
