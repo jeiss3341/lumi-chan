@@ -10,10 +10,10 @@
 const API_URL = 'https://open-api.bser.io/v1';
 const API_KEY = process.env.ER_API_KEY;
 
-// Passive diagnostic logging only (er_api_call_log — see src/db.js). This
-// is the one deliberate exception to erApi.js otherwise having zero DB
-// coupling — scoped narrowly to logging calls this module already makes,
-// never used to gate/alter any actual API call behavior.
+// Two deliberate exceptions to erApi.js otherwise having zero DB coupling:
+// passive diagnostic logging (er_api_call_log) below, and persisting
+// circuit-breaker state (see the circuit breaker section further down) so
+// it survives a Railway redeploy instead of silently resetting.
 const db = require('../db');
 
 function sleep(ms) {
@@ -68,28 +68,69 @@ const CIRCUIT_STATE = Object.freeze({
   HALF_OPEN: 'HALF_OPEN', // cooldown elapsed, one probe request in flight
 });
 
-// Plain in-memory state, NOT persisted to the settings table — deliberately
-// simple for now. This means a Railway redeploy (which happens on every
-// push) resets the circuit back to CLOSED, same class of issue the
-// refresh-failure counter hit before it was moved to the DB (see
-// coastal_clash_refresh_failure_count in timer.js). The consequence here
-// is mild rather than broken: a reset-to-CLOSED circuit just means the
-// next cycle makes one real call instead of skipping straight to a cached
-// "still blocked" — if the block is still active, that call 403s and the
-// circuit reopens immediately, so a redeploy costs at most one wasted
-// request, not a sustained hammering. Worth persisting properly if this
-// starts happening often enough to matter.
+// requestQueue/lastRequestStartedAt are fine staying purely in-memory —
+// there's nothing meaningful to resume mid-queue after a restart, spacing
+// just starts fresh. circuitState/circuitOpenUntil/circuitReason are
+// different: this is exactly the class of bug that already bit
+// coastal_clash_refresh_failure_count (timer.js) once — an in-memory-only
+// value getting silently wiped by Railway's redeploy-on-every-push
+// behavior, which meant a threshold that should trip after sustained
+// failures never got the chance to. Persisted to the settings table under
+// CIRCUIT_STATE_KEY below so an OPEN circuit survives a redeploy instead
+// of quietly resetting to CLOSED and letting the next cycle make a real
+// call it would otherwise have skipped.
 let requestQueue = Promise.resolve();
 let lastRequestStartedAt = 0;
 let circuitState = CIRCUIT_STATE.CLOSED;
 let circuitOpenUntil = 0;
 let circuitReason = null;
 
+const CIRCUIT_STATE_KEY = 'coastal_clash_circuit_state';
+
+// Loaded lazily (not at module-require time) because db.initDb() may not
+// have run yet when this file is first required — index.js/cull.js
+// require this module before awaiting initDb() at boot. Runs at most
+// once per process; every call to fetchWithTimeout awaits this, but the
+// loaded flag makes every call after the first a no-op.
+let circuitStateLoaded = false;
+async function ensureCircuitStateLoaded() {
+  if (circuitStateLoaded) return;
+  circuitStateLoaded = true; // set first — a concurrent call must not also load
+  try {
+    const stored = await db.getSetting(CIRCUIT_STATE_KEY);
+    if (!stored) return;
+    const parsed = JSON.parse(stored);
+    // Only restore an OPEN state whose cooldown hasn't already elapsed —
+    // a persisted OPEN with a past openUntil just means the process was
+    // down through the whole cooldown with nobody to probe; resuming as
+    // CLOSED is correct, the next real call decides fresh from there.
+    if (parsed.state === CIRCUIT_STATE.OPEN && parsed.openUntil > Date.now()) {
+      circuitState = CIRCUIT_STATE.OPEN;
+      circuitOpenUntil = parsed.openUntil;
+      circuitReason = parsed.reason;
+      console.warn(`[ER API] restored OPEN circuit from settings (across a restart) — still blocked until ${new Date(circuitOpenUntil).toISOString()}`);
+    }
+  } catch (err) {
+    // A failed load shouldn't crash startup — worst case the circuit
+    // starts CLOSED and re-learns the real state from the next call.
+    console.error('[ER API] failed to load persisted circuit state, starting CLOSED:', err.message);
+  }
+}
+
+// Fire-and-forget, same convention as logRawCall below — persisting must
+// never block or fail the actual API call it's describing.
+function persistCircuitState() {
+  db.setSetting(CIRCUIT_STATE_KEY, JSON.stringify({ state: circuitState, openUntil: circuitOpenUntil, reason: circuitReason })).catch((err) => {
+    console.error('[ER API] failed to persist circuit state:', err.message);
+  });
+}
+
 function openCircuit(reason) {
   circuitState = CIRCUIT_STATE.OPEN;
   circuitOpenUntil = Date.now() + FORBIDDEN_COOLDOWN_MS;
   circuitReason = reason;
   console.error(`[ER API] circuit OPEN (${reason}) until ${new Date(circuitOpenUntil).toISOString()}`);
+  persistCircuitState();
 }
 
 function closeCircuit() {
@@ -98,6 +139,7 @@ function closeCircuit() {
   circuitOpenUntil = 0;
   circuitReason = null;
   if (recovered) console.info('[ER API] circuit CLOSED; probe succeeded');
+  if (recovered) persistCircuitState();
 }
 
 function makeCircuitOpenError() {
@@ -136,6 +178,8 @@ function getCircuitBreakerState() {
 // firing.
 function fetchWithTimeout(url, options = {}) {
   const request = requestQueue.then(async () => {
+    await ensureCircuitStateLoaded();
+
     if (circuitState === CIRCUIT_STATE.OPEN) {
       if (Date.now() < circuitOpenUntil) {
         throw makeCircuitOpenError();
