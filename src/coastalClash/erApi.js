@@ -70,10 +70,12 @@ const FETCH_TIMEOUT_MS = 10000;
 // simpler explanation for every 403 seen (missing/empty key returns the
 // identical 403 Forbidden this API returns for a real block — confirmed
 // by testing both cases directly). If that's the actual cause, there was
-// never a real behavioral limit to be cautious against. 1100ms brings a
-// full ~74-90 player pass down to roughly ~1.4-1.7 min, well within
-// REFRESH_INTERVAL_MINUTES' 10-min cadence (see timer.js) with plenty of
-// slack to spare.
+// never a real behavioral limit to be cautious against. Each player costs
+// 2 calls here (fetchUserId + fetchRankRaw, see fetchUserRank below — the
+// caller in cull.js doesn't pass a cachedUserId, so both run every pass).
+// 1100ms brings a full ~74-90 player pass (~148-180 calls) down to roughly
+// ~2.7-3.3 min, comfortably within REFRESH_INTERVAL_MINUTES' 10-min
+// cadence (see timer.js).
 const MIN_REQUEST_GAP_MS = 1100;
 
 // How long the circuit stays OPEN (refusing all calls) after a 401/403.

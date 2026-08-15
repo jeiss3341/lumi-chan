@@ -72,8 +72,9 @@ async function alert(client, message) {
 // that file). Landed here after discovering ER_API_KEY may have been
 // missing from Railway's environment this whole time (not an actual
 // origin block) — if that's the real cause, there's no behavioral limit
-// to stay cautious against. At 1100ms spacing a full ~74-90 player pass
-// is roughly ~1.4-1.7 min, so 10 min leaves a wide ~8-8.5 min of slack.
+// to stay cautious against. At 1100ms spacing (2 calls/player) a full
+// ~74-90 player pass is roughly ~2.7-3.3 min, so 10 min still leaves a
+// comfortable ~6.5-7.3 min of slack.
 const REFRESH_INTERVAL_MINUTES = 10;
 // Twitch status has zero dependency on the ER API, and a single batched
 // Helix call for the whole roster is cheap/fast (no per-player spacing
