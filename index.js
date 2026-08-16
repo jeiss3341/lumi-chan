@@ -152,6 +152,9 @@ const {
   setBoardMessage,
   claimBounty,
   setSubmissionMetric,
+  setBountyExpiry,
+  getExpiredBounties,
+  setBountyExpired,
   setLeader,
   getUnfinalizedSubmissionBounties,
   markSubmissionsFinalized,
@@ -170,7 +173,7 @@ const {
 const { buildLeaderboardEmbeds, postOrUpdateLeaderboard, buildLiveNowEmbed, postLiveAnnouncements } = require('./src/coastalClash/embed');
 const { ETERNAL_RETURN_GAME_ID } = require('./src/coastalClash/twitchApi');
 const { runDailyCull } = require('./src/coastalClash/cull');
-const { dateForSimulatedDay } = require('./src/coastalClash/schedule');
+const { dateForSimulatedDay, getEventDay, cullMomentForDay } = require('./src/coastalClash/schedule');
 const db = require('./src/db');
 
 // The ONLY guild /daychange is allowed to run in, regardless of which
@@ -243,6 +246,7 @@ client.once(Events.ClientReady, async (c) => {
     await initDb();
     console.log('Database ready.');
     startCoastalClashTimers(c);
+    startExpirySweep(c);
   } catch (err) {
     console.error('Database init failed — the bot is up, but DB-backed features will error until it recovers:', err);
   }
@@ -530,7 +534,7 @@ async function closeOrArchiveTicket(channel, archiveCategoryId, newName) {
 // state (content + strips Approve/Deny), posts the approved card to
 // `boardGetter`'s channel, and archives the ticket. 'submissions'-type
 // bounties point this at the submissions board instead of the regular one.
-async function finalizeApproval({ interaction, bountyId, approved, boardGetter, boardComponents, ticketChannelId, ticketMessageId }) {
+async function finalizeApproval({ interaction, bountyId, approved, boardGetter, boardComponents, ticketChannelId, ticketMessageId, newTicketName }) {
   // Deferred immediately — everything below is several sequential Discord
   // API calls (comfortably past the 3-second ack window), and the final
   // message needs to report whether archiving actually succeeded, not just
@@ -553,7 +557,7 @@ async function finalizeApproval({ interaction, bountyId, approved, boardGetter, 
   }
 
   const editApproveArchiveCategoryId = await getRequestArchiveCategory();
-  const archived = await closeOrArchiveTicket(interaction.channel, editApproveArchiveCategoryId);
+  const archived = await closeOrArchiveTicket(interaction.channel, editApproveArchiveCategoryId, newTicketName);
   const archiveNote = !editApproveArchiveCategoryId
     ? ' Closing this ticket in a few seconds…'
     : archived
@@ -561,6 +565,131 @@ async function finalizeApproval({ interaction, bountyId, approved, boardGetter, 
       : ' ⚠️ Could not move this ticket into its archive category — check it\'s still configured correctly (`/deployrequestbounty`). Nothing was lost, it just stayed here.';
 
   await interaction.editReply({ content: `✅ **Approved** by ${interaction.user}${boardNote}.${archiveNote}` });
+}
+
+// Shared commit path for finishing an approval — extracted so both the
+// common case (step 2 submitted with Bounty Expires = No, finalizes
+// immediately) and the expiring case (step 2 = Yes, finalizes only after
+// staff picks a day on buildExpiryDayPicker below) go through the exact
+// same guards (bounty missing, title conflict, status race) and the same
+// revert-to-pending safety net on failure — see the two call sites for how
+// each path assembles its params.
+async function commitBountyApproval({ interaction, bountyId, name, description, donatorName, prizeType, amountRaw, tier, claimType, ticketChannelId, ticketMessageId, submissionMetric, expiresAt }) {
+  const bounty = await getBountyById(bountyId);
+  if (!bounty) {
+    pendingApprovals.delete(bountyId);
+    await interaction.reply({
+      content: resolveText('REPLIES.bountyMissing'),
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Block approval if this title already belongs to another approved/claimed
+  // bounty — staff has to press Approve again from the start with a
+  // different name (step 1 collected the name, not this step).
+  const conflict = await findTitleConflict(name, bountyId);
+  if (conflict) {
+    pendingApprovals.delete(bountyId);
+    await interaction.reply({
+      content: resolveText('REPLIES.approveTitleTaken').replace('%s', conflict.name),
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // groupType is re-supplied unchanged — staff don't set that here, it's
+  // fixed by the requester at request time.
+  await updateBounty(bountyId, { name, description, reward: amountRaw, donatorName, prizeType, tier, groupType: bounty.group_type, claimType });
+  if (submissionMetric) await setSubmissionMetric(bountyId, submissionMetric);
+  if (expiresAt) await setBountyExpiry(bountyId, expiresAt);
+
+  // Guarded on 'pending' — the admin site can change a bounty's status
+  // too (src/styleGuide/bountyRoutes.js), so if it was denied/cancelled
+  // there between this ticket opening and Approve being pressed, don't
+  // silently re-approve it over that decision.
+  const approvedRow = await setBountyStatus(bountyId, 'approved', interaction.user.id, 'pending');
+  if (!approvedRow) {
+    pendingApprovals.delete(bountyId);
+    const current = await getBountyById(bountyId);
+    await interaction.reply({
+      content: `⚠️ This bounty is no longer pending — it's **${current?.status ?? 'gone'}** now (changed from the admin site, or by someone else). Nothing was approved.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Everything past this point (posting to a board, archiving the
+  // ticket) is real Discord API calls that can fail for reasons outside
+  // our control (a missing permission, a deleted channel) — if any of it
+  // throws, the bounty shouldn't be left stuck 'approved' with no board
+  // post and no way to tell staff tried and failed. Revert to 'pending'
+  // and say so plainly, rather than the old silent half-finished state.
+  try {
+    const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
+    const approved = buildBountyEmbed({
+      name,
+      description,
+      amountRaw,
+      groupType: bounty.group_type,
+      user: requester ?? interaction.user,
+      status: 'approved',
+      expiresAt,
+    });
+
+    // Same request-board post for both claim types — no buttons, never
+    // edited again. A submissions bounty's live #submissions leaderboard
+    // card doesn't exist yet at approval time; it's created later, on
+    // the first claim (see promoteSubmissionLeader).
+    await finalizeApproval({
+      interaction,
+      bountyId,
+      approved,
+      boardGetter: getBoardChannel,
+      ticketChannelId,
+      ticketMessageId,
+      newTicketName: toChannelName('closed-approved', name),
+    });
+  } catch (err) {
+    console.error('Approval failed partway through — reverting to pending:', err);
+    await setBountyPending(bountyId, interaction.user.id).catch(console.error);
+    const revertReply = {
+      content: "⚠️ Something went wrong finishing this approval — reverted back to **pending** so it isn't stuck. Press **Approve** again to retry.",
+      flags: MessageFlags.Ephemeral,
+    };
+    if (interaction.replied || interaction.deferred) await interaction.followUp(revertReply).catch(() => {});
+    else await interaction.reply(revertReply).catch(() => {});
+  }
+  pendingApprovals.delete(bountyId);
+}
+
+// Button grid for the expiry day-picker, shown after step 2 when staff
+// picks "Yes" on Bounty Expires. Only ever needs to cover the event's own
+// window (today's event day through Day 17 — see schedule.js), which tops
+// out at 15 buttons, comfortably under Discord's 25-per-message cap — so
+// unlike a general-purpose calendar bot, this never needs month navigation
+// or pagination.
+function buildExpiryDayPicker(bountyId) {
+  const todayDay = Math.max(getEventDay(new Date()), 1);
+  const days = [];
+  for (let day = todayDay; day <= 17; day++) days.push(day);
+
+  const rows = [];
+  for (let i = 0; i < days.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(
+      days.slice(i, i + 5).map((day) => new ButtonBuilder()
+        .setCustomId(`expiry_day_pick:${bountyId}:${day}`)
+        .setLabel(dateForSimulatedDay(day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' }))
+        .setStyle(ButtonStyle.Secondary)),
+    ));
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('Pick an expiry day')
+    .setDescription('Bounty expires at 11:59:59 PM PST on the day you pick — same moment as daily culling.');
+
+  return { embeds: [embed], components: rows };
 }
 
 // /endsubmissions' two-step confirmation — this is a bulk, public,
@@ -816,6 +945,77 @@ async function announceSubmissionBountyPublicly(guild, bounty) {
 
   await markSubmissionsFinalized(bounty.id);
   return { claimBoardChannel };
+}
+
+// Pulls an expired bounty's board post(s) — same shape as the admin site's
+// removeBoardPost (src/styleGuide/bountyRoutes.js), duplicated rather than
+// imported since that module is scoped to the admin HTTP routes, not the
+// bot's own runtime. Used only by sweepExpiredBounties below.
+async function removeExpiredBoardPost(client, bounty) {
+  if (bounty.claim_type === 'submissions' && bounty.submissions_board_channel_id && bounty.submissions_board_message_id) {
+    const subChannel = await client.channels.fetch(bounty.submissions_board_channel_id).catch(() => null);
+    const subMsg = subChannel ? await subChannel.messages.fetch(bounty.submissions_board_message_id).catch(() => null) : null;
+    if (subMsg) await subMsg.delete().catch(() => null);
+  }
+
+  if (!bounty.board_channel_id || !bounty.board_message_id) return;
+  const channel = await client.channels.fetch(bounty.board_channel_id).catch(() => null);
+  const msg = channel ? await channel.messages.fetch(bounty.board_message_id).catch(() => null) : null;
+  if (msg) await msg.delete().catch(() => null);
+}
+
+// Runs every EXPIRY_SWEEP_INTERVAL_MINUTES (see startExpirySweep below) —
+// finds every 'approved' bounty whose expires_at has passed and resolves
+// it:
+// - A submissions bounty that already has a leader is finalized exactly
+//   like /endsubmissions treats one (declares the current leader the
+//   winner) — reuses the same two functions that command calls per-bounty,
+//   so an auto-expired submissions bounty behaves identically to one a
+//   staff member closes by hand.
+// - Everything else (claim-type, or a submissions bounty nobody ever
+//   submitted to — nothing to declare a winner over) is just marked
+//   'expired' and pulled off the board, same as a denied/cancelled bounty.
+// Single-guild bot, same assumption the rest of this file already makes
+// (client.guilds.cache.first()).
+async function sweepExpiredBounties(client) {
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+
+  const expired = await getExpiredBounties().catch((err) => {
+    console.error('Expiry sweep: failed to query expired bounties:', err);
+    return [];
+  });
+
+  for (const bounty of expired) {
+    try {
+      if (bounty.claim_type === 'submissions' && bounty.leader_id) {
+        const closed = await finalizeSubmissionBountyPrivately(guild, bounty);
+        if (closed) await announceSubmissionBountyPublicly(guild, closed);
+        continue;
+      }
+
+      // Guarded on 'approved' (see setBountyExpired) — if a claim snuck in
+      // between the sweep's SELECT and this UPDATE, this returns null and
+      // the bounty is left exactly as that claim just made it, untouched.
+      const updated = await setBountyExpired(bounty.id);
+      if (!updated) continue;
+      await removeExpiredBoardPost(client, updated);
+    } catch (err) {
+      console.error(`Expiry sweep: failed to resolve bounty #${bounty.id}:`, err);
+    }
+  }
+}
+
+// 5 min — bounty expiry lands on a fixed moment (11:59:59 PM PDT, same as
+// daily culling, see schedule.js), not something staff are watching in
+// real time, so this just needs to reliably catch it within a few minutes
+// of actually passing, not fire fast.
+const EXPIRY_SWEEP_INTERVAL_MINUTES = 5;
+
+function startExpirySweep(client) {
+  setInterval(() => {
+    sweepExpiredBounties(client).catch((err) => console.error('Expiry sweep failed:', err));
+  }, EXPIRY_SWEEP_INTERVAL_MINUTES * 60 * 1000);
 }
 
 // True if this channel is already sitting in the given archive category —
@@ -1726,14 +1926,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const bountyId = customIdArg(interaction);
+      let deniedBounty = null;
       if (bountyId) {
-        await denyBounty(bountyId, interaction.user.id).catch(console.error);
+        deniedBounty = await denyBounty(bountyId, interaction.user.id).catch(console.error);
       }
 
       // Deferred so the archive result is known before the message goes out
       // — same reasoning as finalizeApproval.
       await interaction.deferReply();
-      const archived = await closeOrArchiveTicket(interaction.channel, denyArchiveCategoryId);
+      const deniedName = deniedBounty ? toChannelName('closed-denied', deniedBounty.name) : undefined;
+      const archived = await closeOrArchiveTicket(interaction.channel, denyArchiveCategoryId, deniedName);
       const archiveNote = !denyArchiveCategoryId
         ? 'Closing this ticket in a few seconds…'
         : archived
@@ -1878,6 +2080,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const [prizeType] = interaction.fields.getStringSelectValues('bounty_reward_type');
       const amountRaw = interaction.fields.getTextInputValue('bounty_amount');
+      const [isExpiring] = interaction.fields.getStringSelectValues('bounty_is_expiring');
 
       const step1 = pendingApprovals.get(bountyId);
       if (!step1) {
@@ -1898,89 +2101,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
         submissionMetric = { kind, label };
       }
 
-      const bounty = await getBountyById(bountyId);
-      if (!bounty) {
-        pendingApprovals.delete(bountyId);
+      const collected = { name, description, donatorName, prizeType, amountRaw, tier, claimType, ticketChannelId, ticketMessageId, submissionMetric };
+
+      // "No" (the common case) finalizes right here, same as before this
+      // field existed. "Yes" can't collect a date in this same modal
+      // (Discord modals can't reveal a field conditionally, and this one's
+      // already at its 5-component cap for submissions bounties) — instead,
+      // re-save everything collected so far under pendingApprovals and
+      // follow up with a day-picker button grid (expiry_day_pick below),
+      // which is what actually finalizes the approval for an expiring
+      // bounty.
+      if (isExpiring !== 'yes') {
+        await commitBountyApproval({ interaction, bountyId, ...collected, expiresAt: null });
+        return;
+      }
+
+      pendingApprovals.set(bountyId, { ...collected, createdAt: Date.now() });
+      await interaction.reply({ ...buildExpiryDayPicker(bountyId), flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    // Staff picked a day on the expiry grid (buildExpiryDayPicker, shown
+    // above when step 2's Bounty Expires was "Yes") — this is what actually
+    // finalizes the approval for an expiring bounty; the non-expiring path
+    // finalizes directly from the step 2 handler instead.
+    if (interaction.isButton() && interaction.customId.startsWith('expiry_day_pick:')) {
+      const [, bountyId, dayRaw] = interaction.customId.split(':');
+
+      const collected = pendingApprovals.get(bountyId);
+      if (!collected) {
         await interaction.reply({
-          content: resolveText('REPLIES.bountyMissing'),
+          content: '⚠️ This approval session expired — press **Approve** again to restart.',
           flags: MessageFlags.Ephemeral,
         });
         return;
       }
 
-      // Block approval if this title already belongs to another approved/claimed
-      // bounty — staff has to press Approve again from the start with a
-      // different name (step 1 collected the name, not this step).
-      const conflict = await findTitleConflict(name, bountyId);
-      if (conflict) {
-        pendingApprovals.delete(bountyId);
-        await interaction.reply({
-          content: resolveText('REPLIES.approveTitleTaken').replace('%s', conflict.name),
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      // groupType is re-supplied unchanged — staff don't set that here, it's
-      // fixed by the requester at request time.
-      await updateBounty(bountyId, { name, description, reward: amountRaw, donatorName, prizeType, tier, groupType: bounty.group_type, claimType });
-      if (submissionMetric) await setSubmissionMetric(bountyId, submissionMetric);
-
-      // Guarded on 'pending' — the admin site can change a bounty's status
-      // too (src/styleGuide/bountyRoutes.js), so if it was denied/cancelled
-      // there between this ticket opening and Approve being pressed, don't
-      // silently re-approve it over that decision.
-      const approvedRow = await setBountyStatus(bountyId, 'approved', interaction.user.id, 'pending');
-      if (!approvedRow) {
-        pendingApprovals.delete(bountyId);
-        const current = await getBountyById(bountyId);
-        await interaction.reply({
-          content: `⚠️ This bounty is no longer pending — it's **${current?.status ?? 'gone'}** now (changed from the admin site, or by someone else). Nothing was approved.`,
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      // Everything past this point (posting to a board, archiving the
-      // ticket) is real Discord API calls that can fail for reasons outside
-      // our control (a missing permission, a deleted channel) — if any of it
-      // throws, the bounty shouldn't be left stuck 'approved' with no board
-      // post and no way to tell staff tried and failed. Revert to 'pending'
-      // and say so plainly, rather than the old silent half-finished state.
-      try {
-        const requester = await client.users.fetch(bounty.requester_id).catch(() => null);
-        const approved = buildBountyEmbed({
-          name,
-          description,
-          amountRaw,
-          groupType: bounty.group_type,
-          user: requester ?? interaction.user,
-          status: 'approved',
-        });
-
-        // Same request-board post for both claim types — no buttons, never
-        // edited again. A submissions bounty's live #submissions leaderboard
-        // card doesn't exist yet at approval time; it's created later, on
-        // the first claim (see promoteSubmissionLeader).
-        await finalizeApproval({
-          interaction,
-          bountyId,
-          approved,
-          boardGetter: getBoardChannel,
-          ticketChannelId,
-          ticketMessageId,
-        });
-      } catch (err) {
-        console.error('Approval failed partway through — reverting to pending:', err);
-        await setBountyPending(bountyId, interaction.user.id).catch(console.error);
-        const revertReply = {
-          content: "⚠️ Something went wrong finishing this approval — reverted back to **pending** so it isn't stuck. Press **Approve** again to retry.",
-          flags: MessageFlags.Ephemeral,
-        };
-        if (interaction.replied || interaction.deferred) await interaction.followUp(revertReply).catch(() => {});
-        else await interaction.reply(revertReply).catch(() => {});
-      }
-      pendingApprovals.delete(bountyId);
+      await commitBountyApproval({ interaction, bountyId, ...collected, expiresAt: cullMomentForDay(Number(dayRaw)) });
       return;
     }
 

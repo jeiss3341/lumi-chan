@@ -37,7 +37,7 @@ const TIERS = [
 // (src/modal.js) and the DB's group_type values.
 const GROUP_TYPES = [
   { value: 'solo', label: 'Solo Only' },
-  { value: 'premade', label: 'Premade Allowed' },
+  { value: 'premade', label: 'Stack Allowed' },
 ];
 
 // Same idea for Claim Type — which of /deployclaimbounty's two active
@@ -57,12 +57,13 @@ const STATUS_LABELS = {
   claimed: '🏁 Claimed',
   denied: '⛔ Denied',
   cancelled: '🚫 Cancelled',
+  expired: '⏰ Expired',
 };
 
-const STATUS_FILTERS = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled'];
+const STATUS_FILTERS = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled', 'expired'];
 
 const GROUP_FILTERS = ['all', 'solo', 'premade'];
-const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Premade Allowed' };
+const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Stack Allowed' };
 
 // Same idea as GROUP_FILTERS, for claim_type — lets staff pull up just the
 // ongoing submissions leaderboards, or just regular one-shot claims,
@@ -198,6 +199,7 @@ ${BASE_STYLES}
   .status-approved { background: color-mix(in srgb, #1abc9c 22%, var(--paper-raised)); color: #0e8272; }
   .status-claimed { background: color-mix(in srgb, #1f8fb8 22%, var(--paper-raised)); color: var(--accent-ink); }
   .status-denied, .status-cancelled { background: var(--warn-bg); color: var(--warn); }
+  .status-expired { background: color-mix(in srgb, var(--muted) 22%, var(--paper-raised)); color: var(--muted); }
   .btn {
     padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper);
     color: var(--ink-soft); font-weight: 600; font-size: 12.5px; cursor: pointer; text-decoration: none;

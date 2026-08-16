@@ -122,6 +122,12 @@
     // 'claim' bounties.
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submission_metric_kind TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS submission_metric_label TEXT;`);
+    // Set once at approval time (buildApproveModalStep2's expiry picker) —
+    // 11:59:59 PM PDT on whichever event day staff picked, same moment as
+    // daily culling (see schedule.js's cullMomentForDay). Null means never
+    // expires. Nothing currently sweeps bounties past this automatically —
+    // it's read-only display for now (see bountyCard.js's Expires field).
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_id TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_value TEXT;`);
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_ticket_channel_id TEXT;`);
@@ -897,6 +903,34 @@
     );
   }
 
+  // One-time write, from the approve-modal's expiry day-picker. `expiresAt`
+  // is null for a non-expiring bounty (the common case) — never touched
+  // again after approval.
+  async function setBountyExpiry(id, expiresAt) {
+    await pool.query(`UPDATE bounties SET expires_at = $2 WHERE id = $1`, [id, expiresAt]);
+  }
+
+  // Polled by index.js's expiry sweep (runs every few minutes) — every
+  // still-open bounty whose expires_at has passed. 'approved' only:
+  // claimed/denied/cancelled/expired bounties are already resolved, an
+  // expires_at on one of those (shouldn't normally happen, but if staff
+  // set one before a claim came in) is just inert leftover data.
+  async function getExpiredBounties() {
+    const result = await pool.query(
+      `SELECT * FROM bounties WHERE status = 'approved' AND expires_at IS NOT NULL AND expires_at <= NOW()`,
+    );
+    return result.rows;
+  }
+
+  // Flips an expired bounty to 'expired' — same compare-and-swap guard as
+  // setBountyStatus (only lands if it's still 'approved'), so a claim that
+  // sneaks in between the sweep's SELECT and this UPDATE doesn't get
+  // silently overwritten to expired out from under it. actorId is null —
+  // this is a system action, not a staff member's.
+  async function setBountyExpired(id) {
+    return setBountyStatus(id, 'expired', null, 'approved');
+  }
+
   // Promotes a submission claim to current leader. Guarded on 'approved' —
   // same reasoning as claimBounty above (someone else finalizing/closing the
   // bounty in between shouldn't get silently overwritten). Returns the
@@ -1039,6 +1073,9 @@
     setSubmissionsBoardMessage,
     claimBounty,
     setSubmissionMetric,
+    setBountyExpiry,
+    getExpiredBounties,
+    setBountyExpired,
     setLeader,
     getUnfinalizedSubmissionBounties,
     markSubmissionsFinalized,

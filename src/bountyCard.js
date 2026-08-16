@@ -22,7 +22,7 @@ function formatAmount(raw) {
   return text || '—';
 }
 
-const GROUP_TYPE_LABELS = { solo: 'Solo Only', premade: 'Premade Allowed' };
+const GROUP_TYPE_LABELS = { solo: 'Solo Only', premade: 'Stack Allowed' };
 
 function formatGroupType(raw) {
   return GROUP_TYPE_LABELS[raw] ?? '—';
@@ -32,21 +32,37 @@ function formatGroupType(raw) {
 // it as it moves through the flow: 'pending' ("Bounty Request", blurple) →
 // 'approved' ("Bounty Approved", green). Denied tickets just close, so
 // there's no 'denied' title — the pending one is a safe fallback.
-function buildBountyEmbed({ name, description, amountRaw, groupType, user, status = 'pending' }) {
+function buildBountyEmbed({ name, description, amountRaw, groupType, user, status = 'pending', expiresAt = null }) {
   const titlePrefix =
     status === 'approved' ? resolveText('CARD.request.approvedTitlePrefix') : resolveText('CARD.request.titlePrefix');
-  return new EmbedBuilder()
+
+  // Discord's own <t:UNIX:R> markdown renders as a live, auto-updating
+  // "expires in 3 days" — per-viewer localized, no manual countdown math
+  // needed. Folded into the description rather than its own field: the 3
+  // fields below already fill exactly one row, so a 4th field (inline or
+  // not) always strands itself alone on the next row with empty space
+  // beside it — a description line just reads as another line of text,
+  // no awkward layout either way. Omitted entirely for the (common)
+  // non-expiring case.
+  let fullDescription = description;
+  if (expiresAt) {
+    const unix = Math.floor(new Date(expiresAt).getTime() / 1000);
+    fullDescription += `\n\n**${resolveText('CARD.request.fieldExpires')}:** <t:${unix}:R>`;
+  }
+
+  const embed = new EmbedBuilder()
     .setColor(COLORS[status] ?? COLORS.pending)
     .setTitle(`${titlePrefix} ${name}`)
-    .setDescription(description)
+    .setDescription(fullDescription)
     .setThumbnail(user.displayAvatarURL())
     .addFields(
       { name: resolveText('CARD.request.fieldRequester'), value: `<@${user.id}>`, inline: true },
       { name: resolveText('CARD.request.fieldReward'), value: formatAmount(amountRaw), inline: true },
       { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(groupType), inline: true },
-    )
-    .setImage(BANNER_URL)
-    .setFooter({ text: footerWithTimestamp() });
+    );
+
+  embed.setImage(BANNER_URL).setFooter({ text: footerWithTimestamp() });
+  return embed;
 }
 
 // Builds the claim-review card shown inside a claim ticket. `notes` is the
@@ -65,7 +81,7 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
       { name: resolveText('CARD.claim.fieldReward'), value: formatAmount(bounty.reward), inline: true },
       // Group Type shown here to match the submissions board card
       // (buildLeaderboardEmbed below), which has always carried it — a claim
-      // card had no way to tell Solo Only from Premade Allowed before this.
+      // card had no way to tell Solo Only from Stack Allowed before this.
       // Sits third so the public claim-board card (which strips Original
       // Requester — see index.js approve_claim) reads Claimant/Reward/Group
       // Type on one row, leaving Teammates its own row underneath.
@@ -105,7 +121,7 @@ function leaderboardLine(bounty, { closed = false } = {}) {
 function buildLeaderboardEmbed(bounty, { closed = false, leaderAvatarURL } = {}) {
   const titlePrefix = closed
     ? resolveText('CARD.submissions.closedTitlePrefix')
-    : resolveText('CARD.request.approvedTitlePrefix');
+    : resolveText('CARD.submissions.openTitlePrefix');
 
   const embed = new EmbedBuilder()
     .setColor(closed ? COLORS.approved : COLORS.pending)

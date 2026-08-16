@@ -50,7 +50,7 @@ function buildBountyModal() {
     .setMaxValues(1)
     .addOptions(
       { label: 'Solo Only', value: 'solo' },
-      { label: 'Premade Allowed', value: 'premade' },
+      { label: 'Stack Allowed', value: 'premade' },
     );
   const groupTypeLabel = new LabelBuilder()
     .setLabel(resolveText('MODAL.bountyRequest.groupType.label'))
@@ -106,7 +106,7 @@ function buildApproveModalStep1(bounty) {
     .setCustomId(`approve_modal_step1:${bounty.id}`)
     .setTitle(`${TEXT.MODAL.approveEdit.title} (1/2)`);
 
-  // Premade Allowed gets the plural label/hint — reminding staff this is
+  // Stack Allowed gets the plural label/hint — reminding staff this is
   // where the whole team's preferred names go (gathered by talking it over
   // with the requester in the ticket), not just the one requester's own
   // name. Same field either way (bounty_donator) — just the copy differs.
@@ -252,6 +252,26 @@ function buildApproveModalStep2(bounty, claimType) {
     components.push(kindLabel, metricLabelLabel);
   }
 
+  // Yes/No gate — picking Yes doesn't collect a date here (Discord modals
+  // can't reveal a field conditionally within one submission, and this
+  // modal is already at its 5-component cap for submissions bounties
+  // anyway). index.js reads this and, if Yes, follows up with a day-picker
+  // button grid (a separate message, not a modal — buttons can't live
+  // inside modals) instead of finalizing the approval immediately.
+  const expiringSelect = new StringSelectMenuBuilder()
+    .setCustomId('bounty_is_expiring')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'No — never expires', value: 'no', default: true },
+      { label: 'Yes — pick an expiry day', value: 'yes' },
+    );
+  const expiringLabel = new LabelBuilder()
+    .setLabel(TEXT.MODAL.approveEdit.isExpiring.label)
+    .setDescription(TEXT.MODAL.approveEdit.isExpiring.description)
+    .setStringSelectMenuComponent(expiringSelect);
+  components.push(expiringLabel);
+
   modal.addLabelComponents(...components);
   return modal;
 }
@@ -303,7 +323,7 @@ function buildClaimProofModal(bounty) {
   const fileInput = new FileUploadBuilder()
     .setCustomId('claim_files')
     .setMinValues(0)
-    .setMaxValues(3)
+    .setMaxValues(4)
     .setRequired(false);
   const fileLabel = new LabelBuilder()
     .setLabel(resolveText('MODAL.claimProof.files.label'))
