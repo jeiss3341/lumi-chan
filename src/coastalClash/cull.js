@@ -18,7 +18,23 @@ const schedule = require('./schedule');
 // fetched this cycle, so "Last updated" never claims freshness it doesn't
 // have.
 async function updateLeaderboardMeta(day, startedAt) {
-  const nextCullDay = schedule.getNextCullDay('pro', day);
+  // Same "has today's own cull already run?" check as
+  // updateIndangerForBracket above — getNextCullDay always skips to day+1,
+  // which is only correct once today's cull has actually executed (true
+  // inside runDailyCull, called after executeCullForBracket). Called from
+  // refreshLeaderboardOnly's 10-min ticks too, which run all day BEFORE
+  // that day's cull fires — without this check, next_cull_at (the only
+  // countdown data project-lumi's site reads) points a full day too far
+  // out for the entire day leading up to a cull.
+  const todayThreshold = schedule.getThreshold('pro', day);
+  let nextCullDay;
+  if (todayThreshold !== null) {
+    const { rows } = await db.pool.query(`SELECT count(*) FROM players WHERE culled = false AND ispro = true`);
+    const activeCount = parseInt(rows[0].count, 10);
+    nextCullDay = activeCount > todayThreshold ? day : schedule.getNextCullDay('pro', day);
+  } else {
+    nextCullDay = schedule.getNextCullDay('pro', day);
+  }
   const nextCullAt = nextCullDay !== null ? schedule.cullMomentForDay(nextCullDay) : null;
   await db.setLeaderboardMeta(nextCullAt, startedAt);
 }
@@ -317,12 +333,29 @@ async function refreshTwitchLiveStatus(pool, dryRun = false) {
 // in the DB by this point, so the exclusion is redundant, not wrong).
 async function updateIndangerForBracket(pool, isPro, day, dryRun = false, excludeNames = []) {
   const bracket = isPro ? 'pro' : 'casual';
-  const threshold = day < 2 ? null : schedule.getNextCullThreshold(bracket, day);
 
   const { rows: active } = await pool.query(
     `SELECT name FROM players WHERE culled = false AND ispro = $1 AND NOT (name = ANY($2::text[])) ORDER BY mmr ASC, name ASC`,
     [isPro, excludeNames],
   );
+
+  // TODAY's own threshold is the imminent cull as long as it hasn't
+  // actually executed yet (the active pool is still bigger than it) —
+  // this is what makes refreshLeaderboardOnly's 10-min ticks (which run
+  // ALL DAY on a cull day, well before the 11:59 PM PDT cull fires) preview
+  // the correct upcoming cutoff instead of skipping straight to the day
+  // after. Once today's cull has actually run (active count already at or
+  // under its threshold — true immediately after executeCullForBracket, or
+  // trivially true on a non-cull day where getThreshold(day) is null),
+  // "next cull" correctly means whatever real cull comes after today
+  // (getNextCullThreshold, which already skips grace/patch gap days).
+  let threshold = null;
+  if (day >= 2) {
+    const todayThreshold = schedule.getThreshold(bracket, day);
+    threshold = (todayThreshold !== null && active.length > todayThreshold)
+      ? todayThreshold
+      : schedule.getNextCullThreshold(bracket, day);
+  }
 
   // Day 1, or past the last scheduled cull — nobody's in danger.
   if (threshold === null) {
