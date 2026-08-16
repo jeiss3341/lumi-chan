@@ -106,12 +106,16 @@ async function main() {
         continue;
       }
 
+      const oldName = channel.name;
       const newName = toChannelName(channel.name, displayName);
       if (DRY_RUN) {
-        console.log(`  [dry-run] ${channel.name} -> ${newName}`);
+        console.log(`  [dry-run] ${oldName} -> ${newName}`);
       } else {
+        // channel.setName mutates this same channel object's .name in
+        // place, so oldName must be captured before this call — logging
+        // channel.name afterward would print the new value on both sides.
         await channel.setName(newName);
-        console.log(`  renamed ${channel.name} -> ${newName}`);
+        console.log(`  renamed ${oldName} -> ${newName}`);
         await sleep(RENAME_DELAY_MS);
       }
       renamed++;
