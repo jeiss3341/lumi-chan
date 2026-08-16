@@ -22,7 +22,7 @@ function formatAmount(raw) {
   return text || '—';
 }
 
-const GROUP_TYPE_LABELS = { solo: 'Solo Only', premade: 'Premade Allowed' };
+const GROUP_TYPE_LABELS = { solo: 'Solo Only', premade: 'Premade Allowed', matched: 'Solo Queue Match' };
 
 function formatGroupType(raw) {
   return GROUP_TYPE_LABELS[raw] ?? '—';
