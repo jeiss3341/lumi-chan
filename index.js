@@ -787,7 +787,8 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
         .catch(console.error);
 
       const lostArchiveCategoryId = await getClaimArchiveCategory();
-      const lostArchived = await closeOrArchiveTicket(oldChannel, lostArchiveCategoryId, toChannelName('submission-lost', bounty.name));
+      const previousLeaderName = (await interaction.guild.members.fetch(updated.previous_leader_id).catch(() => null))?.displayName ?? null;
+      const lostArchived = await closeOrArchiveTicket(oldChannel, lostArchiveCategoryId, toChannelName('submission-lost', bounty.name, previousLeaderName));
       const lostNote = !lostArchiveCategoryId
         ? ' (closing soon, no archive category configured)'
         : lostArchived
@@ -812,7 +813,8 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
   if (ticketChannel && archiveCategoryId) {
     try {
       await ticketChannel.setParent(archiveCategoryId, { lockPermissions: true });
-      await ticketChannel.setName(toChannelName('submission-won', bounty.name)).catch(console.error);
+      const winningClaimantName = (await interaction.guild.members.fetch(claimantId).catch(() => null))?.displayName ?? null;
+      await ticketChannel.setName(toChannelName('submission-won', bounty.name, winningClaimantName)).catch(console.error);
       await alphabetizeCategory(ticketChannel.parent).catch(console.error);
       notes.push('archived');
     } catch (err) {
@@ -891,7 +893,11 @@ async function archiveDanglingSubmissionTickets(guild, bounty, exceptChannelId) 
       const lostEmbed = EmbedBuilder.from(cardMessage.embeds[0]).setColor(COLORS.denied);
       await cardMessage.edit({ embeds: [lostEmbed], components: [] }).catch(() => null);
     }
-    const archived = await closeOrArchiveTicket(channel, archiveCategoryId, toChannelName('submission-lost', bounty.name));
+    const danglingClaimantId = cardMessage?.embeds[0] ? extractMentionId(cardMessage.embeds[0], 'Claimant') : null;
+    const danglingClaimantName = danglingClaimantId
+      ? (await guild.members.fetch(danglingClaimantId).catch(() => null))?.displayName ?? null
+      : null;
+    const archived = await closeOrArchiveTicket(channel, archiveCategoryId, toChannelName('submission-lost', bounty.name, danglingClaimantName));
     results.push({ channel, archived });
   }
   return results;
@@ -2493,7 +2499,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const approvedPrefix = 'declared-claim';
         try {
           await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true });
-          await interaction.channel.setName(toChannelName(approvedPrefix, updated.name)).catch(console.error);
+          const approvedClaimantName = (await interaction.guild.members.fetch(claimantId).catch(() => null))?.displayName ?? null;
+          await interaction.channel.setName(toChannelName(approvedPrefix, updated.name, approvedClaimantName)).catch(console.error);
           await alphabetizeCategory(interaction.channel.parent);
           notes.push('archived');
         } catch (err) {
@@ -2667,15 +2674,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       // Built fresh from the bounty's own name/claim_type (like approve_claim
       // does), not stacked onto the ticket's existing "claim-<bounty>-
-      // <claimant>" name — gives "denied-claim-<bounty>" / "submission-lost-
-      // <bounty>" instead of doubling up "claim-claim-...". A denied
-      // submission (fresh, or a reopened one staff decided not to reinstate)
-      // reads as 'submission-lost' rather than 'denied-submission' — this is
-      // the didn't-win outcome, same idea as promoteSubmissionLeader's own
-      // 'submission-won' for the opposite case.
+      // <claimant>" name — gives "denied-claim-<bounty>-<claimant>" /
+      // "submission-lost-<bounty>-<claimant>" instead of doubling up
+      // "claim-claim-...". The claimant's name is re-appended at the end
+      // (not reused from the old name) specifically so it never doubles the
+      // "claim" prefix. A denied submission (fresh, or a reopened one staff
+      // decided not to reinstate) reads as 'submission-lost' rather than
+      // 'denied-submission' — this is the didn't-win outcome, same idea as
+      // promoteSubmissionLeader's own 'submission-won' for the opposite case.
       const bounty = await getBountyById(customIdArg(interaction));
       const deniedPrefix = bounty?.claim_type === 'submissions' ? 'submission-lost' : 'denied-claim';
-      const deniedName = bounty ? toChannelName(deniedPrefix, bounty.name) : undefined;
+      const deniedClaimantId = interaction.message.embeds[0] ? extractMentionId(interaction.message.embeds[0], 'Claimant') : null;
+      const deniedClaimantName = deniedClaimantId
+        ? (await interaction.guild.members.fetch(deniedClaimantId).catch(() => null))?.displayName ?? null
+        : null;
+      const deniedName = bounty ? toChannelName(deniedPrefix, bounty.name, deniedClaimantName) : undefined;
 
       // Recolor and strip the buttons from the original ticket message —
       // approve_claim already does this on success; deny_claim didn't, which
