@@ -209,7 +209,7 @@ module.exports = {
       },
       groupType: {
         label: 'Group Type',
-        description: 'Solo only, or can a premade group complete it together?',
+        description: 'Solo only, a premade group, or Roll Required?',
       },
     },
     // src/modal.js → buildApproveModalStep1()/buildApproveModalStep2(). Staff's

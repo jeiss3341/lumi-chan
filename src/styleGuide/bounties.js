@@ -348,7 +348,7 @@ function buildBountyNewHtml({ username, errors = {}, values = {} }) {
       ${selectRow({ name: 'tier', label: 'Tier', value: values.tier, error: errors.tier, options: TIERS, hint: 'Optional.' })}
       ${selectRow({ name: 'prize_type', label: 'Reward Type', value: values.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward below.' })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: values.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters — free text, e.g. "$10" or "250 NP".` })}
-      ${selectRow({ name: 'group_type', label: 'Group Type', value: values.group_type, error: errors.group_type, options: GROUP_TYPES, hint: 'Optional — solo only, or premade allowed?' })}
+      ${selectRow({ name: 'group_type', label: 'Group Type', value: values.group_type, error: errors.group_type, options: GROUP_TYPES, hint: 'Optional — solo only, premade, or Roll Required?' })}
       ${selectRow({ name: 'claim_type', label: 'Claim Type', value: values.claim_type, error: errors.claim_type, options: CLAIM_TYPES, hint: 'Optional — which category the claim ticket opens under. Defaults to Claim.' })}
       <div class="save-row">
         <button type="submit" name="initialStatus" value="pending" class="btn">Create as Pending</button>
@@ -418,7 +418,7 @@ function buildBountyEditHtml({ bounty, tags, boardLink, username, errors = {}, v
       ${selectRow({ name: 'prize_type', label: 'Reward Type', value: v.prize_type, error: errors.prize_type, options: PRIZE_TYPES, hint: 'Optional — classifies the reward below.' })}
       ${fieldRow({ name: 'reward', label: 'Reward', value: v.reward, error: errors.reward, hint: `Max ${LIMITS.reward} characters.` })}
       ${selectRow({ name: 'claim_type', label: 'Claim Type', value: v.claim_type, error: errors.claim_type, options: CLAIM_TYPES, hint: 'Optional — which category the claim ticket opens under. Defaults to Claim.' })}
-      ${selectRow({ name: 'group_type', label: 'Group Type', value: v.group_type, error: errors.group_type, options: GROUP_TYPES, hint: 'Optional — solo only, or premade allowed?' })}
+      ${selectRow({ name: 'group_type', label: 'Group Type', value: v.group_type, error: errors.group_type, options: GROUP_TYPES, hint: 'Optional — solo only, premade, or Roll Required?' })}
       <div class="save-row">
         <button type="submit" class="btn btn-primary">Save Changes</button>
       </div>
