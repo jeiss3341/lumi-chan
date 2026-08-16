@@ -22,7 +22,7 @@ function formatAmount(raw) {
   return text || '—';
 }
 
-const GROUP_TYPE_LABELS = { solo: 'Solo Only', premade: 'Stack Allowed' };
+const GROUP_TYPE_LABELS = { solo: 'Solo Only', premade: 'Premade Allowed' };
 
 function formatGroupType(raw) {
   return GROUP_TYPE_LABELS[raw] ?? '—';
@@ -81,7 +81,7 @@ function buildClaimEmbed({ bounty, claimant, notes, status = 'pending' }) {
       { name: resolveText('CARD.claim.fieldReward'), value: formatAmount(bounty.reward), inline: true },
       // Group Type shown here to match the submissions board card
       // (buildLeaderboardEmbed below), which has always carried it — a claim
-      // card had no way to tell Solo Only from Stack Allowed before this.
+      // card had no way to tell Solo Only from Premade Allowed before this.
       // Sits third so the public claim-board card (which strips Original
       // Requester — see index.js approve_claim) reads Claimant/Reward/Group
       // Type on one row, leaving Teammates its own row underneath.

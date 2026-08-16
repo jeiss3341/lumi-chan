@@ -222,7 +222,7 @@ module.exports = {
         description: "Who to credit — leave blank to use the requester's current Discord nickname",
       },
       // Shown instead of the singular version above when the bounty's
-      // Group Type is Stack Allowed — same field (bounty_donator), just a
+      // Group Type is Premade Allowed — same field (bounty_donator), just a
       // label/hint reminding staff this is where the whole team's names go,
       // gathered by talking it over with the requester in the ticket, not
       // just the one requester's own name.
@@ -366,7 +366,7 @@ module.exports = {
         title: '📖 How the Bounty System Works (1/3) — Players',
         description: [
           '💰 **Requesting a Bounty**',
-          '> 1. Press **Request Bounty** on the request board and fill out a short form: an optional preferred name (falls back to your Discord nickname), name, description, reward, and whether it\'s Solo Only or Stack Allowed.',
+          '> 1. Press **Request Bounty** on the request board and fill out a short form: an optional preferred name (falls back to your Discord nickname), name, description, reward, and whether it\'s Solo Only or Premade Allowed.',
           '> 2. You get an ephemeral preview of the bounty card. **Submit** opens a private ticket and pings staff. **Close** cancels — nothing is created.',
           '> 3. Staff review it (see page 2). Once approved, it posts to the public board.',
           '',
@@ -401,7 +401,7 @@ module.exports = {
           '> • **Approve Claim** on a normal bounty finalizes it for good — posts to the claim board, archives the ticket, removes it from the board.',
           '> • **Approve Claim** on a Submissions bounty instead promotes that claimant to leader (asks for a numeric value first, if that\'s what it tracks) — the first approved claim posts the live board card; the submissions board updates in place after that, and whoever they just beat gets their ticket archived.',
           '> • **Deny Claim** archives the ticket without changing the bounty — it (or, for Submissions, the leaderboard spot) stays open to try again.',
-          '> • **Include Requester** adds the original requester to the ticket; **Add Premade** *(Stack Allowed only)* adds teammates via a member picker — they show up as a **Teammates** field on the card.',
+          '> • **Include Requester** adds the original requester to the ticket; **Add Premade** *(Premade Allowed or Solo Queue Match only)* adds teammates via a member picker — they show up as a **Teammates** field on the card.',
           '> • **/endsubmissions** (staff-only slash command, two-step confirmation) finalizes and publicly announces every pending Submissions bounty at once — declares each one\'s leader the winner and logs it to the claim board.',
           '',
           '🛠️ **Ongoing Tools**',

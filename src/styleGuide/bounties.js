@@ -37,7 +37,8 @@ const TIERS = [
 // (src/modal.js) and the DB's group_type values.
 const GROUP_TYPES = [
   { value: 'solo', label: 'Solo Only' },
-  { value: 'premade', label: 'Stack Allowed' },
+  { value: 'premade', label: 'Premade Allowed' },
+  { value: 'matched', label: 'Solo Queue Match' },
 ];
 
 // Same idea for Claim Type — which of /deployclaimbounty's two active
@@ -62,8 +63,8 @@ const STATUS_LABELS = {
 
 const STATUS_FILTERS = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled', 'expired'];
 
-const GROUP_FILTERS = ['all', 'solo', 'premade'];
-const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Stack Allowed' };
+const GROUP_FILTERS = ['all', 'solo', 'premade', 'matched'];
+const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Premade Allowed', matched: 'Solo Queue Match' };
 
 // Same idea as GROUP_FILTERS, for claim_type — lets staff pull up just the
 // ongoing submissions leaderboards, or just regular one-shot claims,

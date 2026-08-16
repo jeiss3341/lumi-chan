@@ -116,9 +116,12 @@ function staffReviewButtons(bountyId) {
 // [Approve Claim] [Deny Claim] shown inside a claim ticket. Same idea as
 // staffReviewButtons above, just a distinct customId prefix so the handler
 // can tell "approve a request" and "approve a claim" apart.
-// `groupType` is the bounty's own group_type ('solo' | 'premade' | null) —
-// "Add Premade" only shows up for bounties that actually allow a premade
-// group, since adding teammates to a solo-only claim doesn't make sense.
+// `groupType` is the bounty's own group_type ('solo' | 'premade' | 'matched'
+// | null) — "Add Premade" shows up for both premade AND solo-queue-match
+// bounties, since a matched claimant still needs a way to tag whoever they
+// were randomly teamed with (same member-picker mechanism, just naming the
+// person differently in practice) — only a true solo-only claim has no one
+// to add.
 function claimReviewButtons(bountyId, groupType) {
   const buttons = [
     applyEmoji(
@@ -144,7 +147,7 @@ function claimReviewButtons(bountyId, groupType) {
     ),
   ];
 
-  if (groupType === 'premade') {
+  if (groupType === 'premade' || groupType === 'matched') {
     buttons.push(
       applyEmoji(
         new ButtonBuilder()

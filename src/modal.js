@@ -50,7 +50,8 @@ function buildBountyModal() {
     .setMaxValues(1)
     .addOptions(
       { label: 'Solo Only', value: 'solo' },
-      { label: 'Stack Allowed', value: 'premade' },
+      { label: 'Premade Allowed', value: 'premade' },
+      { label: 'Solo Queue Match', value: 'matched' },
     );
   const groupTypeLabel = new LabelBuilder()
     .setLabel(resolveText('MODAL.bountyRequest.groupType.label'))
@@ -106,7 +107,7 @@ function buildApproveModalStep1(bounty) {
     .setCustomId(`approve_modal_step1:${bounty.id}`)
     .setTitle(`${TEXT.MODAL.approveEdit.title} (1/2)`);
 
-  // Stack Allowed gets the plural label/hint — reminding staff this is
+  // Premade Allowed gets the plural label/hint — reminding staff this is
   // where the whole team's preferred names go (gathered by talking it over
   // with the requester in the ticket), not just the one requester's own
   // name. Same field either way (bounty_donator) — just the copy differs.
