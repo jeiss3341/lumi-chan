@@ -51,7 +51,7 @@ function buildBountyModal() {
     .addOptions(
       { label: 'Solo Only', value: 'solo' },
       { label: 'Premade Allowed', value: 'premade' },
-      { label: 'Solo Queue Match', value: 'matched' },
+      { label: 'Roll Required', value: 'matched' },
     );
   const groupTypeLabel = new LabelBuilder()
     .setLabel(resolveText('MODAL.bountyRequest.groupType.label'))

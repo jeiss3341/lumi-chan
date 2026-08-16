@@ -38,7 +38,7 @@ const TIERS = [
 const GROUP_TYPES = [
   { value: 'solo', label: 'Solo Only' },
   { value: 'premade', label: 'Premade Allowed' },
-  { value: 'matched', label: 'Solo Queue Match' },
+  { value: 'matched', label: 'Roll Required' },
 ];
 
 // Same idea for Claim Type — which of /deployclaimbounty's two active
@@ -64,7 +64,7 @@ const STATUS_LABELS = {
 const STATUS_FILTERS = ['all', 'pending', 'approved', 'claimed', 'denied', 'cancelled', 'expired'];
 
 const GROUP_FILTERS = ['all', 'solo', 'premade', 'matched'];
-const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Premade Allowed', matched: 'Solo Queue Match' };
+const GROUP_FILTER_LABELS = { all: 'All', solo: 'Solo Only', premade: 'Premade Allowed', matched: 'Roll Required' };
 
 // Same idea as GROUP_FILTERS, for claim_type — lets staff pull up just the
 // ongoing submissions leaderboards, or just regular one-shot claims,
