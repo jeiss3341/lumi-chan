@@ -249,6 +249,14 @@ const commands = [
     .setDescription(TEXT.COMMANDS.deployIsLive.command)
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .toJSON(),
+  // Same edit-in-place board pattern as /deployislive above, separate
+  // message/channel, for eliminated players who are still streaming — see
+  // buildEliminatedLiveNowEmbed (src/coastalClash/embed.js).
+  new SlashCommandBuilder()
+    .setName('deployeliminatedlive')
+    .setDescription(TEXT.COMMANDS.deployEliminatedLive.command)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .toJSON(),
   // Sets the channel for the "Live Update" announcement feed — a NEW
   // message per stream that switches into Eternal Return (not an
   // edited-in-place board like /deployislive above). Just stores a

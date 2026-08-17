@@ -590,6 +590,31 @@
     await clearSetting('coastal_clash_livenow_message');
   }
 
+  // "Eliminated — Live Now" — same idea as Live Now above, separate board,
+  // separate message, for culled players still streaming (buildEliminated-
+  // LiveNowEmbed, src/coastalClash/embed.js). No rank/RP tracked here,
+  // same as that embed — neither means anything post-elimination.
+  function getEliminatedLiveNowChannel() {
+    return getSetting('coastal_clash_eliminatedlive_channel');
+  }
+
+  function setEliminatedLiveNowChannel(channelId) {
+    return setSetting('coastal_clash_eliminatedlive_channel', channelId);
+  }
+
+  function getEliminatedLiveNowMessageId() {
+    return getSetting('coastal_clash_eliminatedlive_message');
+  }
+
+  function setEliminatedLiveNowMessageId(messageId) {
+    return setSetting('coastal_clash_eliminatedlive_message', messageId);
+  }
+
+  async function clearEliminatedLiveNowDeployment() {
+    await clearSetting('coastal_clash_eliminatedlive_channel');
+    await clearSetting('coastal_clash_eliminatedlive_message');
+  }
+
   // "Live Update" announcement feed — a NEW message per stream that
   // switches into the Eternal Return category (src/coastalClash/cull.js
   // refreshLiveAnnouncements), not an edited-in-place status board like
@@ -1058,6 +1083,11 @@
     getLiveNowMessageId,
     setLiveNowMessageId,
     clearLiveNowDeployment,
+    getEliminatedLiveNowChannel,
+    setEliminatedLiveNowChannel,
+    getEliminatedLiveNowMessageId,
+    setEliminatedLiveNowMessageId,
+    clearEliminatedLiveNowDeployment,
     getLiveAnnounceChannel,
     setLiveAnnounceChannel,
     setLeaderboardMeta,

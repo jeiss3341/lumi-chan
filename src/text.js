@@ -636,6 +636,9 @@ module.exports = {
     deployIsLive: {
       command: 'Post the live Coastal Clash "who is live" board here (staff only, auto-updates).',
     },
+    deployEliminatedLive: {
+      command: 'Post the live Coastal Clash "eliminated players who are live" board here (staff only, auto-updates).',
+    },
     deployLiveUpdate: {
       command: 'Post a new alert here whenever a player switches into Eternal Return on Twitch.',
     },

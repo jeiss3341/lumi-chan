@@ -179,10 +179,14 @@ const {
   setLiveNowChannel,
   getLiveNowMessageId,
   setLiveNowMessageId,
+  getEliminatedLiveNowChannel,
+  setEliminatedLiveNowChannel,
+  getEliminatedLiveNowMessageId,
+  setEliminatedLiveNowMessageId,
   getLiveAnnounceChannel,
   setLiveAnnounceChannel,
 } = require('./src/db');
-const { buildLeaderboardEmbeds, postOrUpdateLeaderboard, buildLiveNowEmbed, postLiveAnnouncements } = require('./src/coastalClash/embed');
+const { buildLeaderboardEmbeds, postOrUpdateLeaderboard, buildLiveNowEmbed, buildEliminatedLiveNowEmbed, postLiveAnnouncements } = require('./src/coastalClash/embed');
 const { ETERNAL_RETURN_GAME_ID } = require('./src/coastalClash/twitchApi');
 const { runDailyCull } = require('./src/coastalClash/cull');
 const { dateForSimulatedDay, getEventDay, cullMomentForDay } = require('./src/coastalClash/schedule');
@@ -320,14 +324,16 @@ const GOOD_JOB_RE = new RegExp(
 // the board impossible to actually get rid of. message.id is always
 // present even on a partial (uncached) delete event, so no fetch needed.
 client.on(Events.MessageDelete, async (message) => {
-  const [proMessageId, casualMessageId, liveNowMessageId] = await Promise.all([
+  const [proMessageId, casualMessageId, liveNowMessageId, eliminatedLiveNowMessageId] = await Promise.all([
     getLeaderboardMessageId('pro'),
     getLeaderboardMessageId('casual'),
     getLiveNowMessageId(),
+    getEliminatedLiveNowMessageId(),
   ]);
   if (message.id === proMessageId) await db.clearLeaderboardDeployment('pro');
   else if (message.id === casualMessageId) await db.clearLeaderboardDeployment('casual');
   else if (message.id === liveNowMessageId) await db.clearLiveNowDeployment();
+  else if (message.id === eliminatedLiveNowMessageId) await db.clearEliminatedLiveNowDeployment();
 });
 
 // Lumi's two favorites — greeting and boop — always get the emoji. Everything
@@ -1504,6 +1510,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.editReply({ content: `🔴 Coastal Clash Live Now board ${edited ? 'updated' : 'deployed'} in this channel.` });
+      return;
+    }
+
+    // /deployeliminatedlive  →  same edit-in-place board pattern as
+    // /deployislive above, separate message/channel — eliminated players
+    // who are still streaming (buildEliminatedLiveNowEmbed). No rank/RP,
+    // neither means anything post-elimination.
+    if (interaction.isChatInputCommand() && interaction.commandName === 'deployeliminatedlive') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const embed = await buildEliminatedLiveNowEmbed(pool);
+
+      const existingChannelId = await getEliminatedLiveNowChannel();
+      const existingMessageId = existingChannelId === interaction.channel.id ? await getEliminatedLiveNowMessageId() : null;
+
+      let edited = false;
+      if (existingMessageId) {
+        try {
+          const existingMessage = await interaction.channel.messages.fetch(existingMessageId);
+          await existingMessage.edit({ embeds: [embed] });
+          edited = true;
+        } catch (err) {
+          console.warn('Coastal Clash: could not edit existing Eliminated Live Now message on redeploy, posting a new one:', err.message);
+        }
+      }
+
+      if (!edited) {
+        const message = await interaction.channel.send({ embeds: [embed] });
+        await setEliminatedLiveNowChannel(interaction.channel.id);
+        await setEliminatedLiveNowMessageId(message.id);
+      }
+
+      await interaction.editReply({ content: `☠️ Coastal Clash Eliminated Live Now board ${edited ? 'updated' : 'deployed'} in this channel.` });
       return;
     }
 
