@@ -129,6 +129,25 @@ async function runDailyCullWithRetry(client) {
   for (let attempt = 1; attempt <= CULL_MAX_RETRIES; attempt++) {
     try {
       const result = await runDailyCull();
+
+      // A scheduled cull day where NOTHING got culled because the RP data
+      // wasn't healthy enough to trust (refreshHealthy in cull.js) used to
+      // just return here as if successful — meaning a single bad player
+      // lookup (confirmed live 2026-08-16: one stale in-game nickname)
+      // could silently block the cull for the ENTIRE roster, with this
+      // retry loop never even kicking in since nothing was thrown. Treat
+      // it as a thrown failure instead so it reuses the exact retry-then-
+      // alert path below — a legitimate idempotent re-run (already culled
+      // by an earlier attempt) won't false-trigger this, since that case
+      // has no refresh failures to go with the zero-culled result.
+      const cullBlocked = !result.skipped
+        && (result.proCulled?.length ?? 0) === 0
+        && (result.casualCulled?.length ?? 0) === 0
+        && (result.refresh?.failed?.length > 0 || result.refresh?.skipped || result.seasonVerificationFailed);
+      if (cullBlocked) {
+        throw new Error(`Cull day ${result.day} completed with zero culled — RP data wasn't healthy (failed: ${result.refresh?.failed?.join(', ') || 'none'}, skipped: ${!!result.refresh?.skipped}, seasonVerificationFailed: ${!!result.seasonVerificationFailed}).`);
+      }
+
       if (result.seasonIdCorrected) {
         await alert(client, `⚠️ Coastal Clash: the stored ER season ID looked stale and was auto-corrected to ${result.seasonId} during today's cull. Worth double-checking this was right.`);
       }
