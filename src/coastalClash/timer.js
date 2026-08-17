@@ -163,6 +163,17 @@ let lastCullDateKey = null;
 let lastRefreshMinuteKey = null;
 let lastTwitchRefreshMinuteKey = null;
 
+// Guards against the SAME process running two overlapping refresh cycles.
+// lastRefreshMinuteKey alone only stops the same round mark (e.g. :30) from
+// re-firing on a jittery 60s tick — it does nothing to stop a cycle that's
+// still running its own retries (rate-limit backoffs can add several
+// minutes) from still being in flight when the NEXT round mark (:40)
+// arrives. Confirmed live on 2026-08-16: even after ruling out a second
+// process entirely (every log line carried the same single instance ID —
+// see LUMI_INSTANCE_ID), the same alternating short/long gap + periodic
+// 429 pattern persisted, pointing at exactly this self-overlap instead.
+let refreshInProgress = false;
+
 // Auto-pause after repeated season-verification failures, instead of
 // relying on someone noticing and manually flipping season_live off (what
 // happened multiple times on 2026-08-14 — every time only because it
@@ -223,8 +234,9 @@ function startCoastalClashTimers(client) {
     // prefer an offset over round marks.
     if (m % REFRESH_INTERVAL_MINUTES === 0 && !isRefreshQuietHours()) {
       const minuteKey = `${dateKey}T${h}:${m}`;
-      if (lastRefreshMinuteKey !== minuteKey) {
+      if (lastRefreshMinuteKey !== minuteKey && !refreshInProgress) {
         lastRefreshMinuteKey = minuteKey;
+        refreshInProgress = true;
         try {
           const result = await refreshLeaderboardOnly();
           await postOrUpdateLeaderboard(client, db);
@@ -302,6 +314,8 @@ function startCoastalClashTimers(client) {
           } else {
             console.error('Coastal Clash: refresh cycle failed:', err);
           }
+        } finally {
+          refreshInProgress = false;
         }
       }
     }
