@@ -179,6 +179,7 @@ module.exports = {
     submissions: {
       openTitlePrefix: '🏆 Bounty Approved:', // still open, live standing
       closedTitlePrefix: '🏆 Bounty Closed:',
+      fieldProof: 'Proof',
       fieldStanding: 'Standing',
       noLeaderYet: 'Open — no submissions yet.',
       leadingVerb: 'is leading with', // numeric metric, still open

@@ -760,8 +760,13 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
   const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
   const ticketMessage = ticketChannel ? await ticketChannel.messages.fetch(ticketMessageId).catch(() => null) : null;
   const teammates = getTeammateIdsFromEmbed(ticketMessage?.embeds[0]);
+  // The claimant's own claim_notes text, same source as teammates above —
+  // buildClaimEmbed puts it straight into the ticket embed's description,
+  // nowhere else. Persisted onto the bounty row so the live standing card
+  // can show what the current leader actually submitted as proof.
+  const proof = ticketMessage?.embeds[0]?.description || null;
 
-  const updated = await setLeader(bounty.id, { leaderId: claimantId, value, ticketChannelId, ticketMessageId, teammates });
+  const updated = await setLeader(bounty.id, { leaderId: claimantId, value, ticketChannelId, ticketMessageId, teammates, proof });
 
   if (!updated) {
     await interaction.reply({ content: resolveText('REPLIES.claimFinalizeFailed'), flags: MessageFlags.Ephemeral });

@@ -133,6 +133,22 @@ function buildLeaderboardEmbed(bounty, { closed = false, leaderAvatarURL } = {})
   embed.addFields(
     { name: resolveText('CARD.request.fieldReward'), value: formatAmount(bounty.reward), inline: true },
     { name: resolveText('CARD.request.fieldGroupType'), value: formatGroupType(bounty.group_type), inline: true },
+  );
+
+  // The current leader's own claim notes (persisted onto the bounty row by
+  // setLeader/promoteSubmissionLeader — src/db.js, index.js), shown between
+  // Reward/Group Type and Standing so viewers can see what's actually
+  // backing up the claimed number, not just trust it. Text only — no
+  // file/image proof here, see leader_proof's own comment in db.js for why.
+  // Discord caps a field value at 1024 chars.
+  if (bounty.leader_proof) {
+    const proof = bounty.leader_proof.length > 1000
+      ? `${bounty.leader_proof.slice(0, 1000)}...`
+      : bounty.leader_proof;
+    embed.addFields({ name: resolveText('CARD.submissions.fieldProof'), value: proof, inline: false });
+  }
+
+  embed.addFields(
     { name: resolveText('CARD.submissions.fieldStanding'), value: leaderboardLine(bounty, { closed }), inline: false },
   );
 

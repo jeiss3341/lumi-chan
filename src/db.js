@@ -140,6 +140,15 @@
     // for a solo claim.
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_teammates TEXT;`);
 
+    // The leader's own claim notes (claim_proof_modal's text field — becomes
+    // the claim ticket embed's description, see buildClaimEmbed) — carried
+    // here the same way leader_teammates is, so the live standing card can
+    // show what the current leader actually submitted as proof, not just
+    // their score. Text only, deliberately — no file/image URLs (Discord
+    // CDN attachment links can go stale over time; the ticket itself is
+    // still the durable record of any uploaded files).
+    await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_proof TEXT;`);
+
     // The LIVE leaderboard post in the submissions board channel — distinct
     // from board_channel_id/board_message_id, which is always the plain,
     // never-edited-again "Bounty Approved" record in the request board
@@ -977,7 +986,7 @@
   // read from the same statement's initial snapshot via the `old` CTE below
   // — a subquery inside RETURNING would instead see the row post-update,
   // which is the wrong thing here), or null if the guard failed.
-  async function setLeader(id, { leaderId, value, ticketChannelId, ticketMessageId, teammates }) {
+  async function setLeader(id, { leaderId, value, ticketChannelId, ticketMessageId, teammates, proof }) {
     const result = await pool.query(
       `WITH old AS (
          SELECT leader_id, leader_ticket_channel_id, leader_ticket_message_id
@@ -985,7 +994,7 @@
        ),
        updated AS (
          UPDATE bounties SET leader_id = $2, leader_value = $3, leader_ticket_channel_id = $4,
-           leader_ticket_message_id = $5, leader_teammates = $6, leader_set_at = NOW()
+           leader_ticket_message_id = $5, leader_teammates = $6, leader_proof = $7, leader_set_at = NOW()
          WHERE id = $1 AND status = 'approved'
          RETURNING *
        )
@@ -993,7 +1002,7 @@
          old.leader_ticket_channel_id AS previous_leader_ticket_channel_id,
          old.leader_ticket_message_id AS previous_leader_ticket_message_id
        FROM updated, old`,
-      [id, leaderId, value ?? null, ticketChannelId, ticketMessageId, teammates?.length ? teammates.join(',') : null],
+      [id, leaderId, value ?? null, ticketChannelId, ticketMessageId, teammates?.length ? teammates.join(',') : null, proof || null],
     );
     return result.rows[0] ?? null;
   }
