@@ -52,7 +52,6 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       // text straight from the schedule + current active count.
       const todayThreshold = schedule.getThreshold(bracket, day);
       const todayCullPending = todayThreshold !== null && active.length > todayThreshold;
-      const nextThreshold = todayCullPending ? todayThreshold : schedule.getNextCullThreshold(bracket, day);
       const nextCullDay = todayCullPending ? day : schedule.getNextCullDay(bracket, day);
 
       // Discord's <t:UNIX:R> tag renders as a live, auto-updating relative
@@ -93,13 +92,23 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
 
       // "Top N" info lives in the footer now, since the description's own
       // headline is just the countdown per the user's requested wording.
+      // Shows the cutoff AFTER the imminent one, not the imminent one itself
+      // — the user's explicit call: the ⚠️/✅ markers above already show
+      // exactly who's at risk for the upcoming cull, so repeating that same
+      // number here was redundant; showing one step further ahead is new
+      // information instead. Labeled "Following cutoff" rather than "Next
+      // cutoff" specifically so it can't be misread as matching the
+      // countdown line above (which still correctly points at the real
+      // next cull) — same kind of label/value mismatch this whole session
+      // started by fixing, not something to reintroduce here.
+      const followingThreshold = nextCullDay !== null ? schedule.getNextCullThreshold(bracket, nextCullDay) : null;
       // Grace (days 1-3) / patch (day 14) days don't cull anyone even
       // though a future cutoff is still shown — flagging that explicitly
-      // so "Next cutoff: Top 45" doesn't read as "today culls to 45".
+      // so "Following cutoff: Top 45" doesn't read as "today culls to 45".
       const nonCullNote = !schedule.isCullDay(day)
         ? ` · ${schedule.getNonCullReason(day).replace(/\b\w/g, (c) => c.toUpperCase())}`
         : '';
-      const footerText = `Day ${day} of 17${nonCullNote}${nextThreshold !== null ? ` · Next cutoff: Top ${nextThreshold}` : ''}`;
+      const footerText = `Day ${day} of 17${nonCullNote}${followingThreshold !== null ? ` · Following cutoff: Top ${followingThreshold}` : ''}`;
 
       return new EmbedBuilder()
         .setTitle(`${isPro ? '🔱 Pro' : '⚔️ Casual'} Bracket — Day ${day}`)
