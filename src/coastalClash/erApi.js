@@ -61,22 +61,23 @@ const FETCH_TIMEOUT_MS = 10000;
 // circuit breaker sit in exactly one place instead of needing to be
 // threaded through every caller.
 //
-// MIN_REQUEST_GAP_MS — the user's explicit call on 2026-08-15, settled at
-// 1100 (tried 3000, then 2000, then 1500, before landing here). The
-// original 3000 was chosen out of caution while the 403s looked like they
-// might be a volume/pattern-triggered block — going faster would have been
-// the wrong direction under that theory. Since then, ER_API_KEY was found
-// to be missing from Railway's own environment entirely, which is a much
-// simpler explanation for every 403 seen (missing/empty key returns the
-// identical 403 Forbidden this API returns for a real block — confirmed
-// by testing both cases directly). If that's the actual cause, there was
-// never a real behavioral limit to be cautious against. Each player costs
-// 2 calls here (fetchUserId + fetchRankRaw, see fetchUserRank below — the
-// caller in cull.js doesn't pass a cachedUserId, so both run every pass).
-// 1100ms brings a full ~74-90 player pass (~148-180 calls) down to roughly
-// ~2.7-3.3 min, comfortably within REFRESH_INTERVAL_MINUTES' 10-min
-// cadence (see timer.js).
-const MIN_REQUEST_GAP_MS = 1100;
+// MIN_REQUEST_GAP_MS — widened back to 1500 on 2026-08-16 (was 1100, briefly
+// passed through on the way down from 3000/2000/1500 on 2026-08-15 — see
+// git history for that full sequence). That original slowdown was caution
+// against 403s that turned out to be a missing ER_API_KEY on Railway, not a
+// real block — once found, there was no actual limit left to be cautious
+// against, so it sped back up to 1100. This time is different: confirmed
+// live on 2026-08-16, genuine 429 "Too Many Requests" responses from the
+// API itself (not 403s), so slowing back down is addressing a real,
+// observed rate limit rather than a stale theory. Each player costs 2 calls
+// here (fetchUserId + fetchRankRaw, see fetchUserRank below — the caller in
+// cull.js doesn't pass a cachedUserId, so both run every pass). 1500ms
+// brings a full ~74-90 player pass (~148-180 calls) to roughly ~3.7-4.5
+// min, still comfortably within REFRESH_INTERVAL_MINUTES' 10-min cadence
+// (see timer.js) — and now that timer.js's refreshInProgress guard exists,
+// an occasional slower-than-usual pass can't overlap the next one either
+// way.
+const MIN_REQUEST_GAP_MS = 1500;
 
 // How long the circuit stays OPEN (refusing all calls) after a 401/403.
 // 30 minutes is long enough that a real block has a real chance to lift
