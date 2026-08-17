@@ -1,5 +1,17 @@
 require('dotenv').config();
 
+// Diagnostic for a suspected zombie-process issue: production logs show two
+// interleaved refresh cadences ~3 minutes apart (one process's round-mark
+// 10-min timer, plus what looks like a second, independent one) — enough to
+// double the ER API call volume and explain periodic 429s. A random ID
+// logged once at boot, and threaded onto every refreshLeaderboardOnly log
+// line (cull.js reads this via process.env), makes it directly visible in
+// Railway's logs whether two different processes are both running: if two
+// IDs ever appear interleaved, that confirms it. Safe to remove once
+// confirmed either way.
+process.env.LUMI_INSTANCE_ID = Math.random().toString(36).slice(2, 8);
+console.log(`[boot] instance ${process.env.LUMI_INSTANCE_ID} starting...`);
+
 const {
   Client,
   GatewayIntentBits,

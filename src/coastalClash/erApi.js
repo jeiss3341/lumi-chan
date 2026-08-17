@@ -312,7 +312,7 @@ async function fetchUserId(nickname, maxRetries = 5) {
     if (res.status === 429 || data.message === 'Too Many Requests') {
       if (attempt === maxRetries) return null;
       const waitMs = 5000 * attempt;
-      console.warn(`[ER API] nickname lookup rate-limited for ${nickname}; retrying in ${waitMs}ms`);
+      console.warn(`[ER API ${process.env.LUMI_INSTANCE_ID}] nickname lookup rate-limited for ${nickname}; retrying in ${waitMs}ms`);
       await sleep(waitMs);
       continue;
     }

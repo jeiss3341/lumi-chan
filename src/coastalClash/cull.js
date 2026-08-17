@@ -514,22 +514,22 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   // TEMP diagnostic (remove once found): stage-by-stage logging to
   // pinpoint exactly where a 10-min refresh cycle stalls, since the fetch
   // timeout fix alone didn't fully resolve it in production.
-  console.log('[CC refresh] start');
+  console.log(`[CC refresh ${process.env.LUMI_INSTANCE_ID}] start`);
 
   // Same decoupling as runDailyCull above — a season-verification failure
   // (ER API issue) only skips the RP fetch, not the rest of the refresh
   // cycle. This is the function the 10-min timer actually calls, so it's
   // what's been leaving leaderboard_meta empty in production.
   const seasonLive = (await db.getSeasonLive()) === 'true';
-  console.log('[CC refresh] seasonLive =', seasonLive);
+  console.log(`[CC refresh ${process.env.LUMI_INSTANCE_ID}] seasonLive =`, seasonLive);
   let seasonId = null;
   let corrected = false;
   let seasonVerificationFailed = false;
   if (seasonLive) {
     const referenceNicknames = await pickReferenceNicknames(db.pool);
-    console.log('[CC refresh] got reference nicknames, verifying season...');
+    console.log(`[CC refresh ${process.env.LUMI_INSTANCE_ID}] got reference nicknames, verifying season...`);
     ({ seasonId, corrected } = await erApi.getVerifiedSeasonId(db, referenceNicknames, dryRun));
-    console.log('[CC refresh] season verified:', seasonId, 'corrected:', corrected);
+    console.log(`[CC refresh ${process.env.LUMI_INSTANCE_ID}] season verified:`, seasonId, 'corrected:', corrected);
     if (seasonId === null) seasonVerificationFailed = true;
   }
 
@@ -541,20 +541,20 @@ async function refreshLeaderboardOnly(now = new Date(), dryRun = false) {
   } else {
     refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
   }
-  console.log('[CC refresh] RP refresh done:', JSON.stringify({ updated: refreshResult.updated, failed: refreshResult.failed?.length }));
+  console.log(`[CC refresh ${process.env.LUMI_INSTANCE_ID}] RP refresh done:`, JSON.stringify({ updated: refreshResult.updated, failed: refreshResult.failed?.length }));
   // Twitch status has its own dedicated, much faster timer now (see
   // refreshTwitchOnly below + timer.js) — it doesn't belong in this
   // ER-bound cycle at all, since it has zero dependency on season
   // verification and was getting needlessly delayed behind it.
   const proDanger = await updateIndangerForBracket(db.pool, true, day, dryRun);
   const casualDanger = await updateIndangerForBracket(db.pool, false, day, dryRun);
-  console.log('[CC refresh] indanger updated for both brackets');
+  console.log(`[CC refresh ${process.env.LUMI_INSTANCE_ID}] indanger updated for both brackets`);
   // Only stamp last_updated_at when RP actually got refreshed this cycle —
   // see the matching comment in runDailyCull above. `now` is passed as the
   // START time being stamped, even though the write happens here at the end.
   const rpRefreshed = didRefreshRP(refreshResult, seasonVerificationFailed);
   if (!dryRun) await updateLeaderboardMeta(day, rpRefreshed ? now : null);
-  console.log('[CC refresh] leaderboard_meta written — last_updated_at advanced:', rpRefreshed);
+  console.log(`[CC refresh ${process.env.LUMI_INSTANCE_ID}] leaderboard_meta written — last_updated_at advanced:`, rpRefreshed);
   if (!dryRun) await db.pruneApiCallLog();
 
   return {
