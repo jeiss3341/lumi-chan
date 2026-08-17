@@ -59,6 +59,12 @@ module.exports = {
       // YouTube live tracking is added, so each platform reads as itself
       // at a glance instead of both sharing a generic color.
       twitch: 0x8878a8,
+      // Eliminated — Live Now board's accent. Storm-cloud grey rather than
+      // a flat neutral gray: still part of the beach/ocean mood board
+      // (storms happen at the coast too), reads as muted/somber next to
+      // the warm sand/turquoise/coral used everywhere else, distinct from
+      // Live Now's own denied-red so the two boards don't look identical.
+      eliminated: 0x6c7a89,
     },
     // Shown inside panels and bounty/claim cards. 1500x500 — the original
     // banner size (not the 3000x1000 upscale).
