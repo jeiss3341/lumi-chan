@@ -256,7 +256,7 @@ async function buildEliminatedLiveNowEmbed(pool) {
   const description = lines.length ? lines.join('\n') : '*No eliminated players are live right now.*';
 
   return new EmbedBuilder()
-    .setTitle('☠️ Eliminated — Live Now')
+    .setTitle('Eliminated — Live Now')
     .setColor(VISUALS.COLORS.eliminated)
     .setDescription(description)
     .setFooter({ text: `${rows.length} streamer${rows.length === 1 ? '' : 's'} live` });
