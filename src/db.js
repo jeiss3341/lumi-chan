@@ -283,6 +283,19 @@
         ign  TEXT NOT NULL
       );
     `);
+    // Dak.gg profile link — a Postgres GENERATED column, not a plain text
+    // field, deliberately: it's always derived fresh from ign, so it can
+    // never go stale the way a stored copy could (exactly the class of bug
+    // that blocked an entire day's cull — see cull.js/timer.js history
+    // around 2026-08-16, one player's stale ign silently broke everything
+    // downstream of it). Correcting ign here automatically keeps dak
+    // correct too, with no extra code anywhere. project-lumi's read
+    // contract (same pattern as players.twitch, leaderboard_meta) — this
+    // table's schema is what Ilyfue's site queries directly.
+    await pool.query(`
+      ALTER TABLE player_igns
+      ADD COLUMN IF NOT EXISTS dak TEXT GENERATED ALWAYS AS ('https://dak.gg/er/players/' || ign) STORED;
+    `);
     await pool.query(`
       INSERT INTO player_igns (name, ign)
       SELECT name, name FROM players
