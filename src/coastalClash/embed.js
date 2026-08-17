@@ -39,8 +39,21 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
 
       const bracket = isPro ? 'pro' : 'casual';
-      const nextThreshold = schedule.getNextCullThreshold(bracket, day);
-      const nextCullDay = schedule.getNextCullDay(bracket, day);
+      // Same "has today's own cull already run?" check as
+      // updateIndangerForBracket/updateLeaderboardMeta (src/coastalClash/
+      // cull.js) — getNextCullThreshold/getNextCullDay always skip to
+      // day+1, correct only once today's cull has actually executed.
+      // `active` (still-active players, already computed above) tells us
+      // that directly: if it's still bigger than today's own threshold,
+      // today's cull hasn't happened yet, so today's threshold/moment IS
+      // the next one to show, not tomorrow's. Kept independent of
+      // updateLeaderboardMeta's own DB-stored next_cull_at (which
+      // project-lumi's site reads) since this embed builds its own display
+      // text straight from the schedule + current active count.
+      const todayThreshold = schedule.getThreshold(bracket, day);
+      const todayCullPending = todayThreshold !== null && active.length > todayThreshold;
+      const nextThreshold = todayCullPending ? todayThreshold : schedule.getNextCullThreshold(bracket, day);
+      const nextCullDay = todayCullPending ? day : schedule.getNextCullDay(bracket, day);
 
       // Discord's <t:UNIX:R> tag renders as a live, auto-updating relative
       // countdown ("in 5 hours") for every viewer regardless of their own
