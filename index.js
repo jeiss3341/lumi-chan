@@ -132,6 +132,8 @@ const {
   getBoardChannel,
   setClaimTicketCategory,
   getClaimTicketCategory,
+  setCommunityTicketCategory,
+  getCommunityTicketCategory,
   setSubmissionsTicketCategory,
   getSubmissionsTicketCategory,
   setClaimStaffRole,
@@ -144,6 +146,8 @@ const {
   getSubmissionsBoardChannel,
   setClaimArchiveCategory,
   getClaimArchiveCategory,
+  setCommunityArchiveCategory,
+  getCommunityArchiveCategory,
   setHelpTicketCategory,
   getHelpTicketCategory,
   getHelpArchiveCategory,
@@ -1052,8 +1056,13 @@ function startExpirySweep(client) {
 // see confirm_close_help_ticket above) never get removed after being
 // pressed. Without this, a second press just re-archives an already-archived
 // ticket, stacking another "closed-" onto its name each time.
-function isAlreadyArchived(channel, archiveCategoryId) {
-  return Boolean(archiveCategoryId) && channel.parentId === archiveCategoryId;
+// Accepts either a single category id or an array — claim tickets can now
+// resolve into one of two different archive categories (regular vs.
+// community, see getCommunityArchiveCategory), so callers checking "is this
+// already archived" need to check both, not just the regular one.
+function isAlreadyArchived(channel, archiveCategoryIds) {
+  const ids = Array.isArray(archiveCategoryIds) ? archiveCategoryIds : [archiveCategoryIds];
+  return ids.some((id) => Boolean(id) && channel.parentId === id);
 }
 
 // Shared by /deployrequestbounty and /deployclaimbounty's confirmation replies.
@@ -1363,9 +1372,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isChatInputCommand() && interaction.commandName === 'deployclaimbounty') {
       const claimCategory = interaction.options.getChannel('claim_category');
       const submissionsCategory = interaction.options.getChannel('submissions_category');
+      const communityCategory = interaction.options.getChannel('community_category');
       const board = interaction.options.getChannel('board');
       const submissionsBoard = interaction.options.getChannel('submissions_board');
       const archiveCategory = interaction.options.getChannel('archive_category');
+      const communityArchiveCategory = interaction.options.getChannel('community_archive_category');
       const staffRole = interaction.options.getRole('staff_role');
       const staffUser = interaction.options.getUser('staff_user');
 
@@ -1379,9 +1390,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await setClaimTicketCategory(claimCategory.id);
       await setSubmissionsTicketCategory(submissionsCategory.id);
+      await setCommunityTicketCategory(communityCategory.id);
       await setClaimBoardChannel(board.id);
       await setSubmissionsBoardChannel(submissionsBoard.id);
       await setClaimArchiveCategory(archiveCategory.id);
+      await setCommunityArchiveCategory(communityArchiveCategory.id);
       if (staffRole) await setClaimStaffRole(staffRole.id); else await clearSetting('claim_staff_role');
       if (staffUser) await setClaimStaffUser(staffUser.id); else await clearSetting('claim_staff_user');
 
@@ -1390,7 +1403,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const reviewers = describeReviewers(staffRole, staffUser);
 
       await interaction.reply({
-        content: `🏁 Claim board deployed. Claims open under **${claimCategory.name}** or **${submissionsCategory.name}** (set per-bounty by staff at approval), reviewed by **${reviewers}**, finalized claims post to ${board}, submissions bounties stay live on ${submissionsBoard}, and approved tickets move to **${archiveCategory.name}**.`,
+        content: `🏁 Claim board deployed. Claims open under **${claimCategory.name}**, **${submissionsCategory.name}**, or **${communityCategory.name}** (set per-bounty by staff at approval), reviewed by **${reviewers}**, finalized claims post to ${board}, submissions bounties stay live on ${submissionsBoard}, approved tickets move to **${archiveCategory.name}**, and community entries move to **${communityArchiveCategory.name}** instead.`,
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -2281,13 +2294,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       try {
         const { staffRoleId, staffUserId } = await getClaimStaff();
-        // Which of the two active categories this opens in — set by staff on
-        // the bounty at approval time (see approve_modal_step2_submit above);
-        // defaults to the Claim category for bounties approved before this
-        // existed, or if it was somehow left unset.
+        // Which of the three active categories this opens in — set by staff
+        // on the bounty at approval time (see approve_modal_step2_submit
+        // above); defaults to the Claim category for bounties approved
+        // before Submissions/Community existed, or if it was somehow left
+        // unset.
         const categoryId = bounty.claim_type === 'submissions'
           ? await getSubmissionsTicketCategory()
-          : await getClaimTicketCategory();
+          : bounty.claim_type === 'community'
+            ? await getCommunityTicketCategory()
+            : await getClaimTicketCategory();
 
         const channel = await createClaimTicket({
           guild: interaction.guild,
@@ -2301,6 +2317,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           files,
           categoryId,
           groupType: bounty.group_type,
+          claimType: bounty.claim_type,
         });
 
         const readyBanner = new EmbedBuilder().setImage(BANNER_URL);
@@ -2322,7 +2339,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // the message forever (nothing removes it), so a stale click here used
       // to reach the permission-grant call below for no reason. Short-circuit
       // before that, and before the embed-parsing/lookup work above it too.
-      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+      if (isAlreadyArchived(interaction.channel, [await getClaimArchiveCategory(), await getCommunityArchiveCategory()])) {
         await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
         return;
       }
@@ -2373,7 +2390,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('add_premade:')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'add premade teammates'))) return;
 
-      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+      if (isAlreadyArchived(interaction.channel, [await getClaimArchiveCategory(), await getCommunityArchiveCategory()])) {
         await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
         return;
       }
@@ -2398,7 +2415,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isUserSelectMenu() && interaction.customId.startsWith('add_premade_select')) {
       await interaction.deferUpdate();
 
-      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+      if (isAlreadyArchived(interaction.channel, [await getClaimArchiveCategory(), await getCommunityArchiveCategory()])) {
         await interaction.editReply({ content: '⚠️ This ticket is already archived.', components: [] });
         return;
       }
@@ -2453,7 +2470,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // CLAIM doesn't change the bounty's own status (it stays 'approved' so
       // others can still claim it), so claimBounty's own status check below
       // can't catch this the way bounty approve/deny already does.
-      if (isAlreadyArchived(interaction.channel, await getClaimArchiveCategory())) {
+      if (isAlreadyArchived(interaction.channel, [await getClaimArchiveCategory(), await getCommunityArchiveCategory()])) {
         await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
         return;
       }
@@ -2544,14 +2561,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // lockPermissions adopts the archive category's own overwrites, so it
       // drops out of everyone's sight except whoever that category is scoped
       // to. Renamed to reflect it's done, then that category gets
-      // re-alphabetized so it stays easy to scan by name. Always
-      // 'declared-claim' here — a submissions-type claim never reaches this
-      // point at all (see the early branch above that hands it off to
-      // promoteSubmissionLeader instead), so there's no "submission" case
-      // to name for.
-      const archiveCategoryId = await getClaimArchiveCategory();
+      // re-alphabetized so it stays easy to scan by name. A submissions-type
+      // claim never reaches this point at all (see the early branch above
+      // that hands it off to promoteSubmissionLeader instead) — only 'claim'
+      // and 'community' land here, each with their own archive category and
+      // prefix ('declared-claim' implies a finalized winner, which doesn't
+      // fit a community entry that's just been forwarded to an external
+      // vote — 'submitted-community' reads accurately instead).
+      const isCommunity = updated.claim_type === 'community';
+      const archiveCategoryId = isCommunity ? await getCommunityArchiveCategory() : await getClaimArchiveCategory();
       if (archiveCategoryId) {
-        const approvedPrefix = 'declared-claim';
+        const approvedPrefix = isCommunity ? 'submitted-community' : 'declared-claim';
         try {
           await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true });
           const approvedClaimantName = (await interaction.guild.members.fetch(claimantId).catch(() => null))?.displayName ?? null;
@@ -2721,7 +2741,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('deny_claim')) {
       if (!(await requireStaff(interaction, getClaimStaff, 'deny claims'))) return;
 
-      const claimDenyArchiveCategoryId = await getClaimArchiveCategory();
+      // Fetched up front (before the archive-category lookup below) since
+      // which archive category applies depends on claim_type — a community
+      // entry archives to its own separate category, not the regular one.
+      const bounty = await getBountyById(customIdArg(interaction));
+      const isCommunityDeny = bounty?.claim_type === 'community';
+      const claimDenyArchiveCategoryId = isCommunityDeny ? await getCommunityArchiveCategory() : await getClaimArchiveCategory();
       if (isAlreadyArchived(interaction.channel, claimDenyArchiveCategoryId)) {
         await interaction.reply({ content: '⚠️ This ticket is already archived.', flags: MessageFlags.Ephemeral });
         return;
@@ -2737,8 +2762,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // decided not to reinstate) reads as 'submission-lost' rather than
       // 'denied-submission' — this is the didn't-win outcome, same idea as
       // promoteSubmissionLeader's own 'submission-won' for the opposite case.
-      const bounty = await getBountyById(customIdArg(interaction));
-      const deniedPrefix = bounty?.claim_type === 'submissions' ? 'submission-lost' : 'denied-claim';
+      // A denied community entry reads 'denied-community', same reasoning
+      // as submitted-community above — not implying a "declared" outcome.
+      const deniedPrefix = bounty?.claim_type === 'submissions'
+        ? 'submission-lost'
+        : isCommunityDeny ? 'denied-community' : 'denied-claim';
       const deniedClaimantId = interaction.message.embeds[0] ? extractMentionId(interaction.message.embeds[0], 'Claimant') : null;
       const deniedClaimantName = deniedClaimantId
         ? (await interaction.guild.members.fetch(deniedClaimantId).catch(() => null))?.displayName ?? null

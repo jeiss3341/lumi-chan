@@ -327,6 +327,11 @@ module.exports = {
     // src/ticket.js → claimReviewButtons(). Buttons inside a claim ticket.
     approveClaimButton: 'Approve Claim',
     approveClaimEmoji: '✅',
+    // Same button/customId, just relabeled for claim_type = 'community' —
+    // "Approve" doesn't fit a showcase entry staff is greenlighting for an
+    // external vote, not finalizing as a winner.
+    submitCommunityButton: 'Submit',
+    submitCommunityEmoji: '✅',
     denyClaimButton: 'Deny Claim',
     denyClaimEmoji: '⛔',
     // Grants the original bounty requester access to the claim ticket too,
@@ -618,9 +623,11 @@ module.exports = {
       command: 'Set up bounty claiming and post the claim board (staff only).',
       claimCategory: 'The category new CLAIM-type bounty claim tickets will be created under.',
       submissionsCategory: 'The category new SUBMISSIONS-type bounty claim tickets will be created under.',
+      communityCategory: 'The category new COMMUNITY-type bounty claim tickets will be created under.',
       board: 'The public channel where finalized (approved) claims are posted.',
       submissionsBoard: 'Public channel for SUBMISSIONS-type bounties — stays live, edited to show the current leader.',
       archiveCategory: 'Category approved claim tickets get MOVED to (make this private/staff-only).',
+      communityArchiveCategory: 'Category COMMUNITY-type claims get MOVED to instead of the archive above (for external voting).',
       staffUser: 'A specific person who can review claims and gets pinged. (Set a role and/or a person.)',
       staffRole: 'A role that can review claims and gets pinged. (Set a role and/or a person.)',
     },

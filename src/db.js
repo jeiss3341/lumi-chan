@@ -449,6 +449,19 @@
     return setSetting('submissions_ticket_category', categoryId);
   }
 
+  // A third active category, alongside the two above — for claim_type =
+  // 'community' tickets specifically, so they don't get mixed in with
+  // regular claim tickets while pending review. Same board/staff config as
+  // the other two; only the active category (here) and the eventual
+  // archive category (getCommunityArchiveCategory) differ.
+  function getCommunityTicketCategory() {
+    return getSetting('community_ticket_category');
+  }
+
+  function setCommunityTicketCategory(categoryId) {
+    return setSetting('community_ticket_category', categoryId);
+  }
+
   function getClaimStaffRole() {
     return getSetting('claim_staff_role');
   }
@@ -498,6 +511,19 @@
 
   function setClaimArchiveCategory(categoryId) {
     return setSetting('claim_archive_category', categoryId);
+  }
+
+  // Community-type claims (claim_type = 'community') archive to their own
+  // separate category instead of claim_archive_category above — staff
+  // collects them here for an external vote (Google Form/Discord poll,
+  // not built into the bot), so they need to stay easy to browse as their
+  // own group rather than mixed in with regular resolved claims.
+  function getCommunityArchiveCategory() {
+    return getSetting('community_archive_category');
+  }
+
+  function setCommunityArchiveCategory(categoryId) {
+    return setSetting('community_archive_category', categoryId);
   }
 
   // A third, entirely separate pipeline: general "talk to staff" support
@@ -1064,6 +1090,8 @@
     setClaimTicketCategory,
     getSubmissionsTicketCategory,
     setSubmissionsTicketCategory,
+    getCommunityTicketCategory,
+    setCommunityTicketCategory,
     getClaimStaffRole,
     setClaimStaffRole,
     getClaimStaffUser,
@@ -1074,6 +1102,8 @@
     setSubmissionsBoardChannel,
     getClaimArchiveCategory,
     setClaimArchiveCategory,
+    getCommunityArchiveCategory,
+    setCommunityArchiveCategory,
     getHelpTicketCategory,
     setHelpTicketCategory,
     getHelpArchiveCategory,

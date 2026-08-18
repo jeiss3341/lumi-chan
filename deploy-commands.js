@@ -144,6 +144,13 @@ const commands = [
     )
     .addChannelOption((option) =>
       option
+        .setName('community_category')
+        .setDescription(TEXT.COMMANDS.deployClaimBounty.communityCategory)
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true),
+    )
+    .addChannelOption((option) =>
+      option
         .setName('board')
         .setDescription(TEXT.COMMANDS.deployClaimBounty.board)
         .addChannelTypes(ChannelType.GuildText)
@@ -163,6 +170,16 @@ const commands = [
       option
         .setName('archive_category')
         .setDescription(TEXT.COMMANDS.deployClaimBounty.archiveCategory)
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true),
+    )
+    // Where community-type claims (claim_type = 'community') archive to
+    // instead of archive_category above — kept separate so staff can
+    // browse them as their own group for an external vote.
+    .addChannelOption((option) =>
+      option
+        .setName('community_archive_category')
+        .setDescription(TEXT.COMMANDS.deployClaimBounty.communityArchiveCategory)
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true),
     )

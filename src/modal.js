@@ -175,6 +175,7 @@ function buildApproveModalStep1(bounty) {
     .addOptions(
       { label: 'Claim', value: 'claim', default: !bounty.claim_type || bounty.claim_type === 'claim' },
       { label: 'Submissions', value: 'submissions', default: bounty.claim_type === 'submissions' },
+      { label: 'Community', value: 'community', default: bounty.claim_type === 'community' },
     );
   const claimTypeLabel = new LabelBuilder()
     .setLabel(TEXT.MODAL.approveEdit.claimType.label)

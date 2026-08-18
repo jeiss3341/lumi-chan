@@ -121,15 +121,18 @@ function staffReviewButtons(bountyId) {
 // bounties, since a matched claimant still needs a way to tag whoever they
 // were randomly teamed with (same member-picker mechanism, just naming the
 // person differently in practice) — only a true solo-only claim has no one
-// to add.
-function claimReviewButtons(bountyId, groupType) {
+// to add. `claimType` only changes the approve button's label — 'community'
+// reads "Submit" instead of "Approve Claim" (same customId/handler either
+// way, see index.js's approve_claim branch), since staff is greenlighting
+// an entry for an external vote, not finalizing a winner.
+function claimReviewButtons(bountyId, groupType, claimType) {
   const buttons = [
     applyEmoji(
       new ButtonBuilder()
         .setCustomId(`approve_claim:${bountyId}`)
-        .setLabel(resolveText('TICKET.approveClaimButton'))
+        .setLabel(resolveText(claimType === 'community' ? 'TICKET.submitCommunityButton' : 'TICKET.approveClaimButton'))
         .setStyle(ButtonStyle.Success),
-      'TICKET.approveClaimEmoji',
+      claimType === 'community' ? 'TICKET.submitCommunityEmoji' : 'TICKET.approveClaimEmoji',
     ),
     applyEmoji(
       new ButtonBuilder()
@@ -325,7 +328,7 @@ async function createTicket({ guild, member, botId, embed, title, staffRoleId, s
 // so the category can be grouped by bounty, oldest attempt first within each
 // group, without having to reverse-parse the channel name. Throws
 // 'NO_CATEGORY' if that category was never set.
-async function createClaimTicket({ guild, member, botId, embed, title, staffRoleId, staffUserId, bountyId, files, categoryId, groupType }) {
+async function createClaimTicket({ guild, member, botId, embed, title, staffRoleId, staffUserId, bountyId, files, categoryId, groupType, claimType }) {
   const channelName = toChannelName('claim', title, member.displayName);
   const channel = await createReviewChannel({
     guild,
@@ -344,7 +347,7 @@ async function createClaimTicket({ guild, member, botId, embed, title, staffRole
       ? `${mentions.join(' ')} — a bounty claim from ${member} needs review.`
       : resolveText('TICKET.noClaimStaffConfigured'),
     embeds: [embed],
-    components: [claimReviewButtons(bountyId, groupType)],
+    components: [claimReviewButtons(bountyId, groupType, claimType)],
     allowedMentions: {
       roles: staffRoleId ? [staffRoleId] : [],
       users: staffUserId ? [staffUserId] : [],
