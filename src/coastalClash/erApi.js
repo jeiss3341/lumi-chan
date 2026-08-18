@@ -61,23 +61,20 @@ const FETCH_TIMEOUT_MS = 10000;
 // circuit breaker sit in exactly one place instead of needing to be
 // threaded through every caller.
 //
-// MIN_REQUEST_GAP_MS — widened back to 1500 on 2026-08-16 (was 1100, briefly
-// passed through on the way down from 3000/2000/1500 on 2026-08-15 — see
-// git history for that full sequence). That original slowdown was caution
-// against 403s that turned out to be a missing ER_API_KEY on Railway, not a
-// real block — once found, there was no actual limit left to be cautious
-// against, so it sped back up to 1100. This time is different: confirmed
-// live on 2026-08-16, genuine 429 "Too Many Requests" responses from the
-// API itself (not 403s), so slowing back down is addressing a real,
-// observed rate limit rather than a stale theory. Each player costs 2 calls
-// here (fetchUserId + fetchRankRaw, see fetchUserRank below — the caller in
-// cull.js doesn't pass a cachedUserId, so both run every pass). 1500ms
-// brings a full ~74-90 player pass (~148-180 calls) to roughly ~3.7-4.5
-// min, still comfortably within REFRESH_INTERVAL_MINUTES' 10-min cadence
-// (see timer.js) — and now that timer.js's refreshInProgress guard exists,
-// an occasional slower-than-usual pass can't overlap the next one either
-// way.
-const MIN_REQUEST_GAP_MS = 1500;
+// MIN_REQUEST_GAP_MS — 1500 (see git history for the 2026-08-16 reasoning:
+// genuine 429s from the API itself, not the old missing-key/403 story)
+// widened again to 1750 the same night, for extra headroom rather than to
+// fix an active problem — confirmed live at 1500 every refresh cycle was
+// already completing with zero failures (the retry backoff was already
+// absorbing the occasional 429 cleanly), this is just more margin on top
+// of that. Each player costs 2 calls here (fetchUserId + fetchRankRaw, see
+// fetchUserRank below — the caller in cull.js doesn't pass a cachedUserId,
+// so both run every pass). 1750ms brings a full ~74-90 player pass (~148-
+// 180 calls) to roughly ~4.3-5.3 min, still comfortably within
+// REFRESH_INTERVAL_MINUTES' 10-min cadence (see timer.js) — and
+// timer.js's refreshInProgress guard means an occasional slower-than-usual
+// pass still can't overlap the next one regardless.
+const MIN_REQUEST_GAP_MS = 1750;
 
 // How long the circuit stays OPEN (refusing all calls) after a 401/403.
 // 30 minutes is long enough that a real block has a real chance to lift
