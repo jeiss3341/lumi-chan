@@ -2522,9 +2522,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Used for the title here, the archive category/prefix further down,
+      // and whether this posts to the public claim board at all.
+      const isCommunity = updated.claim_type === 'community';
+      const titlePrefix = isCommunity ? resolveText('CARD.communitySubmittedTitlePrefix') : resolveText('CARD.claimedTitlePrefix');
       const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
         .setColor(COLORS.approved)
-        .setTitle(`${resolveText('CARD.claimedTitlePrefix')} ${updated.name}`);
+        .setTitle(`${titlePrefix} ${updated.name}`);
       await interaction.update({ embeds: [approvedEmbed], components: [] });
 
       const notes = [];
@@ -2543,17 +2547,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      const claimBoardChannelId = await getClaimBoardChannel();
-      if (claimBoardChannelId) {
-        const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
-        if (claimBoard) {
-          // Same card, minus "Original Requester" — the archived ticket (staff
-          // only) keeps it for context, but the claim board is public.
-          const publicEmbed = EmbedBuilder.from(approvedEmbed).setFields(
-            approvedEmbed.data.fields.filter((f) => f.name !== resolveText('CARD.claim.fieldOriginalRequester')),
-          );
-          await claimBoard.send({ embeds: [publicEmbed] }).catch(console.error);
-          notes.push(`posted to ${claimBoard}`);
+      // Community entries deliberately skip the public claim board — they
+      // haven't "won" anything the way a finalized claim has, they've just
+      // been forwarded to an external vote (Google Form/Discord poll, not
+      // built into the bot). Public display for these happens elsewhere
+      // later (the website); for now they just move to their own archive
+      // category below for staff to collect.
+      if (!isCommunity) {
+        const claimBoardChannelId = await getClaimBoardChannel();
+        if (claimBoardChannelId) {
+          const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
+          if (claimBoard) {
+            // Same card, minus "Original Requester" — the archived ticket (staff
+            // only) keeps it for context, but the claim board is public.
+            const publicEmbed = EmbedBuilder.from(approvedEmbed).setFields(
+              approvedEmbed.data.fields.filter((f) => f.name !== resolveText('CARD.claim.fieldOriginalRequester')),
+            );
+            await claimBoard.send({ embeds: [publicEmbed] }).catch(console.error);
+            notes.push(`posted to ${claimBoard}`);
+          }
         }
       }
 
@@ -2567,8 +2579,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // and 'community' land here, each with their own archive category and
       // prefix ('declared-claim' implies a finalized winner, which doesn't
       // fit a community entry that's just been forwarded to an external
-      // vote — 'submitted-community' reads accurately instead).
-      const isCommunity = updated.claim_type === 'community';
+      // vote — 'submitted-community' reads accurately instead). isCommunity
+      // itself is already in scope from further up this same handler.
       const archiveCategoryId = isCommunity ? await getCommunityArchiveCategory() : await getClaimArchiveCategory();
       if (archiveCategoryId) {
         const approvedPrefix = isCommunity ? 'submitted-community' : 'declared-claim';

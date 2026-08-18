@@ -173,6 +173,11 @@ module.exports = {
     // that same event overwrites the original request-board post so both
     // surfaces agree once a bounty is no longer available.
     claimedTitlePrefix: '🏁 Bounty Claimed:',
+    // Same "it's done" moment as claimedTitlePrefix above, but for
+    // claim_type = 'community' specifically — "Claimed" implies a
+    // finalized, declared-winner outcome, which doesn't fit an entry
+    // that's just been forwarded to an external vote.
+    communitySubmittedTitlePrefix: '📨 Bounty Submitted:',
     // src/bountyCard.js → buildLeaderboardEmbed(). The card posted to the
     // submissions board (see /deployclaimbounty) — stays live, edited in
     // place as the current leader changes, until staff runs /endsubmissions.
