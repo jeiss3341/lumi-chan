@@ -294,6 +294,13 @@ module.exports = {
         // proof is steered to a link here rather than the upload field.
         placeholder: 'How you completed it and how staff can verify. Paste a video link (YouTube/Streamable) here.',
       },
+      // Shown instead of the generic notes.description above when
+      // claim_type = 'community' — this text becomes the actual stored
+      // submission (community_submissions.submission, see src/db.js), so
+      // it needs to explicitly ask for the link, not just "welcome" it.
+      communityNotes: {
+        description: 'Please post your Twitch link — this is what gets saved for the community vote.',
+      },
       files: {
         label: 'Proof (Screenshot or Video)',
         description: 'Optional — screenshots, under 10MB each. For video, paste a link in Proof / Notes above.',

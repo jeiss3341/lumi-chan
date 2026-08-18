@@ -149,6 +149,32 @@
     // still the durable record of any uploaded files).
     await pool.query(`ALTER TABLE bounties ADD COLUMN IF NOT EXISTS leader_proof TEXT;`);
 
+    // The actual shared-read-contract record for community bounties
+    // (claim_type = 'community') — separate from just moving the Discord
+    // ticket to an archive category. Discord/staff review is only the
+    // acceptance gate; this table is what an external site (or anything
+    // else) would actually query to display entries for voting, same
+    // pattern as players/leaderboard_meta being project-lumi's read
+    // contract elsewhere. One row per approved ("Submit") community entry
+    // — a denied entry never gets a row here at all.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS community_submissions (
+        id           SERIAL PRIMARY KEY,
+        bounty_id    INTEGER NOT NULL REFERENCES bounties(id),
+        bounty_name  TEXT NOT NULL,
+        claimant_id  TEXT NOT NULL,
+        submission   TEXT NOT NULL,
+        submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Deliberately no UNIQUE/status guard on bounty_id here — unlike a
+    // one-shot claim, a community bounty stays open indefinitely and is
+    // meant to collect MANY submissions from different people, not lock
+    // after the first one (the user's explicit correction, confirmed live:
+    // the bounty's own status never changes, so every other pending/future
+    // community claim ticket for the same bounty can still be approved).
+
     // The LIVE leaderboard post in the submissions board channel — distinct
     // from board_channel_id/board_message_id, which is always the plain,
     // never-edited-again "Bounty Approved" record in the request board
@@ -966,6 +992,21 @@
     return result.rows[0] ?? null;
   }
 
+  // Community entries (claim_type = 'community') use this instead of
+  // claimBounty above — deliberately does NOT touch bounties.status at
+  // all, since a community bounty stays open for many submissions from
+  // different people, not just the first one. One row per approved
+  // ("Submit") entry.
+  async function createCommunitySubmission({ bountyId, bountyName, claimantId, submission }) {
+    const result = await pool.query(
+      `INSERT INTO community_submissions (bounty_id, bounty_name, claimant_id, submission)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [bountyId, bountyName, claimantId, submission],
+    );
+    return result.rows[0];
+  }
+
   // One-time write, from the new approve-modal step 3 (submissions bounties
   // only) — defines what this bounty's leaderboard is tracking. Never
   // touched again after this.
@@ -1154,6 +1195,7 @@
     setBoardMessage,
     setSubmissionsBoardMessage,
     claimBounty,
+    createCommunitySubmission,
     setSubmissionMetric,
     setBountyExpiry,
     getExpiredBounties,

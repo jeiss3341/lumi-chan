@@ -317,9 +317,12 @@ function buildClaimProofModal(bounty) {
     .setPlaceholder(resolveText('MODAL.claimProof.notes.placeholder'))
     .setMaxLength(1000)
     .setRequired(true);
+  const notesDescription = bounty.claim_type === 'community'
+    ? resolveText('MODAL.claimProof.communityNotes.description')
+    : resolveText('MODAL.claimProof.notes.description');
   const notesLabel = new LabelBuilder()
     .setLabel(resolveText('MODAL.claimProof.notes.label'))
-    .setDescription(resolveText('MODAL.claimProof.notes.description'))
+    .setDescription(notesDescription)
     .setTextInputComponent(notesInput);
 
   const fileInput = new FileUploadBuilder()

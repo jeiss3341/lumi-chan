@@ -167,6 +167,7 @@ const {
   getClaimableBounties,
   setBoardMessage,
   claimBounty,
+  createCommunitySubmission,
   setSubmissionMetric,
   setBountyExpiry,
   getExpiredBounties,
@@ -886,6 +887,45 @@ async function promoteSubmissionLeader({ interaction, bounty, claimantId, value,
 
   const boardNote = notes.length ? ` (${notes.join(', ')})` : '';
   await interaction.editReply({ content: `🏆 **Now leading** by ${interaction.user}${boardNote}.` });
+}
+
+// Community bounties (claim_type = 'community') — staff "Submit"-ing one
+// inserts a community_submissions row (the actual shared-read-contract
+// record — see src/db.js) and archives the ticket, but deliberately never
+// touches bounty.status or removes the request-board post: unlike a
+// one-shot claim, a community bounty stays open indefinitely so OTHER
+// pending/future community claim tickets for the same bounty can still be
+// approved too (the user's explicit correction, confirmed live testing —
+// claimBounty's status='approved' guard would have silently blocked every
+// submission after the first one).
+async function approveCommunitySubmission({ interaction, bounty, claimantId }) {
+  const submission = interaction.message.embeds[0]?.description || '';
+  await createCommunitySubmission({ bountyId: bounty.id, bountyName: bounty.name, claimantId, submission });
+
+  const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+    .setColor(COLORS.approved)
+    .setTitle(`${resolveText('CARD.communitySubmittedTitlePrefix')} ${bounty.name}`);
+  await interaction.update({ embeds: [approvedEmbed], components: [] });
+
+  const notes = [];
+  const archiveCategoryId = await getCommunityArchiveCategory();
+  if (archiveCategoryId) {
+    try {
+      await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true });
+      const claimantName = (await interaction.guild.members.fetch(claimantId).catch(() => null))?.displayName ?? null;
+      await interaction.channel.setName(toChannelName('submitted-community', bounty.name, claimantName)).catch(console.error);
+      await alphabetizeCategory(interaction.channel.parent).catch(console.error);
+      notes.push('archived — bounty stays open for other community submissions');
+    } catch (err) {
+      console.error('Failed to archive community submission ticket:', err);
+      notes.push('⚠️ could not be archived — check the community archive category is configured correctly');
+    }
+  } else {
+    notes.push('⚠️ no community archive category configured — check `/deployclaimbounty`');
+  }
+
+  const boardNote = notes.length ? ` (${notes.join(', ')})` : '';
+  await interaction.followUp({ content: `📨 **Submitted** by ${interaction.user}${boardNote}.` });
 }
 
 // Any OTHER still-open submission tickets for this bounty — every one that
@@ -2512,6 +2552,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Community bounties don't finalize/lock on the first approved entry
+      // either — same "stays open" idea as submissions above, just without
+      // the leader/promotion concept (see approveCommunitySubmission).
+      if (bountyForClaim?.claim_type === 'community') {
+        await approveCommunitySubmission({ interaction, bounty: bountyForClaim, claimantId });
+        return;
+      }
+
       const updated = await claimBounty(bountyId, claimantId);
 
       if (!updated) {
@@ -2522,13 +2570,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // Used for the title here, the archive category/prefix further down,
-      // and whether this posts to the public claim board at all.
-      const isCommunity = updated.claim_type === 'community';
-      const titlePrefix = isCommunity ? resolveText('CARD.communitySubmittedTitlePrefix') : resolveText('CARD.claimedTitlePrefix');
       const approvedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
         .setColor(COLORS.approved)
-        .setTitle(`${titlePrefix} ${updated.name}`);
+        .setTitle(`${resolveText('CARD.claimedTitlePrefix')} ${updated.name}`);
       await interaction.update({ embeds: [approvedEmbed], components: [] });
 
       const notes = [];
@@ -2547,25 +2591,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      // Community entries deliberately skip the public claim board — they
-      // haven't "won" anything the way a finalized claim has, they've just
-      // been forwarded to an external vote (Google Form/Discord poll, not
-      // built into the bot). Public display for these happens elsewhere
-      // later (the website); for now they just move to their own archive
-      // category below for staff to collect.
-      if (!isCommunity) {
-        const claimBoardChannelId = await getClaimBoardChannel();
-        if (claimBoardChannelId) {
-          const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
-          if (claimBoard) {
-            // Same card, minus "Original Requester" — the archived ticket (staff
-            // only) keeps it for context, but the claim board is public.
-            const publicEmbed = EmbedBuilder.from(approvedEmbed).setFields(
-              approvedEmbed.data.fields.filter((f) => f.name !== resolveText('CARD.claim.fieldOriginalRequester')),
-            );
-            await claimBoard.send({ embeds: [publicEmbed] }).catch(console.error);
-            notes.push(`posted to ${claimBoard}`);
-          }
+      const claimBoardChannelId = await getClaimBoardChannel();
+      if (claimBoardChannelId) {
+        const claimBoard = await interaction.guild.channels.fetch(claimBoardChannelId).catch(() => null);
+        if (claimBoard) {
+          // Same card, minus "Original Requester" — the archived ticket (staff
+          // only) keeps it for context, but the claim board is public.
+          const publicEmbed = EmbedBuilder.from(approvedEmbed).setFields(
+            approvedEmbed.data.fields.filter((f) => f.name !== resolveText('CARD.claim.fieldOriginalRequester')),
+          );
+          await claimBoard.send({ embeds: [publicEmbed] }).catch(console.error);
+          notes.push(`posted to ${claimBoard}`);
         }
       }
 
@@ -2573,17 +2609,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // lockPermissions adopts the archive category's own overwrites, so it
       // drops out of everyone's sight except whoever that category is scoped
       // to. Renamed to reflect it's done, then that category gets
-      // re-alphabetized so it stays easy to scan by name. A submissions-type
-      // claim never reaches this point at all (see the early branch above
-      // that hands it off to promoteSubmissionLeader instead) — only 'claim'
-      // and 'community' land here, each with their own archive category and
-      // prefix ('declared-claim' implies a finalized winner, which doesn't
-      // fit a community entry that's just been forwarded to an external
-      // vote — 'submitted-community' reads accurately instead). isCommunity
-      // itself is already in scope from further up this same handler.
-      const archiveCategoryId = isCommunity ? await getCommunityArchiveCategory() : await getClaimArchiveCategory();
+      // re-alphabetized so it stays easy to scan by name. Always
+      // 'declared-claim' here — submissions-type and community-type claims
+      // never reach this point at all (see the early branches above that
+      // hand them off to promoteSubmissionLeader / the dedicated community
+      // branch instead), so there's no other case to name for.
+      const archiveCategoryId = await getClaimArchiveCategory();
       if (archiveCategoryId) {
-        const approvedPrefix = isCommunity ? 'submitted-community' : 'declared-claim';
+        const approvedPrefix = 'declared-claim';
         try {
           await interaction.channel.setParent(archiveCategoryId, { lockPermissions: true });
           const approvedClaimantName = (await interaction.guild.members.fetch(claimantId).catch(() => null))?.displayName ?? null;
