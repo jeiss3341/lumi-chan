@@ -1,10 +1,16 @@
 // Coastal Clash elimination schedule — fixed per-day, per-bracket survivor
 // thresholds from the event's own spec calendar (not derivable from any
 // game data). Day 1 = event launch date. Days 1-3 are grace days (no
-// elimination). Day 14 is a patch day (no elimination). Day 17 is the
-// finale — the calendar just labels it "End," but per the user's explicit,
-// confirmed-twice call it's a real Top-1 cull (2 -> 1, auto-declares the
-// winner), using the exact same mechanism as every other day.
+// elimination). Days 7 AND 14 are patch days (no elimination) — updated
+// 2026-08-17 after realizing every Wednesday in the event window is a
+// patch day, not just day 14 (Day 1 = Thursday Aug 13, so Day 7 = Wed
+// Aug 19 and Day 14 = Wed Aug 26 are the only two Wednesdays that fall
+// inside the event). Days 4-6 are unchanged by this update (today, Day 5,
+// already ran before this change — nothing retroactive needed). Day 17 is
+// the finale — the calendar just labels it "End," but per the user's
+// explicit, confirmed-twice call it's a real Top-1 cull (2 -> 1,
+// auto-declares the winner), using the exact same mechanism as every
+// other day.
 //
 // Thresholds are CUMULATIVE SURVIVOR COUNTS ("Top N remain"), not per-day
 // removal counts — the actual number culled on a given day is
@@ -12,17 +18,18 @@
 const EVENT_START_DATE = '2026-08-13'; // Day 1
 
 const PRO_THRESHOLDS = {
-  4: 45, 5: 39, 6: 34, 7: 29, 8: 24, 9: 20, 10: 16,
-  11: 12, 12: 9, 13: 6, 15: 4, 16: 2, 17: 1,
+  4: 45, 5: 39, 6: 34, 8: 29, 9: 24, 10: 19,
+  11: 14, 12: 10, 13: 7, 15: 4, 16: 2, 17: 1,
 };
 
 const CASUAL_THRESHOLDS = {
-  4: 20, 5: 18, 6: 16, 7: 14, 8: 12, 9: 10, 10: 8,
-  11: 6, 12: 5, 13: 4, 15: 3, 16: 2, 17: 1,
+  4: 20, 5: 18, 6: 16, 8: 14, 9: 12, 10: 10,
+  11: 8, 12: 6, 13: 4, 15: 3, 16: 2, 17: 1,
 };
 
-// Every cull happens at 11:59 PM PDT. Days 1-3 (grace) and day 14 (patch)
-// have no entry in the threshold maps above, so isCullDay() covers both.
+// Every cull happens at 11:59 PM PDT. Days 1-3 (grace) and days 7/14
+// (patch) have no entry in the threshold maps above, so isCullDay()
+// covers all of them.
 function getEventDay(now = new Date()) {
   const start = new Date(`${EVENT_START_DATE}T00:00:00-07:00`); // PDT
   const diffMs = now.getTime() - start.getTime();
@@ -78,7 +85,7 @@ function isCullDay(day) {
 // this for a real cull day (which now includes Day 17).
 function getNonCullReason(day) {
   if (day <= 3) return 'grace day';
-  if (day === 14) return 'patch day';
+  if (day === 7 || day === 14) return 'patch day';
   return 'not a scheduled cull day';
 }
 
