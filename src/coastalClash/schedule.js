@@ -24,7 +24,9 @@ const PRO_THRESHOLDS = {
 
 const CASUAL_THRESHOLDS = {
   4: 20, 5: 18, 6: 16, 8: 14, 9: 12, 10: 10,
-  11: 8, 12: 6, 13: 4, 15: 3, 16: 2, 17: 1,
+  // Day 13 corrected 4 -> 5, day 15 shifts 3 -> 4 to match (2026-08-17
+  // spec update) — everything else in this table unchanged.
+  11: 8, 12: 6, 13: 5, 15: 4, 16: 2, 17: 1,
 };
 
 // Every cull happens at 11:59 PM PDT. Days 1-3 (grace) and days 7/14
