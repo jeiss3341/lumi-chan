@@ -43,10 +43,16 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      const culledLines = culled.map((p) => {
-        const dakLink = p.dak ? ` ([dak](${p.dak}))` : '';
-        return `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated${dakLink}`;
-      });
+      // No dak link here (unlike activeLines above) — dak on both lists,
+      // all in one continuous description block, doesn't fit under
+      // Discord's 4096-char cap for the whole event (roster size is
+      // fixed, so the eliminated list only grows). Fields would let dak
+      // stay on everyone, but Discord renders a header row for every
+      // field regardless of content, which reads as a random blank gap
+      // once eliminated needs more than one field's worth of players —
+      // tried and rejected live 2026-08-20 in favor of keeping this a
+      // single block with exactly one section break, none mid-list.
+      const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
 
       const bracket = isPro ? 'pro' : 'casual';
       // Same "has today's own cull already run?" check as
@@ -89,6 +95,9 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       }
 
       let description = countdownLine + lastUpdatedLine + (countdownLine || lastUpdatedLine ? '\n' : '') + (activeLines.join('\n') || '*No active players.*');
+      if (culledLines.length) {
+        description += `\n\n**Eliminated (${culledLines.length})**\n${culledLines.join('\n')}`;
+      }
 
       // Discord hard-caps embed descriptions at 4096 chars — truncate with a
       // note rather than let the API reject the whole message if the roster
@@ -101,34 +110,6 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       if (description.length > 4000) {
         const lastNewline = description.lastIndexOf('\n', 4000);
         description = description.slice(0, lastNewline > 0 ? lastNewline : 4000) + '\n\n*(truncated — too many players to show in full)*';
-      }
-
-      // Eliminated players live in fields instead of the description now
-      // — a separate 1024-char-per-field budget from the description's
-      // own 4096 cap, which is what lets dak links stay on BOTH lists
-      // without ever overflowing (roster size is fixed for the whole
-      // event, so the eliminated list only grows, never shrinks). Chunked
-      // across multiple fields since one field alone can't hold all ~50
-      // eventual eliminations with a dak link on each; every field after
-      // the first is labeled "Eliminated (cont.)" rather than left blank
-      // — a zero-width-space name was tried first but every Discord field
-      // still renders its own header row regardless of content, so an
-      // invisible name just left a confusing gap instead of no header at
-      // all (confirmed live 2026-08-20).
-      const culledFields = [];
-      if (culledLines.length) {
-        let chunk = [];
-        let chunkLen = 0;
-        for (const line of culledLines) {
-          if (chunkLen + line.length + 1 > 1000 && chunk.length) {
-            culledFields.push(chunk.join('\n'));
-            chunk = [];
-            chunkLen = 0;
-          }
-          chunk.push(line);
-          chunkLen += line.length + 1;
-        }
-        if (chunk.length) culledFields.push(chunk.join('\n'));
       }
 
       // "Top N" info lives in the footer now, since the description's own
@@ -151,20 +132,11 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         : '';
       const footerText = `Day ${day} of 17${nonCullNote}${followingThreshold !== null ? ` · Following cutoff: Top ${followingThreshold}` : ''}`;
 
-      const embed = new EmbedBuilder()
+      return new EmbedBuilder()
         .setTitle(`${isPro ? '🔱 Pro' : '⚔️ Casual'} Bracket — Day ${day}`)
         .setColor(isPro ? VISUALS.COLORS.sand : VISUALS.COLORS.brand)
         .setDescription(description)
         .setFooter({ text: footerText });
-
-      if (culledFields.length) {
-        embed.addFields(culledFields.map((value, i) => ({
-          name: i === 0 ? `Eliminated (${culledLines.length})` : 'Eliminated (cont.)',
-          value,
-        })));
-      }
-
-      return embed;
     });
 }
 
