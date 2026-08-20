@@ -17,7 +17,13 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
     // "in danger" landing on the visual bottom of the display instead of
     // scattered arbitrarily (Postgres doesn't guarantee tie order matches
     // between separately-sorted queries without an explicit tiebreaker).
-    .query(`SELECT name, region, mmr, culled, indanger FROM players WHERE ispro = $1 ORDER BY culled ASC, mmr DESC, name DESC`, [isPro])
+    .query(`
+      SELECT p.name, p.region, p.mmr, p.culled, p.indanger, pi.dak
+      FROM players p
+      LEFT JOIN player_igns pi ON pi.name = p.name
+      WHERE p.ispro = $1
+      ORDER BY p.culled ASC, p.mmr DESC, p.name DESC
+    `, [isPro])
     .then(({ rows }) => {
       const active = rows.filter((p) => !p.culled);
       const culled = rows.filter((p) => p.culled);
@@ -32,7 +38,12 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
         const status = p.indanger ? '⚠️' : '✅';
-        const line = `${i + 1}. **${region}${p.name}** — ${p.mmr} RP ${status}`;
+        // Name itself is the dak link (instead of a separate trailing
+        // "[dak](url)" token) — cheaper per line since there's no label
+        // text to repeat, and it reads cleaner than a second bracketed
+        // chunk stacked after the RP/status.
+        const namePart = p.dak ? `[${region}${p.name}](${p.dak})` : `${region}${p.name}`;
+        const line = `${i + 1}. **${namePart}** — ${p.mmr} ${status}`;
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
@@ -85,9 +96,15 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
 
       // Discord hard-caps embed descriptions at 4096 chars — truncate with a
       // note rather than let the API reject the whole message if the roster
-      // ever grows past what fits.
+      // ever grows past what fits. Cut at the last full line instead of a
+      // raw character slice — a mid-string cut can land inside a markdown
+      // link's `[label](url)` syntax and leave it unclosed, which Discord
+      // then renders as broken literal text instead of quietly dropping it
+      // (confirmed live 2026-08-20, a cut-off "([dak](https://dak.gg/..."
+      // showed up unrendered at the bottom of the pro bracket board).
       if (description.length > 4000) {
-        description = description.slice(0, 4000) + '\n\n*(truncated — too many players to show in full)*';
+        const lastNewline = description.lastIndexOf('\n', 4000);
+        description = description.slice(0, lastNewline > 0 ? lastNewline : 4000) + '\n\n*(truncated — too many players to show in full)*';
       }
 
       // "Top N" info lives in the footer now, since the description's own
