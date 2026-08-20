@@ -38,21 +38,19 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
         const status = p.indanger ? '⚠️' : '✅';
-        const dakLink = p.dak ? ` ([dak](${p.dak}))` : '';
-        const line = `${i + 1}. **${region}${p.name}** — ${p.mmr} RP ${status}${dakLink}`;
+        // Name itself is the dak link (instead of a separate trailing
+        // "[dak](url)" token) — cheaper per line since there's no label
+        // text to repeat, and it reads cleaner than a second bracketed
+        // chunk stacked after the RP/status.
+        const namePart = p.dak ? `[${region}${p.name}](${p.dak})` : `${region}${p.name}`;
+        const line = `${i + 1}. **${namePart}** — ${p.mmr} ${status}`;
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      // No dak link here (unlike activeLines above) — dak on both lists,
-      // all in one continuous description block, doesn't fit under
-      // Discord's 4096-char cap for the whole event (roster size is
-      // fixed, so the eliminated list only grows). Fields would let dak
-      // stay on everyone, but Discord renders a header row for every
-      // field regardless of content, which reads as a random blank gap
-      // once eliminated needs more than one field's worth of players —
-      // tried and rejected live 2026-08-20 in favor of keeping this a
-      // single block with exactly one section break, none mid-list.
-      const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
+      const culledLines = culled.map((p) => {
+        const dakLink = p.dak ? ` [dak](${p.dak})` : '';
+        return `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️${dakLink}`;
+      });
 
       const bracket = isPro ? 'pro' : 'casual';
       // Same "has today's own cull already run?" check as
