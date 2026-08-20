@@ -47,10 +47,7 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      const culledLines = culled.map((p) => {
-        const dakLink = p.dak ? ` [dak](${p.dak})` : '';
-        return `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️${dakLink}`;
-      });
+      const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
 
       const bracket = isPro ? 'pro' : 'casual';
       // Same "has today's own cull already run?" check as
