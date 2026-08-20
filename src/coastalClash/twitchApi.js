@@ -79,7 +79,12 @@ async function fetchLiveLoginsBatch(logins) {
 
   return new Map(data.data.map((stream) => [
     stream.user_login.toLowerCase(),
-    { title: stream.title, gameId: stream.game_id, gameName: stream.game_name },
+    // user_name is the streamer's actual Twitch display name — can differ
+    // from their Coastal Clash roster name (players.name), which the "is
+    // now live" announcement used to show instead, confirmed live to be
+    // wrong for at least one player (S6Aemeath's roster name vs. their
+    // real Twitch handle, Shayyxy).
+    { title: stream.title, gameId: stream.game_id, gameName: stream.game_name, twitchDisplayName: stream.user_name },
   ]));
 }
 

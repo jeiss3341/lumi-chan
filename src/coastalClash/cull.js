@@ -282,7 +282,7 @@ async function refreshTwitchLiveStatus(pool, dryRun = false) {
     const offCooldown = now - lastAnnouncedMs > LIVE_ANNOUNCE_COOLDOWN_MS;
     const willAnnounce = justSwitchedIn && offCooldown;
 
-    if (willAnnounce) results.toAnnounce.push({ name: row.name, twitch: liveTwitchUrl, title, gameName: liveInfo.gameName });
+    if (willAnnounce) results.toAnnounce.push({ name: row.name, twitchDisplayName: liveInfo.twitchDisplayName, twitch: liveTwitchUrl, title, gameName: liveInfo.gameName });
 
     if (!dryRun) {
       // players.twitch itself only ever changes for players with a

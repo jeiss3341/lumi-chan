@@ -329,7 +329,7 @@ async function postLiveAnnouncements(client, db, toAnnounce) {
     const login = twitchApi.extractTwitchLogin(player.twitch);
     const link = login ? `https://twitch.tv/${login}` : null;
     const embed = new EmbedBuilder()
-      .setTitle(`🟣 ${player.name} is now live!`)
+      .setTitle(`🟣 ${player.twitchDisplayName || player.name} is now live!`)
       .setColor(VISUALS.COLORS.twitch)
       .setDescription(`Playing **${player.gameName}**${player.title ? `\n> ${player.title}` : ''}`);
     // setURL throws on null/undefined — only set it when there's a real
