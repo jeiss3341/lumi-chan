@@ -43,10 +43,14 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      const culledLines = culled.map((p) => {
-        const dakLink = p.dak ? ` ([dak](${p.dak}))` : '';
-        return `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated${dakLink}`;
-      });
+      // No dak link here (unlike activeLines above) — with the roster's
+      // total size fixed for the whole event, players only ever move from
+      // this list into it, never out, so every char spent per line here
+      // is a permanent tax on the description budget for the rest of the
+      // event. Confirmed live 2026-08-20: with dak links on both lists,
+      // the pro bracket (51 players) already overflowed Discord's 4096
+      // cap at day 8 and would only get tighter as more get eliminated.
+      const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
 
       const bracket = isPro ? 'pro' : 'casual';
       // Same "has today's own cull already run?" check as
@@ -95,9 +99,15 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
 
       // Discord hard-caps embed descriptions at 4096 chars — truncate with a
       // note rather than let the API reject the whole message if the roster
-      // ever grows past what fits.
+      // ever grows past what fits. Cut at the last full line instead of a
+      // raw character slice — a mid-string cut can land inside a markdown
+      // link's `[label](url)` syntax and leave it unclosed, which Discord
+      // then renders as broken literal text instead of quietly dropping it
+      // (confirmed live 2026-08-20, a cut-off "([dak](https://dak.gg/..."
+      // showed up unrendered at the bottom of the pro bracket board).
       if (description.length > 4000) {
-        description = description.slice(0, 4000) + '\n\n*(truncated — too many players to show in full)*';
+        const lastNewline = description.lastIndexOf('\n', 4000);
+        description = description.slice(0, lastNewline > 0 ? lastNewline : 4000) + '\n\n*(truncated — too many players to show in full)*';
       }
 
       // "Top N" info lives in the footer now, since the description's own
