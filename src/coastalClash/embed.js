@@ -110,9 +110,11 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       // event, so the eliminated list only grows, never shrinks). Chunked
       // across multiple fields since one field alone can't hold all ~50
       // eventual eliminations with a dak link on each; every field after
-      // the first uses a zero-width-space name since Discord rejects an
-      // empty field name but a second "Eliminated (N)" header would read
-      // as a duplicate count.
+      // the first is labeled "Eliminated (cont.)" rather than left blank
+      // — a zero-width-space name was tried first but every Discord field
+      // still renders its own header row regardless of content, so an
+      // invisible name just left a confusing gap instead of no header at
+      // all (confirmed live 2026-08-20).
       const culledFields = [];
       if (culledLines.length) {
         let chunk = [];
@@ -157,7 +159,7 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
 
       if (culledFields.length) {
         embed.addFields(culledFields.map((value, i) => ({
-          name: i === 0 ? `Eliminated (${culledLines.length})` : '​',
+          name: i === 0 ? `Eliminated (${culledLines.length})` : 'Eliminated (cont.)',
           value,
         })));
       }
