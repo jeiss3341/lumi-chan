@@ -38,12 +38,8 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
         const status = p.indanger ? '⚠️' : '✅';
-        // Name itself is the dak link (instead of a separate trailing
-        // "[dak](url)" token) — cheaper per line since there's no label
-        // text to repeat, and it reads cleaner than a second bracketed
-        // chunk stacked after the RP/status.
-        const namePart = p.dak ? `[${region}${p.name}](${p.dak})` : `${region}${p.name}`;
-        const line = `${i + 1}. **${namePart}** — ${p.mmr} ${status}`;
+        const dakLink = p.dak ? ` ([dak](${p.dak}))` : '';
+        const line = `${i + 1}. **${region}${p.name}** — ${p.mmr} RP ${status}${dakLink}`;
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
