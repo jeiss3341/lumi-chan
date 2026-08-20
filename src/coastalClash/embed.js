@@ -17,7 +17,13 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
     // "in danger" landing on the visual bottom of the display instead of
     // scattered arbitrarily (Postgres doesn't guarantee tie order matches
     // between separately-sorted queries without an explicit tiebreaker).
-    .query(`SELECT name, region, mmr, culled, indanger FROM players WHERE ispro = $1 ORDER BY culled ASC, mmr DESC, name DESC`, [isPro])
+    .query(`
+      SELECT p.name, p.region, p.mmr, p.culled, p.indanger, pi.dak
+      FROM players p
+      LEFT JOIN player_igns pi ON pi.name = p.name
+      WHERE p.ispro = $1
+      ORDER BY p.culled ASC, p.mmr DESC, p.name DESC
+    `, [isPro])
     .then(({ rows }) => {
       const active = rows.filter((p) => !p.culled);
       const culled = rows.filter((p) => p.culled);
@@ -32,11 +38,15 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
         const status = p.indanger ? '⚠️' : '✅';
-        const line = `${i + 1}. **${region}${p.name}** — ${p.mmr} RP ${status}`;
+        const dakLink = p.dak ? ` [(dak)](${p.dak})` : '';
+        const line = `${i + 1}. **${region}${p.name}**${dakLink} — ${p.mmr} RP ${status}`;
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
+      const culledLines = culled.map((p) => {
+        const dakLink = p.dak ? ` [(dak)](${p.dak})` : '';
+        return `~~${p.region ? `${p.region} | ` : ''}${p.name}~~${dakLink} ☠️ Eliminated`;
+      });
 
       const bracket = isPro ? 'pro' : 'casual';
       // Same "has today's own cull already run?" check as
