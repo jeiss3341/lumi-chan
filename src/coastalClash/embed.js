@@ -38,14 +38,14 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       const activeLines = active.map((p, i) => {
         const region = p.region ? `${p.region} | ` : '';
         const status = p.indanger ? '⚠️' : '✅';
-        const dakLink = p.dak ? ` [(dak)](${p.dak})` : '';
-        const line = `${i + 1}. **${region}${p.name}**${dakLink} — ${p.mmr} RP ${status}`;
+        const dakLink = p.dak ? ` ([dak](${p.dak}))` : '';
+        const line = `${i + 1}. **${region}${p.name}** — ${p.mmr} RP ${status}${dakLink}`;
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
       const culledLines = culled.map((p) => {
-        const dakLink = p.dak ? ` [(dak)](${p.dak})` : '';
-        return `~~${p.region ? `${p.region} | ` : ''}${p.name}~~${dakLink} ☠️ Eliminated`;
+        const dakLink = p.dak ? ` ([dak](${p.dak}))` : '';
+        return `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated${dakLink}`;
       });
 
       const bracket = isPro ? 'pro' : 'casual';
