@@ -387,12 +387,63 @@ async function executeCullForBracket(pool, isPro, day, dryRun = false) {
   if (threshold === null) return { culled: [] };
 
   const { rows: active } = await pool.query(
-    `SELECT name FROM players WHERE culled = false AND ispro = $1 ORDER BY mmr ASC, name ASC`,
+    `SELECT name, mmr FROM players WHERE culled = false AND ispro = $1 ORDER BY mmr ASC, name ASC`,
     [isPro],
   );
 
   const cullCount = Math.max(0, active.length - threshold);
   if (cullCount === 0) return { culled: [] };
+
+  // Exact-RP tie sitting right on the cutoff line — alphabetical order
+  // (the ORDER BY's tiebreak above) would otherwise arbitrarily decide
+  // who survives. Only worth the extra API calls for the group actually
+  // straddling the line, not a full-roster tiebreak sweep every cull —
+  // this should be rare (see erApi.fetchMostRecentGameTK's own comment
+  // for why it's fine for this one call to be more expensive than the
+  // per-cycle RP refresh). `active` is sorted mmr ASC already, so the
+  // tied group is always contiguous around index cullCount.
+  const boundaryMmr = active[cullCount - 1].mmr;
+  if (active[cullCount]?.mmr === boundaryMmr) {
+    let groupStart = cullCount - 1;
+    while (groupStart > 0 && active[groupStart - 1].mmr === boundaryMmr) groupStart--;
+    let groupEnd = cullCount;
+    while (groupEnd < active.length - 1 && active[groupEnd + 1].mmr === boundaryMmr) groupEnd++;
+    const tiedGroup = active.slice(groupStart, groupEnd + 1);
+
+    console.log(`[CC cull ${process.env.LUMI_INSTANCE_ID}] RP tie at cutoff (${isPro ? 'pro' : 'casual'}, mmr=${boundaryMmr}): ${tiedGroup.map((p) => p.name).join(', ')} — checking most recent game TK`);
+    const withTK = [];
+    for (const p of tiedGroup) {
+      let tk = null;
+      try {
+        tk = await erApi.fetchMostRecentGameTK(p.name);
+      } catch (err) {
+        console.warn(`[CC cull ${process.env.LUMI_INSTANCE_ID}] TK tiebreak fetch failed for ${p.name}:`, err.message);
+      }
+      withTK.push({ ...p, tk });
+    }
+
+    if (withTK.some((p) => p.tk === null)) {
+      // Incomplete data (a fetch failure, or a tied player with no
+      // matching recent game at all) — don't reorder anyone. Silently
+      // treating a missing TK as "worse than everyone else's" would
+      // effectively auto-eliminate that player over an API hiccup, not
+      // their actual performance, so an all-or-nothing rule here is the
+      // safer call: only reorder when every tied player's TK is actually
+      // known. Falls back to the pre-existing alphabetical order (`active`
+      // is untouched below).
+      console.log(`[CC cull ${process.env.LUMI_INSTANCE_ID}] TK tiebreak incomplete (${withTK.filter((p) => p.tk === null).map((p) => p.name).join(', ')} unknown) — leaving alphabetical order unchanged`);
+    } else {
+      // `active` (and this tied sub-group) is ordered ascending — index 0
+      // is the FIRST to be culled, not the last — so the LOWEST TK must
+      // sort first (gets culled) and the HIGHEST TK last (survives),
+      // matching the array's existing "ascending = worse" convention.
+      // Getting this backwards was caught by this exact scenario in
+      // test_tk_tiebreak.js before it ever ran against real data.
+      withTK.sort((a, b) => a.tk - b.tk);
+      console.log(`[CC cull ${process.env.LUMI_INSTANCE_ID}] TK tiebreak result (lowest culled, highest survives): ${withTK.map((p) => `${p.name}=${p.tk}`).join(', ')}`);
+      active.splice(groupStart, withTK.length, ...withTK);
+    }
+  }
 
   const toCull = active.slice(0, cullCount).map((r) => r.name);
   if (!dryRun) {

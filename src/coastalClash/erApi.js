@@ -406,6 +406,53 @@ async function fetchPlayerRP(nickname, seasonId, maxRetries = 5) {
   return { rp: userRank.mmr ?? 0, notPlayedYet: false };
 }
 
+// Only called for the rare case of an exact-RP tie sitting right on a
+// cull cutoff line (src/coastalClash/cull.js's executeCullForBracket) —
+// not a per-refresh-cycle call like fetchPlayerRP above, so no need for
+// this to be cheap on every cycle. /user/games/uid doesn't take a season
+// param at all (confirmed live 2026-08-25 — it just returns the account's
+// real match history, most-recent-first, across whatever season each game
+// was actually played in), so this doesn't touch the tournament's own
+// tracked seasonId one way or the other. Filtered to matchingTeamMode 3
+// to match this tournament's own ranked mode (fetchRankRaw's default) —
+// same account's other queue types shouldn't count. Returns null (not 0)
+// on no matching game found or a fetch failure, so callers can tell "no
+// data, fall back to the old tiebreak" apart from "genuinely 0 team kills
+// last game".
+async function fetchMostRecentGameTK(nickname, maxRetries = 5) {
+  const userId = await fetchUserId(nickname);
+  if (!userId) return null;
+
+  const endpoint = `/user/games/uid/${userId}`;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const callStart = Date.now();
+    let res, data;
+    try {
+      res = await fetchWithTimeout(`${API_URL}${endpoint}`, { headers: { accept: 'application/json', 'x-api-key': API_KEY } });
+      data = await res.json();
+      logRawCall(endpoint, res, data, Date.now() - callStart);
+    } catch (err) {
+      if (err.code !== 'ER_CIRCUIT_OPEN') {
+        logRawCall(endpoint, res, null, Date.now() - callStart, err.message);
+      }
+      throw err;
+    }
+    throwIfForbidden(res);
+
+    if (res.status === 429 || data.message === 'Too Many Requests') {
+      if (attempt === maxRetries) return null;
+      const waitMs = 5000 * attempt;
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (data.code !== 200 || !Array.isArray(data.userGames)) return null;
+    const mostRecent = data.userGames.find((g) => g.matchingTeamMode === 3);
+    return mostRecent ? (mostRecent.teamKill ?? null) : null;
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Season ID — stored in Postgres (settings table), never hardcoded in
 // source. /data/Season is unmaintained by the game (stale, capped years in
@@ -529,6 +576,7 @@ module.exports = {
   fetchRankRaw,
   fetchUserRank,
   fetchPlayerRP,
+  fetchMostRecentGameTK,
   SEASON_SETTING_KEY,
   getVerifiedSeasonId,
   isCircuitBreakerError,
