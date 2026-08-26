@@ -658,6 +658,7 @@ async function commitBountyApproval({ interaction, bountyId, name, description, 
       user: requester ?? interaction.user,
       status: 'approved',
       expiresAt,
+      claimType,
     });
 
     // Same request-board post for both claim types — no buttons, never

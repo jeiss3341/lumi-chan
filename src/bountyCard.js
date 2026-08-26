@@ -32,9 +32,14 @@ function formatGroupType(raw) {
 // it as it moves through the flow: 'pending' ("Bounty Request", blurple) →
 // 'approved' ("Bounty Approved", green). Denied tickets just close, so
 // there's no 'denied' title — the pending one is a safe fallback.
-function buildBountyEmbed({ name, description, amountRaw, groupType, user, status = 'pending', expiresAt = null }) {
+function buildBountyEmbed({ name, description, amountRaw, groupType, user, status = 'pending', expiresAt = null, claimType = null }) {
   const titlePrefix =
     status === 'approved' ? resolveText('CARD.request.approvedTitlePrefix') : resolveText('CARD.request.titlePrefix');
+  // Community bounties don't lock/rank like claim or submissions types do
+  // — winner is picked by an external vote, not the bot — so the title
+  // flags that up front rather than leaving viewers to guess why nothing
+  // ever seems to "close" on this one.
+  const nameSuffix = claimType === 'community' ? ' (Community Vote)' : '';
 
   // Discord's own <t:UNIX:R> markdown renders as a live, auto-updating
   // "expires in 3 days" — per-viewer localized, no manual countdown math
@@ -52,7 +57,7 @@ function buildBountyEmbed({ name, description, amountRaw, groupType, user, statu
 
   const embed = new EmbedBuilder()
     .setColor(COLORS[status] ?? COLORS.pending)
-    .setTitle(`${titlePrefix} ${name}`)
+    .setTitle(`${titlePrefix} ${name}${nameSuffix}`)
     .setDescription(fullDescription)
     .setThumbnail(user.displayAvatarURL())
     .addFields(
