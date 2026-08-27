@@ -242,6 +242,22 @@
         announced_at TIMESTAMPTZ
       );
     `);
+
+    // Players removed for a rules violation rather than a normal RP-based
+    // cull — bot-only bookkeeping, same reasoning as twitch_status above
+    // for keeping this out of players itself. players.mmr still gets
+    // overwritten to whatever sort position the DQ should land at (e.g.
+    // just below today's lowest active player), which would otherwise
+    // permanently lose their real earned RP — real_rp preserves it so the
+    // board can still show it. reason is freeform (e.g. "region rule
+    // violation").
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS disqualified_players (
+        name    TEXT PRIMARY KEY,
+        real_rp INTEGER NOT NULL,
+        reason  TEXT NOT NULL
+      );
+    `);
     // live_twitch_url: whichever of a player's channels (players.twitch, or
     // their player_extra_twitch row below) was actually detected live on
     // the most recent check — the Live Now board/announcements link to
@@ -759,6 +775,14 @@
   // secondary cycle (confirmed happening in testing). COALESCE on
   // primary_twitch means calling this again later to update just the
   // secondary channel won't clobber an already-captured primary.
+  async function setDisqualified(name, realRp, reason) {
+    await pool.query(
+      `INSERT INTO disqualified_players (name, real_rp, reason) VALUES ($1, $2, $3)
+       ON CONFLICT (name) DO UPDATE SET real_rp = EXCLUDED.real_rp, reason = EXCLUDED.reason`,
+      [name, realRp, reason],
+    );
+  }
+
   async function setPlayerExtraTwitch(name, secondaryTwitch) {
     await pool.query(
       `INSERT INTO player_extra_twitch (name, twitch, primary_twitch)
@@ -1172,6 +1196,7 @@
     setLiveAnnounceChannel,
     setLeaderboardMeta,
     setPlayerExtraTwitch,
+    setDisqualified,
     logApiCall,
     pruneApiCallLog,
     getSeasonLive,

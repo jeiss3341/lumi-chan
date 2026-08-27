@@ -18,9 +18,10 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
     // scattered arbitrarily (Postgres doesn't guarantee tie order matches
     // between separately-sorted queries without an explicit tiebreaker).
     .query(`
-      SELECT p.name, p.region, p.mmr, p.culled, p.indanger, pi.dak
+      SELECT p.name, p.region, p.mmr, p.culled, p.indanger, pi.dak, dq.real_rp AS dq_real_rp
       FROM players p
       LEFT JOIN player_igns pi ON pi.name = p.name
+      LEFT JOIN disqualified_players dq ON dq.name = p.name
       WHERE p.ispro = $1
       ORDER BY p.culled ASC, p.mmr DESC, p.name DESC
     `, [isPro])
@@ -43,7 +44,15 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
+      const culledLines = culled.map((p) => {
+        const base = `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`;
+        // dq_real_rp only set for a manual disqualification (see
+        // disqualified_players in src/db.js) — players.mmr gets overwritten
+        // to force a specific sort position for these (e.g. today's last
+        // active slot), which would otherwise silently lose their real
+        // earned RP from the board entirely.
+        return p.dq_real_rp != null ? `${base} (DQ'd — ${p.dq_real_rp} RP)` : base;
+      });
 
       const bracket = isPro ? 'pro' : 'casual';
       // Same "has today's own cull already run?" check as
