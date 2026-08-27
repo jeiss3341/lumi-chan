@@ -44,15 +44,16 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      const culledLines = culled.map((p) => {
-        const base = `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`;
-        // dq_real_rp only set for a manual disqualification (see
-        // disqualified_players in src/db.js) — players.mmr gets overwritten
-        // to force a specific sort position for these (e.g. today's last
-        // active slot), which would otherwise silently lose their real
-        // earned RP from the board entirely.
-        return p.dq_real_rp != null ? `${base} (DQ'd — ${p.dq_real_rp} RP)` : base;
-      });
+      // dq_real_rp (disqualified_players — see src/db.js) is deliberately
+      // NOT shown here — a disqualification stays private, the player
+      // should read as a normal elimination on the public Discord board.
+      // players.mmr is still overwritten to whatever sort position the DQ
+      // needs (e.g. today's last active slot) for exactly this reason: it
+      // has to look indistinguishable from a real elimination, and a
+      // disqualified player showing their real (often much higher) RP
+      // near the top of this list would raise exactly the questions this
+      // is trying to avoid.
+      const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
 
       const bracket = isPro ? 'pro' : 'casual';
       // Same "has today's own cull already run?" check as
