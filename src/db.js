@@ -739,6 +739,20 @@
     return setSetting('coastal_clash_season_live', isLive ? 'true' : 'false');
   }
 
+  // Whether the 3-min Twitch live-status poll (src/coastalClash/timer.js)
+  // should run at all. Independent of season_live — Twitch checks have
+  // nothing to do with whether the ER season is "real" (see cull.js's
+  // refreshTwitchLiveStatus comment). Defaults to enabled (getSetting
+  // returns undefined, not 'false', until explicitly turned off) so this
+  // doesn't need to be set during a normal event.
+  function getTwitchLiveCheckEnabled() {
+    return getSetting('coastal_clash_twitch_live_check_enabled');
+  }
+
+  function setTwitchLiveCheckEnabled(isEnabled) {
+    return setSetting('coastal_clash_twitch_live_check_enabled', isEnabled ? 'true' : 'false');
+  }
+
   // /daychange and /dayprevious (TEST ONLY, index.js) edit this SAME
   // status message in place on every run, instead of each click posting a
   // brand new reply — same edit-in-place pattern as the leaderboard
@@ -1218,6 +1232,8 @@
     pruneApiCallLog,
     getSeasonLive,
     setSeasonLive,
+    getTwitchLiveCheckEnabled,
+    setTwitchLiveCheckEnabled,
     getDayChangeStatusMessage,
     setDayChangeStatusMessage,
     getPlayers,

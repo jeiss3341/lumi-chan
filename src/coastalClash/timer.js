@@ -342,7 +342,7 @@ function startCoastalClashTimers(client) {
 
     if (m % TWITCH_REFRESH_INTERVAL_MINUTES === 0) {
       const twitchMinuteKey = `${dateKey}T${h}:${m}`;
-      if (lastTwitchRefreshMinuteKey !== twitchMinuteKey) {
+      if (lastTwitchRefreshMinuteKey !== twitchMinuteKey && (await db.getTwitchLiveCheckEnabled()) !== 'false') {
         lastTwitchRefreshMinuteKey = twitchMinuteKey;
         try {
           const twitchResult = await refreshTwitchOnly(db.pool);
