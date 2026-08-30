@@ -243,19 +243,20 @@
       );
     `);
 
-    // Players removed for a rules violation rather than a normal RP-based
-    // cull — bot-only bookkeeping, same reasoning as twitch_status above
-    // for keeping this out of players itself. players.mmr still gets
-    // overwritten to whatever sort position the DQ should land at (e.g.
-    // just below today's lowest active player), which would otherwise
-    // permanently lose their real earned RP — real_rp preserves it so the
-    // board can still show it. reason is freeform (e.g. "region rule
-    // violation").
+    // Manual overrides to a player's sort position (players.mmr) that
+    // don't come from a normal RP-based cull — a rules violation, or just
+    // a manual leaderboard correction. Bot-only bookkeeping, same
+    // reasoning as twitch_status above for keeping this out of players
+    // itself. players.mmr still gets overwritten to whatever sort
+    // position the override needs, which would otherwise permanently lose
+    // the player's real earned RP — real_rp preserves it so the board can
+    // still show it. reason is optional freeform text (e.g. "region rule
+    // violation"), not required for a plain reorder.
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS disqualified_players (
+      CREATE TABLE IF NOT EXISTS rank_overrides (
         name    TEXT PRIMARY KEY,
         real_rp INTEGER NOT NULL,
-        reason  TEXT NOT NULL
+        reason  TEXT
       );
     `);
     // live_twitch_url: whichever of a player's channels (players.twitch, or
@@ -775,9 +776,9 @@
   // secondary cycle (confirmed happening in testing). COALESCE on
   // primary_twitch means calling this again later to update just the
   // secondary channel won't clobber an already-captured primary.
-  async function setDisqualified(name, realRp, reason) {
+  async function setRankOverride(name, realRp, reason = null) {
     await pool.query(
-      `INSERT INTO disqualified_players (name, real_rp, reason) VALUES ($1, $2, $3)
+      `INSERT INTO rank_overrides (name, real_rp, reason) VALUES ($1, $2, $3)
        ON CONFLICT (name) DO UPDATE SET real_rp = EXCLUDED.real_rp, reason = EXCLUDED.reason`,
       [name, realRp, reason],
     );
@@ -1196,7 +1197,7 @@
     setLiveAnnounceChannel,
     setLeaderboardMeta,
     setPlayerExtraTwitch,
-    setDisqualified,
+    setRankOverride,
     logApiCall,
     pruneApiCallLog,
     getSeasonLive,

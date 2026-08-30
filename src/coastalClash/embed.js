@@ -21,7 +21,7 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       SELECT p.name, p.region, p.mmr, p.culled, p.indanger, pi.dak, dq.real_rp AS dq_real_rp
       FROM players p
       LEFT JOIN player_igns pi ON pi.name = p.name
-      LEFT JOIN disqualified_players dq ON dq.name = p.name
+      LEFT JOIN rank_overrides dq ON dq.name = p.name
       WHERE p.ispro = $1
       ORDER BY p.culled ASC, p.mmr DESC, p.name DESC
     `, [isPro])
@@ -44,15 +44,14 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      // dq_real_rp (disqualified_players — see src/db.js) is deliberately
-      // NOT shown here — a disqualification stays private, the player
-      // should read as a normal elimination on the public Discord board.
-      // players.mmr is still overwritten to whatever sort position the DQ
-      // needs (e.g. today's last active slot) for exactly this reason: it
-      // has to look indistinguishable from a real elimination, and a
-      // disqualified player showing their real (often much higher) RP
-      // near the top of this list would raise exactly the questions this
-      // is trying to avoid.
+      // dq_real_rp (rank_overrides — see src/db.js) is deliberately NOT
+      // shown here — a rank override (disqualification or otherwise)
+      // stays private, the player should read as a normal elimination on
+      // the public Discord board. players.mmr is still overwritten to
+      // whatever sort position the override needs for exactly this
+      // reason: it has to look indistinguishable from a real elimination,
+      // and showing the real (often different) RP here would raise
+      // exactly the questions this is trying to avoid.
       const culledLines = culled.map((p) => `~~${p.region ? `${p.region} | ` : ''}${p.name}~~ ☠️ Eliminated`);
 
       const bracket = isPro ? 'pro' : 'casual';
