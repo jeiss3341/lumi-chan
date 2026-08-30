@@ -253,7 +253,7 @@
     // still show it. reason is optional freeform text (e.g. "region rule
     // violation"), not required for a plain reorder.
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS rank_overrides (
+      CREATE TABLE IF NOT EXISTS ranked_overrides (
         name    TEXT PRIMARY KEY,
         real_rp INTEGER NOT NULL,
         reason  TEXT
@@ -778,7 +778,7 @@
   // secondary channel won't clobber an already-captured primary.
   async function setRankOverride(name, realRp, reason = null) {
     await pool.query(
-      `INSERT INTO rank_overrides (name, real_rp, reason) VALUES ($1, $2, $3)
+      `INSERT INTO ranked_overrides (name, real_rp, reason) VALUES ($1, $2, $3)
        ON CONFLICT (name) DO UPDATE SET real_rp = EXCLUDED.real_rp, reason = EXCLUDED.reason`,
       [name, realRp, reason],
     );

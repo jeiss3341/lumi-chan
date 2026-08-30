@@ -21,7 +21,7 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
       SELECT p.name, p.region, p.mmr, p.culled, p.indanger, pi.dak, dq.real_rp AS dq_real_rp
       FROM players p
       LEFT JOIN player_igns pi ON pi.name = p.name
-      LEFT JOIN rank_overrides dq ON dq.name = p.name
+      LEFT JOIN ranked_overrides dq ON dq.name = p.name
       WHERE p.ispro = $1
       ORDER BY p.culled ASC, p.mmr DESC, p.name DESC
     `, [isPro])
@@ -44,7 +44,7 @@ function buildBracketEmbed(pool, isPro, day, lastUpdatedAt) {
         return i === firstDangerIndex && firstDangerIndex > 0 ? `\`──────⚠️ CUTOFF LINE ⚠️──────\`\n${line}` : line;
       });
 
-      // dq_real_rp (rank_overrides — see src/db.js) is deliberately NOT
+      // dq_real_rp (ranked_overrides — see src/db.js) is deliberately NOT
       // shown here — a rank override (disqualification or otherwise)
       // stays private, the player should read as a normal elimination on
       // the public Discord board. players.mmr is still overwritten to
