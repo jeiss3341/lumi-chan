@@ -259,6 +259,22 @@
         reason  TEXT
       );
     `);
+
+    // Plain page-view log for project-lumi's Next.js site (coastal-clash/
+    // app/api/track) — one row per page load/client-side navigation, no
+    // visitor identification. Written by the site itself, not this bot;
+    // created here purely so both share one schema-management path.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS page_views (
+        id        SERIAL PRIMARY KEY,
+        path      TEXT NOT NULL,
+        viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS page_views_viewed_at_idx ON page_views (viewed_at);
+    `);
+
     // live_twitch_url: whichever of a player's channels (players.twitch, or
     // their player_extra_twitch row below) was actually detected live on
     // the most recent check — the Live Now board/announcements link to
