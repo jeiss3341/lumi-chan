@@ -501,7 +501,16 @@ async function runDailyCull(now = new Date(), dryRun = false) {
   } else {
     refreshResult = await refreshAllRP(db.pool, seasonId, dryRun);
   }
-  const twitchResult = await refreshTwitchLiveStatus(db.pool, dryRun);
+  // Same guard as the 3-min timer (timer.js) — the daily cull used to call
+  // this unconditionally, so turning the flag off there didn't actually
+  // stop the "is now live" posts; they kept firing once a day at the cull
+  // time (11:59 PM PDT) instead of every 3 min. Confirmed live: posts kept
+  // appearing after the flag was set, dated exactly 2:59 AM EDT — the cull
+  // time in EDT, not a 3-min-interval timestamp.
+  const twitchCheckEnabled = (await db.getTwitchLiveCheckEnabled()) !== 'false';
+  const twitchResult = twitchCheckEnabled
+    ? await refreshTwitchLiveStatus(db.pool, dryRun)
+    : { updated: 0, failed: [], toAnnounce: [] };
 
   let proCull = { culled: [] };
   let casualCull = { culled: [] };
