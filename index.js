@@ -272,7 +272,7 @@ client.once(Events.ClientReady, async (c) => {
     const { startPtgTracker } = require('./src/ptg/tracker');
     const { updateLiveBoard } = require('./src/ptg/liveBoard');
     startPtgTracker((live) => updateLiveBoard(c, live));
-    c.user.setPresence({ activities: [{ name: 'Watching [PTG] streams', type: 4 }] });
+    c.user.setPresence({ activities: [{ name: 'boop', type: 4 }] });   // same status as always
     return;
   }
 
