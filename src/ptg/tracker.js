@@ -77,6 +77,7 @@ async function tick() {
   const streams = logins.length ? await inBatches('streams', 'user_login', logins) : [];
   const tagged = streams.filter((s) => s.game_id === ETERNAL_RETURN_GAME_ID && PTG_TAG.test(s.title || ''));
   const now = new Date();
+  const started = [];   // coaches who just went live with [PTG], for the go-live announcements
 
   for (const s of tagged) {
     const coach = byLogin.get(s.user_login.toLowerCase());
@@ -86,9 +87,18 @@ async function tick() {
       `insert into public.ptg_vods (coach_id, twitch_login, stream_id, title, started_at)
          values ($1, $2, $3, $4, $5)
        on conflict (stream_id) do update set title = excluded.title, ended_at = null
-       returning id`,
+       returning id, (xmax = 0) as inserted`,
       [coach.id, s.user_login.toLowerCase(), s.id, (s.title || '').slice(0, 200), s.started_at],
     );
+    // a brand-new broadcast is a go-live, unless the same coach went live in the last 30 minutes
+    // (a stream that crashed and restarted gets a new id, and shouldn't be announced twice)
+    if (vod.inserted) {
+      const { rows: [recent] } = await pg.query(
+        `select 1 from public.ptg_vods where coach_id = $1 and id <> $2 and created_at > now() - interval '30 minutes' limit 1`,
+        [coach.id, vod.id],
+      );
+      if (!recent) started.push({ coach, stream: s });
+    }
     // an open mark while [PTG] stays in the title
     await pg.query(
       `insert into public.ptg_marks (vod_id, started_at)
@@ -112,7 +122,9 @@ async function tick() {
   );
 
   await attachVods(pg);
-  return tagged.map((s) => ({ coach: byLogin.get(s.user_login.toLowerCase()), stream: s }));
+  const live = tagged.map((s) => ({ coach: byLogin.get(s.user_login.toLowerCase()), stream: s }));
+  live.started = started;
+  return live;
 }
 
 // Twitch makes the archive video while the stream runs; match it by stream id.

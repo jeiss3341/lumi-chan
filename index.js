@@ -271,7 +271,11 @@ client.once(Events.ClientReady, async (c) => {
     console.log('[ptg] Path to Glory mode: older features are switched off.');
     const { startPtgTracker } = require('./src/ptg/tracker');
     const { updateLiveBoard } = require('./src/ptg/liveBoard');
-    startPtgTracker((live) => updateLiveBoard(c, live));
+    const { announceGoLive } = require('./src/ptg/announce');
+    startPtgTracker(async (live) => {
+      await announceGoLive(c, live.started || []);
+      await updateLiveBoard(c, live);
+    });
     c.user.setPresence({ activities: [{ name: 'boop', type: 4 }] });   // same status as always
     return;
   }
