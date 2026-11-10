@@ -1,5 +1,12 @@
 require('dotenv').config();
 
+// LUMI_MODE=ptg (Railway variable): Lumi only does Path to Glory things — the
+// [PTG] Twitch stream tracker and the coaches' "[PTG] Live now" board
+// (src/ptg/). Every older feature (bounties, tickets, Q&A, greetings, the
+// admin site, Coastal Clash timers) stays in the code but is switched off, and
+// her own Postgres isn't used at all. Unset = everything as it was before.
+const PTG_ONLY = process.env.LUMI_MODE === 'ptg';
+
 // Diagnostic for a suspected zombie-process issue: production logs show two
 // interleaved refresh cadences ~3 minutes apart (one process's round-mark
 // 10-min timer, plus what looks like a second, independent one) — enough to
@@ -109,6 +116,7 @@ process.on('uncaughtException', (err) => {
 // realistic case), still start the HTTP server — it'll serve text.js's
 // defaults instead of saved edits, which beats not starting at all.
 (async () => {
+  if (PTG_ONLY) return;   // the admin site belongs to the older features
   try {
     await loadOverrides();
   } catch (err) {
@@ -259,6 +267,15 @@ setInterval(() => {
 client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}`);
 
+  if (PTG_ONLY) {
+    console.log('[ptg] Path to Glory mode: older features are switched off.');
+    const { startPtgTracker } = require('./src/ptg/tracker');
+    const { updateLiveBoard } = require('./src/ptg/liveBoard');
+    startPtgTracker((live) => updateLiveBoard(c, live));
+    c.user.setPresence({ activities: [{ name: 'Watching [PTG] streams', type: 4 }] });
+    return;
+  }
+
   // initDb() creates tables and warms the settings cache. If it throws
   // (Postgres unreachable), log it and stay connected rather than letting
   // an unhandled rejection kill the process — Discord-side reads that don't
@@ -329,6 +346,7 @@ const GOOD_JOB_RE = new RegExp(
 // the board impossible to actually get rid of. message.id is always
 // present even on a partial (uncached) delete event, so no fetch needed.
 client.on(Events.MessageDelete, async (message) => {
+  if (PTG_ONLY) return;
   const [proMessageId, casualMessageId, liveNowMessageId, eliminatedLiveNowMessageId] = await Promise.all([
     getLeaderboardMessageId('pro'),
     getLeaderboardMessageId('casual'),
@@ -344,6 +362,7 @@ client.on(Events.MessageDelete, async (message) => {
 // Lumi's two favorites — greeting and boop — always get the emoji. Everything
 // else (beep, thank-yous, good-jobs) is just the plain word back, no emoji.
 client.on(Events.MessageCreate, async (message) => {
+  if (PTG_ONLY) return;   // greetings and the rest are older features
   if (process.env.ACTIVE_GUILD_ID && message.guildId !== process.env.ACTIVE_GUILD_ID) return;
   if (!message.guildId) return;
   if (message.author.bot) return;
@@ -1226,6 +1245,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // bot is in, doubling every panel post/ticket/reply. Unset (the default)
   // means no filtering, same as before this existed.
   if (process.env.ACTIVE_GUILD_ID && interaction.guildId !== process.env.ACTIVE_GUILD_ID) return;
+
+  // Path to Glory mode: old commands and buttons answer politely instead of failing
+  if (PTG_ONLY) {
+    if (interaction.isRepliable()) {
+      await interaction.reply({ content: "That's switched off right now: Lumi is only helping with Path to Glory.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+    return;
+  }
 
   try {
     // /deployrequestbounty  →  save category + staff (role and/or person) + board channel, then post the panel
