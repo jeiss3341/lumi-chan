@@ -366,8 +366,9 @@ client.on(Events.MessageDelete, async (message) => {
 // Lumi's two favorites — greeting and boop — always get the emoji. Everything
 // else (beep, thank-yous, good-jobs) is just the plain word back, no emoji.
 client.on(Events.MessageCreate, async (message) => {
-  if (PTG_ONLY) return;   // greetings and the rest are older features
-  if (process.env.ACTIVE_GUILD_ID && message.guildId !== process.env.ACTIVE_GUILD_ID) return;
+  // Her friendly replies (hi / boop / beep / thanks / good job) stay on in Path to Glory mode too.
+  // ACTIVE_GUILD_ID belongs to the older setup (it may point at another server), so it's ignored here then.
+  if (!PTG_ONLY && process.env.ACTIVE_GUILD_ID && message.guildId !== process.env.ACTIVE_GUILD_ID) return;
   if (!message.guildId) return;
   if (message.author.bot) return;
   if (!message.mentions.users.has(client.user.id)) return;
