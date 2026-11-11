@@ -65,6 +65,9 @@ const cleanLogin = (raw) => {
   return (m ? m[1] : t.replace(/^@/, '')).toLowerCase();
 };
 
+// broadcasts already announced (or too old to announce) by this process
+const announced = new Set();
+
 // One pass. Returns who's live with [PTG] right now, for the Discord board.
 async function tick() {
   const pg = db();
@@ -87,18 +90,22 @@ async function tick() {
       `insert into public.ptg_vods (coach_id, twitch_login, stream_id, title, started_at)
          values ($1, $2, $3, $4, $5)
        on conflict (stream_id) do update set title = excluded.title, ended_at = null
-       returning id, (xmax = 0) as inserted`,
+       returning id, created_at`,
       [coach.id, s.user_login.toLowerCase(), s.id, (s.title || '').slice(0, 200), s.started_at],
     );
-    // a brand-new broadcast is a go-live, unless the same coach went live in the last 30 minutes
-    // (a stream that crashed and restarted gets a new id, and shouldn't be announced twice)
-    if (vod.inserted) {
+    // A go-live to announce: a broadcast first seen with [PTG] in the last 30 minutes that this
+    // process hasn't announced yet (so a pass that failed, or a restart, still announces it), unless
+    // the same coach had another [PTG] broadcast in the 30 minutes before it (a crashed and restarted
+    // stream gets a new id and shouldn't be announced twice).
+    if (!announced.has(s.id) && now - new Date(vod.created_at) < 30 * 60 * 1000) {
       const { rows: [recent] } = await pg.query(
-        `select 1 from public.ptg_vods where coach_id = $1 and id <> $2 and created_at > now() - interval '30 minutes' limit 1`,
-        [coach.id, vod.id],
+        `select 1 from public.ptg_vods where coach_id = $1 and id <> $2
+            and created_at between $3::timestamptz - interval '30 minutes' and $3::timestamptz limit 1`,
+        [coach.id, vod.id, vod.created_at],
       );
       if (!recent) started.push({ coach, stream: s });
     }
+    announced.add(s.id);
     // an open mark while [PTG] stays in the title
     await pg.query(
       `insert into public.ptg_marks (vod_id, started_at)
@@ -121,7 +128,9 @@ async function tick() {
     [anyLiveIds, now],
   );
 
-  await attachVods(pg);
+  // VOD lookup is its own step: if it fails, the board and go-live messages still go out
+  try { await attachVods(pg); }
+  catch (err) { console.error('[ptg] VOD lookup failed (will retry next pass):', err.message); }
   const live = tagged.map((s) => ({ coach: byLogin.get(s.user_login.toLowerCase()), stream: s }));
   live.started = started;
   return live;
@@ -144,7 +153,7 @@ async function attachVods(pg) {
       const thumb = (video.thumbnail_url || '').replace('%{width}', '640').replace('%{height}', '360') || null;
       const expires = new Date(new Date(video.created_at).getTime() + VOD_DAYS * 864e5);
       await pg.query(
-        `update public.ptg_vods set vod_id = $2, thumbnail_url = $3, expires_at = case when saved then null else $4 end where id = $1`,
+        `update public.ptg_vods set vod_id = $2::text, thumbnail_url = $3::text, expires_at = case when saved then null else $4::timestamptz end where id = $1`,
         [v.id, video.id, thumb, expires],
       );
     }
