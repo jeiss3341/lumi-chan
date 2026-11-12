@@ -11,7 +11,6 @@
 // until after a session started, she skips it rather than pinging late.
 const { db } = require('./tracker');
 
-const SITE = 'https://projectlumi.space/desk.html#coach';
 const LUMI_HELLO_EMOJI = '<:LumiHello:1536577693208940594>';   // same application emoji as her hello/boop replies
 
 async function due(pg) {
@@ -47,7 +46,6 @@ function message(s) {
     `Boop! ${LUMI_HELLO_EMOJI} Hi ${s.coach_name}~ just a little nudge from Lumi!`,
     `You have ${who} starting <t:${t1}:R> (<t:${t1}:t> to <t:${t2}:t>).`,
     note ? `> ${note.slice(0, 300).replace(/\n+/g, ' ')}` : null,
-    `Good luck, you've got this! ✨ Your desk: ${SITE}`,
   ].filter(Boolean).join('\n');
 }
 
