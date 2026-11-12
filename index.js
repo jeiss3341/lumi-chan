@@ -276,6 +276,9 @@ client.once(Events.ClientReady, async (c) => {
       await announceGoLive(c, live.started || []);
       await updateLiveBoard(c, live);
     });
+    const reminders = require('./src/ptg/reminders');
+    reminders.startSessionPings(c);   // "your session is soon" @s to coaches in PTG_PING_CHANNEL_ID
+    reminders.sendTestPing(c);        // only while PTG_PING_TEST_USER_ID is set
     c.user.setPresence({ activities: [{ name: 'boop', type: 4 }] });   // same status as always
     return;
   }

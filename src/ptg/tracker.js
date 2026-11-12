@@ -192,4 +192,4 @@ function startPtgTracker(onLive) {
   }, 20 * 1000);
 }
 
-module.exports = { startPtgTracker, tick, cleanLogin };
+module.exports = { startPtgTracker, tick, cleanLogin, db };
