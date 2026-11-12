@@ -2,13 +2,19 @@
 //
 // Every minute: finds booked sessions (requests with status 'accepted') starting
 // within the coach's own ping time (coaches.ping_minutes on the site's mentor
-// desk, default 20 minutes; 0 = off), and @s that coach with a boop from Lumi in
-// the channel set by PTG_PING_CHANNEL_ID (Railway variable). Unset = pings off.
+// desk, default 20 minutes; 0 = off), and DMs that coach — mentor or assistant —
+// a boop from Lumi. Nothing to set in Railway.
+//
+// The coach's Discord id comes from their linked site account, or, if they've
+// never logged in, from the access list (access_list.coach_id).
 //
 // Each ping is written to ptg_pings (request id + the session's start) BEFORE the
-// message goes out, so a restart or a slow pass never pings twice. A session
-// that's moved to a new time gets a fresh ping for the new time. If Lumi was down
-// until after a session started, she skips it rather than pinging late.
+// DM goes out, so a restart or a slow pass never pings twice. A session that's
+// moved to a new time gets a fresh ping for the new time. If Lumi was down until
+// after a session started, she skips it rather than pinging late.
+//
+// Optional: if a coach's DMs are closed and PTG_PING_CHANNEL_ID (Railway variable)
+// is set, she @s them in that channel instead. Unset: she just logs it.
 const { db } = require('./tracker');
 
 const LUMI_HELLO_EMOJI = '<:LumiHello:1536577693208940594>';   // same application emoji as her hello/boop replies
@@ -16,7 +22,9 @@ const LUMI_HELLO_EMOJI = '<:LumiHello:1536577693208940594>';   // same applicati
 async function due(pg) {
   const { rows } = await pg.query(
     `select r.id, r.kind, r.starts_at, r.ends_at, r.note, r.by_coach,
-            coalesce(nullif(c.name, ''), 'Coach') as coach_name, cp.discord_id as coach_discord,
+            coalesce(nullif(c.name, ''), 'Coach') as coach_name,
+            coalesce(nullif(cp.discord_id, ''),
+                     (select a.discord_id from public.access_list a where a.coach_id = c.id limit 1)) as coach_discord,
             coalesce(nullif(p.display_name, ''), nullif(p.username, ''), 'a player') as player_name,
             (select t.name from public.teams t
                where (r.by_coach and t.coach_id = r.coach_id) or (not r.by_coach and r.requester_id = any (t.member_ids))
@@ -49,23 +57,31 @@ function message(s) {
   ].filter(Boolean).join('\n');
 }
 
-// one message in the ping channel: @coach, then the boop (only the coach is pinged, never @everyone or roles)
-async function send(channel, s) {
-  const at = s.coach_discord ? `<@${s.coach_discord}> ` : '';
-  if (!at) console.error(`[ptg] ${s.coach_name} isn't linked to a Discord account; posting their session ping without an @.`);
+async function send(client, s) {
+  if (!s.coach_discord) {
+    console.error(`[ptg] no Discord id for ${s.coach_name} (not logged in, not on the access list); no session ping.`);
+    return;
+  }
+  const text = message(s);
   try {
-    await channel.send({
-      content: at + message(s),
-      allowedMentions: { users: s.coach_discord ? [s.coach_discord] : [] },
-    });
+    const user = await client.users.fetch(s.coach_discord);
+    await user.send(text);
+    return;
   } catch (err) {
-    console.error(`[ptg] session ping for ${s.coach_name} failed:`, err.message);
+    console.error(`[ptg] couldn't DM ${s.coach_name} about their session (DMs closed?):`, err.message);
+  }
+  const channelId = process.env.PTG_PING_CHANNEL_ID;
+  if (!channelId) return;
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return;
+    await channel.send({ content: `<@${s.coach_discord}> ${text}`, allowedMentions: { users: [s.coach_discord] } });
+  } catch (err) {
+    console.error('[ptg] backup session ping in PTG_PING_CHANNEL_ID failed:', err.message);
   }
 }
 
 async function pass(client) {
-  const channel = await client.channels.fetch(process.env.PTG_PING_CHANNEL_ID);
-  if (!channel || !channel.isTextBased()) throw new Error('PTG_PING_CHANNEL_ID is not a text channel Lumi can see.');
   const pg = db();
   for (const s of await due(pg)) {
     // claim it first: if the row already exists, another pass got there
@@ -73,17 +89,13 @@ async function pass(client) {
       `insert into public.ptg_pings (request_id, starts_at) values ($1, $2) on conflict do nothing`,
       [s.id, s.starts_at],
     );
-    if (rowCount) await send(channel, s);
+    if (rowCount) await send(client, s);
   }
 }
 
 function startSessionPings(client) {
   if (!process.env.PTG_DATABASE_URL) {
     console.error('[ptg] PTG_DATABASE_URL is not set — session pings are off.');
-    return;
-  }
-  if (!process.env.PTG_PING_CHANNEL_ID) {
-    console.error('[ptg] PTG_PING_CHANNEL_ID is not set — session pings are off.');
     return;
   }
   let running = false;
@@ -94,28 +106,9 @@ function startSessionPings(client) {
     catch (err) { console.error('[ptg] session ping pass failed (will retry next minute):', err.message); }
     finally { running = false; }
   };
-  console.log('[ptg] session pings on, checked every minute.');
+  console.log('[ptg] session pings on (DMs to coaches), checked every minute.');
   run();
   setInterval(run, 60 * 1000);
 }
 
-// A test: when PTG_PING_TEST_USER_ID (Railway variable) is set, Lumi DMs that person a sample session ping each
-// time she starts, so you can see what coaches get. Made-up session, no database needed. Remove the variable after.
-async function sendTestPing(client) {
-  const id = (process.env.PTG_PING_TEST_USER_ID || '').trim();
-  if (!/^\d{15,22}$/.test(id)) return;
-  const sample = {
-    kind: 'individual', note: 'This is only a test. Real pings go in the ping channel.',
-    starts_at: new Date(Date.now() + 20 * 60 * 1000), ends_at: new Date(Date.now() + 80 * 60 * 1000),
-    coach_name: 'Coach', player_name: 'a player', team_name: 'Test Team',
-  };
-  try {
-    const user = await client.users.fetch(id);
-    await user.send(`<@${id}> ${message(sample)}`);
-    console.log('[ptg] test session ping sent to PTG_PING_TEST_USER_ID.');
-  } catch (err) {
-    console.error('[ptg] test session ping failed (are your DMs open to server members?):', err.message);
-  }
-}
-
-module.exports = { startSessionPings, sendTestPing, message };
+module.exports = { startSessionPings, message };
