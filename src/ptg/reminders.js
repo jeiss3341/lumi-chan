@@ -22,7 +22,8 @@ const LUMI_HELLO_EMOJI = '<:LumiHello:1536577693208940594>';   // same applicati
 async function due(pg) {
   const { rows } = await pg.query(
     `select r.id, r.kind, r.starts_at, r.ends_at, r.note, r.by_coach,
-            coalesce(nullif(c.name, ''), 'Coach') as coach_name,
+            -- the slot's name; blank on some slots (the site fills those in from its own files), so then their Discord name
+            coalesce(nullif(c.name, ''), nullif(cp.display_name, ''), nullif(cp.username, ''), 'Coach') as coach_name,
             coalesce(nullif(cp.discord_id, ''),
                      (select a.discord_id from public.access_list a where a.coach_id = c.id limit 1)) as coach_discord,
             coalesce(nullif(p.display_name, ''), nullif(p.username, ''), 'a player') as player_name,
