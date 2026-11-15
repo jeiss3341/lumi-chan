@@ -13,8 +13,8 @@
 // moved to a new time gets a fresh ping for the new time. If Lumi was down until
 // after a session started, she skips it rather than pinging late.
 //
-// Optional: if a coach's DMs are closed and PTG_PING_CHANNEL_ID (Railway variable)
-// is set, she @s them in that channel instead. Unset: she just logs it.
+// Optional: when PTG_PING_CHANNEL_ID (Railway variable) is set, she also @s the coach in that
+// channel every time, as well as the DM. Unset: DM only.
 const { db } = require('./tracker');
 
 const LUMI_HELLO_EMOJI = '<:LumiHello:1536577693208940594>';   // same application emoji as her hello/boop replies
@@ -64,23 +64,25 @@ async function send(client, s) {
     return;
   }
   const text = message(s);
+  // 1. a DM
   try {
     const user = await client.users.fetch(s.coach_discord);
     const sent = await user.send(text);
     // proof it went out: who got it (their Discord username) and the message id
     console.log(`[ptg ${process.env.LUMI_INSTANCE_ID}] session ping DM sent to ${s.coach_name} (@${user.username}), session ${new Date(s.starts_at).toISOString()}, message ${sent.id}`);
-    return;
   } catch (err) {
     console.error(`[ptg] couldn't DM ${s.coach_name} about their session (DMs closed?):`, err.message);
   }
-  const channelId = process.env.PTG_PING_CHANNEL_ID;
+  // 2. and, when PTG_PING_CHANNEL_ID is set, an @ in that channel too (every time, not only when the DM fails)
+  const channelId = (process.env.PTG_PING_CHANNEL_ID || '').trim();
   if (!channelId) return;
   try {
     const channel = await client.channels.fetch(channelId);
-    if (!channel || !channel.isTextBased()) return;
+    if (!channel || !channel.isTextBased()) throw new Error('not a text channel Lumi can see');
     await channel.send({ content: `<@${s.coach_discord}> ${text}`, allowedMentions: { users: [s.coach_discord] } });
+    console.log(`[ptg ${process.env.LUMI_INSTANCE_ID}] session ping posted in the ping channel for ${s.coach_name}`);
   } catch (err) {
-    console.error('[ptg] backup session ping in PTG_PING_CHANNEL_ID failed:', err.message);
+    console.error('[ptg] session ping in PTG_PING_CHANNEL_ID failed:', err.message);
   }
 }
 
@@ -110,7 +112,7 @@ function startSessionPings(client) {
     catch (err) { console.error('[ptg] session ping pass failed (will retry next minute):', err.message); }
     finally { running = false; }
   };
-  console.log('[ptg] session pings on (DMs to coaches), checked every minute.');
+  console.log(`[ptg] session pings on (DMs to coaches${process.env.PTG_PING_CHANNEL_ID ? ' + @ in the ping channel' : ''}), checked every minute.`);
   run();
   setInterval(run, 60 * 1000);
 }
