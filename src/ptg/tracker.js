@@ -69,6 +69,7 @@ const cleanLogin = (raw) => {
 
 // broadcasts already announced (or too old to announce) by this process
 const announced = new Set();
+const bootedAt = new Date();   // when this Lumi started
 
 // People who aren't coaches but stream [PTG] sessions too, e.g. a student streaming their own
 // lesson (public.ptg_streamers, kept by staff; supabase/ptg-streamers.sql in the site repo).
@@ -141,13 +142,17 @@ async function tick() {
       [coach.id, login, s.id, (s.title || '').slice(0, 200), s.started_at],
     );
     // A go-live to announce: a broadcast first seen with [PTG] in the last 30 minutes that this
-    // process hasn't announced yet (so a pass that failed, or a restart, still announces it), unless
-    // the same channel had another [PTG] broadcast in the 30 minutes before it (a crashed and restarted
-    // stream gets a new id and shouldn't be announced twice).
-    if (!announced.has(s.id) && now - new Date(vod.created_at) < 30 * 60 * 1000) {
+    // process hasn't announced yet, unless
+    //   - it was first seen more than 5 minutes before this Lumi started (the Lumi before a
+    //     redeploy already announced it), or
+    //   - the same channel had another [PTG] broadcast still live, or ended under 30 minutes
+    //     before, when this one showed up (a dropped and restarted stream gets a new id and
+    //     shouldn't be announced twice, however long the first part ran).
+    const firstSeen = new Date(vod.created_at);
+    if (!announced.has(s.id) && now - firstSeen < 30 * 60 * 1000 && bootedAt - firstSeen < 5 * 60 * 1000) {
       const { rows: [recent] } = await pg.query(
-        `select 1 from public.ptg_vods where twitch_login = $1 and id <> $2
-            and created_at between $3::timestamptz - interval '30 minutes' and $3::timestamptz limit 1`,
+        `select 1 from public.ptg_vods where twitch_login = $1 and id <> $2 and created_at < $3::timestamptz
+            and coalesce(ended_at, now()) > $3::timestamptz - interval '30 minutes' limit 1`,
         [login, vod.id, vod.created_at],
       );
       if (!recent) started.push({ coach, stream: s, streamer });
