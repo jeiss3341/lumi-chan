@@ -66,7 +66,9 @@ async function send(client, s) {
   const text = message(s);
   try {
     const user = await client.users.fetch(s.coach_discord);
-    await user.send(text);
+    const sent = await user.send(text);
+    // proof it went out: who got it (their Discord username) and the message id
+    console.log(`[ptg ${process.env.LUMI_INSTANCE_ID}] session ping DM sent to ${s.coach_name} (@${user.username}), session ${new Date(s.starts_at).toISOString()}, message ${sent.id}`);
     return;
   } catch (err) {
     console.error(`[ptg] couldn't DM ${s.coach_name} about their session (DMs closed?):`, err.message);
@@ -90,6 +92,7 @@ async function pass(client) {
       `insert into public.ptg_pings (request_id, starts_at) values ($1, $2) on conflict do nothing`,
       [s.id, s.starts_at],
     );
+    console.log(`[ptg ${process.env.LUMI_INSTANCE_ID}] session ping due for ${s.coach_name} at ${new Date(s.starts_at).toISOString()}: ${rowCount ? 'sending' : 'already claimed by another Lumi'}`);
     if (rowCount) await send(client, s);
   }
 }
