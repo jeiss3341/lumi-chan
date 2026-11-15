@@ -2,7 +2,9 @@
 //
 // Every 3 minutes: looks up the Twitch channels of every Path to Glory coach
 // (coaches.twitch in the PTG Supabase database, typed in by staff on the
-// site), and for each coach live in Eternal Return with "[PTG]" in the title:
+// site) plus the non-coaches in ptg_streamers (e.g. a student streaming their own lesson; their
+// stream is filed under the coach the title tags), and for each one live in Eternal Return with
+// "[PTG]" in the title:
 //   - one ptg_vods row per broadcast (keyed by Twitch's stream id)
 //   - one ptg_marks row per stretch the title had [PTG] in it — taking [PTG]
 //     out closes the mark, putting it back opens a new one
@@ -68,42 +70,87 @@ const cleanLogin = (raw) => {
 // broadcasts already announced (or too old to announce) by this process
 const announced = new Set();
 
+// People who aren't coaches but stream [PTG] sessions too, e.g. a student streaming their own
+// lesson (public.ptg_streamers, kept by staff; supabase/ptg-streamers.sql in the site repo).
+// If that table isn't there yet, the tracker carries on with coaches only.
+let streamersWarned = false;
+async function loadStreamers(pg) {
+  try {
+    const { rows } = await pg.query(`select twitch, name from public.ptg_streamers where twitch <> ''`);
+    streamersWarned = false;
+    return rows;
+  } catch (err) {
+    if (!streamersWarned) console.error('[ptg] could not read ptg_streamers (coaches only for now):', err.message);
+    streamersWarned = true;
+    return [];
+  }
+}
+
+// The coach a non-coach's stream is with: the first coach whose Twitch name is in the title,
+// with or without @ ("Vision Lesson with @Hresvilg | [PTG]" → the coach on twitch.tv/hresvilg).
+function coachInTitle(title, byLogin) {
+  const t = String(title || '').toLowerCase();
+  let found = null, at = Infinity;
+  for (const [login, coach] of byLogin) {
+    const safe = login.replace(/[^a-z0-9_]/g, '');
+    if (!safe) continue;
+    const m = new RegExp(`(^|[^a-z0-9_])@?${safe}(?![a-z0-9_])`).exec(t);
+    if (m && m.index < at) { at = m.index; found = coach; }
+  }
+  return found;
+}
+
 // One pass. Returns who's live with [PTG] right now, for the Discord board.
 async function tick() {
   const pg = db();
   const { rows: coaches } = await pg.query(`select id, name, twitch from public.coaches where twitch <> ''`);
   const byLogin = new Map();
   for (const c of coaches) { const l = cleanLogin(c.twitch); if (l) byLogin.set(l, c); }
-  const logins = [...byLogin.keys()];
+  const others = new Map();   // non-coach channels (a coach's own channel always counts as theirs)
+  for (const p of await loadStreamers(pg)) { const l = cleanLogin(p.twitch); if (l && !byLogin.has(l)) others.set(l, p); }
+  const logins = [...byLogin.keys(), ...others.keys()];
 
-  // live streams of those channels, kept only when in Eternal Return with [PTG] in the title
+  // live streams of those channels, kept when [PTG] is in the title. The category isn't checked: coaches
+  // sometimes go live with no category set (or a different one), and [PTG] is only ever put there on purpose.
   const streams = logins.length ? await inBatches('streams', 'user_login', logins) : [];
-  const tagged = streams.filter((s) => s.game_id === ETERNAL_RETURN_GAME_ID && PTG_TAG.test(s.title || ''));
+  const tagged = streams.filter((s) => PTG_TAG.test(s.title || ''));
   const now = new Date();
   const started = [];   // coaches who just went live with [PTG], for the go-live announcements
+  const live = [];      // every [PTG] stream recorded this pass, for the Discord board
 
   for (const s of tagged) {
-    const coach = byLogin.get(s.user_login.toLowerCase());
-    if (!coach) continue;
+    const login = s.user_login.toLowerCase();
+    const streamer = others.get(login) || null;
+    let coach = byLogin.get(login);
+    if (!coach && streamer) {
+      // filed under the coach the title tags; once filed it stays with that coach even if the title changes
+      coach = coachInTitle(s.title, byLogin);
+      if (!coach) {
+        const { rows: [had] } = await pg.query(`select coach_id from public.ptg_vods where stream_id = $1`, [s.id]);
+        coach = had && coaches.find((c) => c.id === had.coach_id);
+      }
+    }
+    if (!coach) continue;   // a non-coach's stream with no coach in the title isn't a session
+    live.push({ coach, stream: s, streamer });
     // the broadcast (created the first time [PTG] shows up in it)
     const { rows: [vod] } = await pg.query(
       `insert into public.ptg_vods (coach_id, twitch_login, stream_id, title, started_at)
          values ($1, $2, $3, $4, $5)
        on conflict (stream_id) do update set title = excluded.title, ended_at = null
        returning id, created_at`,
-      [coach.id, s.user_login.toLowerCase(), s.id, (s.title || '').slice(0, 200), s.started_at],
+      [coach.id, login, s.id, (s.title || '').slice(0, 200), s.started_at],
     );
     // A go-live to announce: a broadcast first seen with [PTG] in the last 30 minutes that this
     // process hasn't announced yet (so a pass that failed, or a restart, still announces it), unless
-    // the same coach had another [PTG] broadcast in the 30 minutes before it (a crashed and restarted
+    // the same channel had another [PTG] broadcast in the 30 minutes before it (a crashed and restarted
     // stream gets a new id and shouldn't be announced twice).
     if (!announced.has(s.id) && now - new Date(vod.created_at) < 30 * 60 * 1000) {
       const { rows: [recent] } = await pg.query(
-        `select 1 from public.ptg_vods where coach_id = $1 and id <> $2
+        `select 1 from public.ptg_vods where twitch_login = $1 and id <> $2
             and created_at between $3::timestamptz - interval '30 minutes' and $3::timestamptz limit 1`,
-        [coach.id, vod.id, vod.created_at],
+        [login, vod.id, vod.created_at],
       );
-      if (!recent) started.push({ coach, stream: s });
+      if (!recent) started.push({ coach, stream: s, streamer });
     }
     announced.add(s.id);
     // an open mark while [PTG] stays in the title
@@ -115,7 +162,7 @@ async function tick() {
   }
 
   // close marks whose broadcast lost [PTG] (or ended), and broadcasts that ended
-  const liveIds = tagged.map((s) => s.id);
+  const liveIds = live.map((x) => x.stream.id);
   const anyLiveIds = streams.map((s) => s.id);
   await pg.query(
     `update public.ptg_marks m set ended_at = $2
@@ -131,7 +178,6 @@ async function tick() {
   // VOD lookup is its own step: if it fails, the board and go-live messages still go out
   try { await attachVods(pg); }
   catch (err) { console.error('[ptg] VOD lookup failed (will retry next pass):', err.message); }
-  const live = tagged.map((s) => ({ coach: byLogin.get(s.user_login.toLowerCase()), stream: s }));
   live.started = started;
   return live;
 }
